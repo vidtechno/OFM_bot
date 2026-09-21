@@ -138,15 +138,35 @@ export function getSbRegion(req?: Request): string {
   return "unknown";
 }
 
+// Note on Serverless Warmup:
+// A periodic warmup ping (e.g., GET /?warmup=1 via pg_cron every 10 min) significantly
+// reduces cold start occurrences by keeping Deno isolates active.
+// However, this is NOT a 100% guarantee of zero cold starts.
+// Cloud providers (such as Supabase Edge Functions / Deno Deploy) may provision new isolates,
+// recycle idle instances, or route requests to different edge nodes during traffic bursts or deployments.
+let isColdStart = true;
+
+export function getIsColdStart(): boolean {
+  return isColdStart;
+}
+
+export function resetColdStartFlag(val = true): void {
+  isColdStart = val;
+}
+
 export function categorizeDurations(stages: Record<string, number>): {
   databaseRpcDurationMs: number;
   telegramApiDurationMs: number;
+  callbackAckDurationMs: number;
 } {
   let databaseRpcDurationMs = 0;
   let telegramApiDurationMs = 0;
+  let callbackAckDurationMs = 0;
 
   for (const [stage, duration] of Object.entries(stages)) {
-    if (stage.startsWith("telegram_api")) {
+    if (stage === "callback_ack") {
+      callbackAckDurationMs += duration;
+    } else if (stage.startsWith("telegram_api")) {
       telegramApiDurationMs += duration;
     } else if (
       stage.startsWith("idempotency") ||
@@ -167,6 +187,7 @@ export function categorizeDurations(stages: Record<string, number>): {
   return {
     databaseRpcDurationMs: Number(databaseRpcDurationMs.toFixed(2)),
     telegramApiDurationMs: Number(telegramApiDurationMs.toFixed(2)),
+    callbackAckDurationMs: Number(callbackAckDurationMs.toFixed(2)),
   };
 }
 
@@ -174,12 +195,45 @@ export async function handleTelegramWebhook(req: Request, deps: WebhookDependenc
   const profiler = new RequestProfiler();
   (deps.bot as any).__currentProfiler = profiler;
 
-  // 1. Health check for GET
+  // 1. Health check & Warmup endpoint for GET
   if (req.method === "GET") {
+    const cold = isColdStart;
+    isColdStart = false;
+
+    let isWarmup = false;
+    try {
+      const url = new URL(req.url);
+      isWarmup = url.searchParams.get("warmup") === "1";
+    } catch {
+      // ignore
+    }
+
+    if (isWarmup) {
+      deps.logger.info(
+        {
+          event: "webhook_warmup_ping",
+          cold_start: cold,
+          SB_REGION: getSbRegion(req),
+        },
+        `Warmup ping received (cold_start: ${cold})`
+      );
+      return Response.json(
+        {
+          status: "ok",
+          service: "telegram-webhook",
+          warmup: true,
+          cold_start: cold,
+          timestamp: new Date().toISOString(),
+        },
+        { status: 200 }
+      );
+    }
+
     return Response.json(
       {
         status: "ok",
         service: "telegram-webhook",
+        cold_start: cold,
         timestamp: new Date().toISOString(),
       },
       { status: 200 }
@@ -198,6 +252,9 @@ export async function handleTelegramWebhook(req: Request, deps: WebhookDependenc
   if (req.method !== "POST") {
     return Response.json({ error: "Method not allowed" }, { status: 405 });
   }
+
+  const cold = isColdStart;
+  isColdStart = false;
 
   // 4. Secret token verification
   if (deps.secretToken && !verifySecretToken(req, deps.secretToken)) {
@@ -243,19 +300,25 @@ export async function handleTelegramWebhook(req: Request, deps: WebhookDependenc
 
     const metrics = profiler.getMetrics();
     const sbRegion = getSbRegion(req);
-    const { databaseRpcDurationMs, telegramApiDurationMs } = categorizeDurations(metrics.stages);
+    const { databaseRpcDurationMs, telegramApiDurationMs, callbackAckDurationMs } = categorizeDurations(metrics.stages);
+    const botInitMs = Number((metrics.stages.bot_init ?? 0).toFixed(2));
 
     deps.logger.info(
       {
         event: "telegram_update_profiled",
         update_id: update.update_id,
-        SB_REGION: sbRegion,
+        cold_start: cold,
+        bot_init_ms: botInitMs,
+        callback_ack_ms: callbackAckDurationMs,
+        db_ms: databaseRpcDurationMs,
+        telegram_api_ms: telegramApiDurationMs,
+        total_ms: metrics.totalDurationMs,
         total_duration_ms: metrics.totalDurationMs,
         database_rpc_duration_ms: databaseRpcDurationMs,
-        telegram_api_duration_ms: telegramApiDurationMs,
+        SB_REGION: sbRegion,
         stages: metrics.stages,
       },
-      `[${sbRegion}] Telegram update ${update.update_id} processed in ${metrics.totalDurationMs}ms (DB/RPC: ${databaseRpcDurationMs}ms, Telegram API: ${telegramApiDurationMs}ms)`
+      `[${sbRegion}] Telegram update ${update.update_id} processed in ${metrics.totalDurationMs}ms (cold_start: ${cold}, bot_init: ${botInitMs}ms, callback_ack: ${callbackAckDurationMs}ms, db: ${databaseRpcDurationMs}ms, telegram_api: ${telegramApiDurationMs}ms)`
     );
 
     return Response.json({ ok: true }, { status: 200 });
@@ -265,16 +328,22 @@ export async function handleTelegramWebhook(req: Request, deps: WebhookDependenc
 
     const metrics = profiler.getMetrics();
     const sbRegion = getSbRegion(req);
-    const { databaseRpcDurationMs, telegramApiDurationMs } = categorizeDurations(metrics.stages);
+    const { databaseRpcDurationMs, telegramApiDurationMs, callbackAckDurationMs } = categorizeDurations(metrics.stages);
+    const botInitMs = Number((metrics.stages.bot_init ?? 0).toFixed(2));
 
     deps.logger.error(
       {
         event: "telegram_update_processing_failed",
         update_id: update.update_id,
-        SB_REGION: sbRegion,
+        cold_start: cold,
+        bot_init_ms: botInitMs,
+        callback_ack_ms: callbackAckDurationMs,
+        db_ms: databaseRpcDurationMs,
+        telegram_api_ms: telegramApiDurationMs,
+        total_ms: metrics.totalDurationMs,
         total_duration_ms: metrics.totalDurationMs,
         database_rpc_duration_ms: databaseRpcDurationMs,
-        telegram_api_duration_ms: telegramApiDurationMs,
+        SB_REGION: sbRegion,
         stages: metrics.stages,
         err: error,
       },

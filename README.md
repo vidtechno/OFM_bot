@@ -141,9 +141,51 @@ Edge function deploy qilingandan so'ng quyidagi tekshiruvlarni bajaring:
 
 ---
 
+## Low-Latency & User-Perceived Performance Optimizations
+
+Telegram inline buttonlari bosilganda foydalanuvchiga 2–3 soniyalik kechikish sezilmasligi uchun quyidagi optimizatsiyalar joriy qilingan:
+
+1. **Immediate Callback ACK (`callback_ack_ms < 300ms`)**:
+   - Har bir `callback_query` kelganda eng birinchi tarmoq harakati sifatida darhol `ctx.answerCallbackQuery()` bajariladi.
+   - Bu DB query, RPC yoki o'yin mantiqidan OLDIN ishlaydi, natijada Telegram loading spinner 100–250ms ichida yo'qoladi.
+
+2. **Module-level TTL Cache**:
+   - `competitions` (60 soniya TTL) va `formations` (300 soniya TTL) kabi o'zgarmas ma'lumotlar xotirada keshlanadi va har bir bosishda DB dan o'qilmaydi.
+
+3. **Request-Scoped Cache**:
+   - Bitta Telegram harakati davomida `sessionUser` va `managedClubs` qayta-qayta DB ga so'rov yubormaydi.
+
+4. **Regional Invocation (`ap-southeast-2`)**:
+   - Supabase Edge Functions webhook URL `?forceFunctionRegion=ap-southeast-2` parametri bilan database regioniga (Sidney) yaqin joylashgan isolate'da ishlaydi.
+
+5. **Edge Function Warmup Cron (`GET /?warmup=1`)**:
+   - Supabase `pg_cron` har 10 daqiqada `GET /?warmup=1` chaqirib, Deno isolate'ni issiq (warm) holatda ushlab turadi.
+   - Warmup so'rovi hech qanday DB query qilmaydi va Telegram API chaqirmaydi (0 DB/Telegram overhead).
+   - Oylik chaqiruv: ~4,320 ta (Supabase bepul 500,000 ta so'rov limitining 1% idan kam).
+
+> [!NOTE]
+> **Serverless Warmup haqida muhim eslatma**:
+> Warmup cron Deno isolate'larini issiq holatda ushlab, cold start ehtimolini keskin kamaytiradi. Biroq bu 100% "always-on" kafolati emas. Serverless platformalar (Deno Deploy / Supabase Edge Functions) parallel yuklama ortganda yangi worker ochishi, platforma yangilanganda yoki yangi deploy qilinganda isolate'larni qayta ishga tushirishi mumkin.
+
+---
+
+## Profiling & Metrics
+
+Har bir update uchun Supabase Logs bo'limida quyidagi structured JSON log yoziladi:
+- `cold_start`: boolean (birinchi marta yuklandimi)
+- `bot_init_ms`: grammY bot initialization vaqti
+- `callback_ack_ms`: Telegram spinner ACK yuborish vaqti (< 300ms)
+- `db_ms`: Database va RPC querylarining jami vaqti
+- `telegram_api_ms`: Telegram API (sendMessage / editMessageText) vaqti
+- `total_ms`: update'ni to'liq yakunlash vaqti
+- `SB_REGION`: Edge Function ishlagan mintaqa (masalan `ap-southeast-2`)
+
+---
+
 ## Avtomatik testlar va tekshiruv
 
 ```bash
 npm run check
 ```
 TypeScript tiplari va barcha Vitest unit testlarini to'liq tekshiradi.
+

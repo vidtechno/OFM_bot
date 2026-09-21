@@ -8,19 +8,19 @@ function one<T>(value: Relation<T>): T {
   return Array.isArray(value) ? value[0] as T : value;
 }
 
-export class LeagueRepository {
-  private competitionsCache: { data: CompetitionSummary[]; expiresAt: number } | null = null;
+let globalCompetitionsCache: { data: CompetitionSummary[]; expiresAt: number } | null = null;
 
+export class LeagueRepository {
   constructor(private readonly database: SupabaseClient) {}
 
   async listCompetitions(forceRefresh = false): Promise<CompetitionSummary[]> {
-    if (!forceRefresh && this.competitionsCache && Date.now() < this.competitionsCache.expiresAt) {
-      return this.competitionsCache.data;
+    if (!forceRefresh && globalCompetitionsCache && Date.now() < globalCompetitionsCache.expiresAt) {
+      return globalCompetitionsCache.data;
     }
     const { data, error } = await this.database.from("competitions").select("id, code, name").eq("is_active", true).order("name");
     if (error) throw new Error(`Competitionlarni olishda xato: ${error.message}`);
     const list = data as CompetitionSummary[];
-    this.competitionsCache = { data: list, expiresAt: Date.now() + 60_000 };
+    globalCompetitionsCache = { data: list, expiresAt: Date.now() + 60_000 };
     return list;
   }
 

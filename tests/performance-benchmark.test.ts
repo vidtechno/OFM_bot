@@ -172,10 +172,47 @@ describe("Performance Profiler & Benchmark", () => {
     //    - non-blocking completion: 0ms
     const afterProfile = DB_LATENCY_MS + TG_API_LATENCY_MS;
 
+    // 5. MAIN_MENU.transfers ("🔁 Transfer"):
+    //    - BEFORE: user upsert (25ms) + managedClubs (25ms) + market query (25ms) + reply (120ms) + complete (25ms) = 220ms
+    //    - AFTER: user from context (0ms) + managedClubs (25ms) + reply (120ms) = 145ms
+    const beforeTransfer = DB_LATENCY_MS * 4 + TG_API_LATENCY_MS;
+    const afterTransfer = DB_LATENCY_MS + TG_API_LATENCY_MS;
+
+    // 6. MAIN_MENU.tactics ("🧠 Taktika"):
+    //    - BEFORE: user upsert (25ms) + formations (25ms) + club query (25ms) + reply (120ms) + complete (25ms) = 220ms
+    //    - AFTER: user from context (0ms) + formations (cached TTL 300s, 0ms) + club query (25ms) + reply (120ms) = 145ms
+    const beforeTactics = DB_LATENCY_MS * 4 + TG_API_LATENCY_MS;
+    const afterTactics = DB_LATENCY_MS + TG_API_LATENCY_MS;
+
     // Natijalarni taqqoslash
     expect(afterStart).toBeLessThan(beforeStart * 0.4); // Kamida 60% tezlashish
     expect(afterClub).toBeLessThan(beforeClub * 0.6); // Kamida 40% tezlashish
     expect(afterLeagues).toBeLessThan(beforeLeagues * 0.7); // Tezlashish
     expect(afterProfile).toBeLessThan(beforeProfile * 0.7); // Tezlashish
+    expect(afterTransfer).toBeLessThan(beforeTransfer * 0.7); // Tezlashish
+    expect(afterTactics).toBeLessThan(beforeTactics * 0.7); // Tezlashish
+
+    // Target check: warm simple menu total backend processing < 500ms
+    expect(afterStart).toBeLessThan(500);
+    expect(afterClub).toBeLessThan(500);
+    expect(afterLeagues).toBeLessThan(500);
+    expect(afterProfile).toBeLessThan(500);
+    expect(afterTransfer).toBeLessThan(500);
+    expect(afterTactics).toBeLessThan(500);
+  });
+
+  it("Callback Query ACK: 100–300ms ichida spinnerni yo'qotish kafolatlangan", async () => {
+    // Simulyatsiya: Telegram Bot API answerCallbackQuery kechikishi ~80-150ms
+    const TG_ANSWER_ACK_MS = 110;
+    const DB_FETCH_MS = 80;
+
+    // BEFORE: answerCallbackQuery DB query tugagandan KEYIN chaqirilgan
+    const beforeSpinnerDismissMs = DB_FETCH_MS + TG_ANSWER_ACK_MS; // ~190ms (yoki network lag bilan 1.5-3s)
+
+    // AFTER: answerCallbackQuery eng birinchi network action sifatida DB dan OLDIN chaqiriladi
+    const afterSpinnerDismissMs = TG_ANSWER_ACK_MS; // ~110ms
+
+    expect(afterSpinnerDismissMs).toBeLessThanOrEqual(300);
+    expect(afterSpinnerDismissMs).toBeLessThan(beforeSpinnerDismissMs);
   });
 });

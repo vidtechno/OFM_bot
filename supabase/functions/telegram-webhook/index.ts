@@ -193,6 +193,14 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
     context.sessionUser = user;
     return user;
   };
+  const getContextManagedClubs = async (context, userId) => {
+    const cached = context.managedClubs;
+    if (cached) return cached;
+    const profiler = context.profiler;
+    const clubs = profiler ? await profiler.time("league_club_query", () => leagues.listManagedClubs(userId)) : await leagues.listManagedClubs(userId);
+    context.managedClubs = clubs;
+    return clubs;
+  };
   const lineupDrafts = /* @__PURE__ */ new Map();
   const transferClubSelection = /* @__PURE__ */ new Map();
   const privateLeagueJoinPending = /* @__PURE__ */ new Set();
@@ -217,6 +225,26 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
       await context.reply("Botdan foydalanish huquqingiz vaqtincha bloklangan.");
       return;
     }
+    await next();
+  });
+  bot.on("callback_query", async (context, next) => {
+    const profiler = context.profiler;
+    let answered = false;
+    const originalAnswer = context.answerCallbackQuery.bind(context);
+    context.answerCallbackQuery = async (params) => {
+      if (answered) return true;
+      answered = true;
+      const t0 = performance.now();
+      try {
+        return await originalAnswer(params);
+      } finally {
+        if (profiler) {
+          profiler.record("callback_ack", performance.now() - t0);
+        }
+      }
+    };
+    await context.answerCallbackQuery().catch(() => {
+    });
     await next();
   });
   const showCompetitions = async (context) => {
@@ -246,6 +274,7 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
     const user = startState.user;
     context.sessionUser = user;
     const managedClubs = startState.managedClubs;
+    context.managedClubs = managedClubs;
     logger.info({ event: "user_registered", userId: user.id, telegramId: user.telegram_id }, "User registered or updated");
     const welcomeLines = [
       `\u26BD Xush kelibsiz, ${telegramUser.first_name}!`,
@@ -253,20 +282,17 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
       "OFM Game\u2019da sevimli klubingizni boshqaring: tarkib tuzing, taktika tanlang, transfer qiling va chempionlik uchun kurashing! \u{1F3C6}"
     ];
     if (managedClubs.length === 0) {
-      welcomeLines.push("", "\u{1F4A1} Boshlash uchun ligaga qo\u2018shiling \u{1F447}");
+      welcomeLines.push("", "\u{1F4A1} Boshlash uchun quyidagi \xAB\u{1F3C6} Ligalar\xBB bo\u2018limiga o\u2018ting va bo\u2018sh klubni tanlang \u{1F447}");
+    } else {
+      welcomeLines.push("", `\u{1F3DF} Boshqarayotgan klublaringiz: ${managedClubs.length} ta`, "Kerakli bo\u2018limni tanlang \u{1F447}");
     }
-    const inlineMarkup = new InlineKeyboard().text("\u26BD Klubim", "home:club").text("\u{1F3C6} Ligaga qo\u2018shilish", "join").row().text("\u{1F464} Profilim", "pf:0");
     const mainKeyboard = createMainKeyboard(isAdmin(telegramUser.id));
-    await Promise.all([
-      context.reply(welcomeLines.join("\n"), { reply_markup: inlineMarkup }),
-      context.reply("Asosiy menyu doimo quyida \u{1F447}", { reply_markup: mainKeyboard })
-    ]);
+    await context.reply(welcomeLines.join("\n"), { reply_markup: mainKeyboard });
   });
   bot.hears(MAIN_MENU.club, async (context) => {
     if (!context.from) return;
     const user = await getContextUser(context);
-    const profiler = context.profiler;
-    const clubs = profiler ? await profiler.time("league_club_query", () => leagues.listManagedClubs(user.id)) : await leagues.listManagedClubs(user.id);
+    const clubs = await getContextManagedClubs(context, user.id);
     if (clubs.length === 0) return showCompetitions(context);
     if (clubs.length === 1) return showDashboard(context, clubs[0]);
     const keyboard = new InlineKeyboard();
@@ -277,8 +303,7 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
     if (!context.from) return;
     await context.answerCallbackQuery();
     const user = await getContextUser(context);
-    const profiler = context.profiler;
-    const clubs = profiler ? await profiler.time("league_club_query", () => leagues.listManagedClubs(user.id)) : await leagues.listManagedClubs(user.id);
+    const clubs = await getContextManagedClubs(context, user.id);
     if (!clubs.length) return showCompetitions(context);
     return showDashboard(context, clubs[0]);
   });
@@ -287,10 +312,10 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
     if (!context.from) return;
     const user = await getContextUser(context);
     const profiler = context.profiler;
-    const [profile, clubs] = profiler ? await Promise.all([
-      profiler.time("manager_profile", () => progression.profile(user.id)),
-      profiler.time("league_club_query", () => leagues.listManagedClubs(user.id))
-    ]) : await Promise.all([progression.profile(user.id), leagues.listManagedClubs(user.id)]);
+    const [profile, clubs] = await Promise.all([
+      profiler ? profiler.time("manager_profile", () => progression.profile(user.id)) : progression.profile(user.id),
+      getContextManagedClubs(context, user.id)
+    ]);
     await context.reply(formatProfile(profile, clubs), { reply_markup: new InlineKeyboard().text("\u{1F3C5} Global reyting", "lb:0") });
   });
   bot.callbackQuery("lb:0", async (context) => {
@@ -343,21 +368,21 @@ ${new Date(r.created_at).toLocaleString("uz-UZ")}`) : ["Hozircha audit yozuvlari
   bot.callbackQuery(/^(ab|au):([0-9a-f-]{36})$/, async (context) => {
     if (!context.from || !isAdmin(context.from.id)) return;
     await context.answerCallbackQuery();
-    const actor = await users.upsertFromTelegram(context.from);
+    const actor = await getContextUser(context);
     await admin.setBlocked(actor.id, context.match[2], context.match[1] === "ab");
     await context.reply("User holati yangilandi.");
   });
   bot.callbackQuery(/^as:([0-9a-f-]{36}):([01])$/, async (context) => {
     if (!context.from || !isAdmin(context.from.id)) return;
     await context.answerCallbackQuery();
-    const actor = await users.upsertFromTelegram(context.from);
+    const actor = await getContextUser(context);
     await admin.setSponsor(actor.id, context.match[1], context.match[2] === "1");
     await context.reply("Sponsor holati yangilandi.");
   });
   const showMarket = async (context, clubId, page, group = "ALL") => {
     if (!context.from) return;
     transferClubSelection.set(context.from.id, clubId);
-    const user = await users.upsertFromTelegram(context.from), items = await transfers.market(user.id, clubId, page, 8, group);
+    const user = await getContextUser(context), items = await transfers.market(user.id, clubId, page, 8, group);
     const keyboard = new InlineKeyboard();
     for (const item of items) keyboard.text(`\u26BD ${item.name} \xB7 \u2B50${item.overall} \xB7 ${transferMoney(item.askingPrice)}`, `gb:${item.listingId}`).row();
     keyboard.text("\u{1F31F} Barchasi", `gm:${clubId}:0:ALL`).text("\u{1F945} Darvozabon", `gm:${clubId}:0:GK`).row().text("\u{1F6E1} Himoyachi", `gm:${clubId}:0:DEF`).text("\u{1F9E0} Yarimhimoya", `gm:${clubId}:0:MID`).row().text("\u26A1 Hujumchi", `gm:${clubId}:0:ATT`);
@@ -371,14 +396,14 @@ ${formatMarket(items).split("\n\n")[1] ?? "Hozir faol listing yo\u2018q."}`, key
   bot.callbackQuery(/^tr:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await users.upsertFromTelegram(context.from), clubId = context.match[1];
-    if (!(await leagues.listManagedClubs(user.id)).some((club) => club.leagueClubId === clubId)) return;
+    const user = await getContextUser(context), clubId = context.match[1];
+    if (!(await getContextManagedClubs(context, user.id)).some((club) => club.leagueClubId === clubId)) return;
     await editOrReply(context, "\u{1F504} TRANSFER MARKAZI\n\nBu bo\u2018lim faqat tanlangan klubingiz uchun ishlaydi. Xarid, sotuv va takliflar shu klub budjetiga bog\u2018langan.", new InlineKeyboard().text("\u{1F30D} Bozor", `gm:${clubId}:0`).text("\u{1F50E} Ligadan izlash", `tf:${clubId}:0`).row().text("\u{1F4E4} Sotuvga qo\u2018yish", `ts:${clubId}`).text("\u{1F4E9} Kelgan takliflar", `io:${clubId}`).row().text("\u2190 Klub", `db:${clubId}`));
   });
   bot.callbackQuery(/^ts:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await users.upsertFromTelegram(context.from), clubId = context.match[1], players = await transfers.saleCandidates(user.id, clubId), kb = new InlineKeyboard(), browse = { clubId, players: /* @__PURE__ */ new Map() };
+    const user = await getContextUser(context), clubId = context.match[1], players = await transfers.saleCandidates(user.id, clubId), kb = new InlineKeyboard(), browse = { clubId, players: /* @__PURE__ */ new Map() };
     for (const [index, player] of players.slice(0, 20).entries()) {
       browse.players.set(String(index), player);
       kb.text(`${player.name} \xB7 ${player.position} \xB7 \u2B50${player.overall}`, `tl:${index}`).row();
@@ -401,7 +426,7 @@ Misol: 45M yoki 45000000`, new InlineKeyboard().text("\u2190 Bekor qilish", `ts:
   bot.callbackQuery(/^tf:([0-9a-f-]{36}):(\d+)$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await users.upsertFromTelegram(context.from), clubId = context.match[1], page = Number(context.match[2]), clubs = await transfers.leagueClubs(user.id, clubId), kb = new InlineKeyboard(), browse = { clubId, clubs: /* @__PURE__ */ new Map() };
+    const user = await getContextUser(context), clubId = context.match[1], page = Number(context.match[2]), clubs = await transfers.leagueClubs(user.id, clubId), kb = new InlineKeyboard(), browse = { clubId, clubs: /* @__PURE__ */ new Map() };
     for (const [index, club] of clubs.slice(page * 10, (page + 1) * 10).entries()) {
       browse.clubs.set(String(index), club.leagueClubId);
       kb.text(`\u{1F3DF} ${club.clubName}`, `tk:${index}:0`).row();
@@ -417,7 +442,7 @@ Misol: 45M yoki 45000000`, new InlineKeyboard().text("\u2190 Bekor qilish", `ts:
     const clubs = targetClubBrowses.get(context.from.id), targetClubId = clubs?.clubs.get(context.match[1]);
     if (!clubs || !targetClubId) return context.answerCallbackQuery({ text: "Klublar ro\u2018yxati eskirgan, qayta oching" });
     await context.answerCallbackQuery();
-    const user = await users.upsertFromTelegram(context.from), page = Number(context.match[2]), players = await transfers.clubTargets(user.id, clubs.clubId, targetClubId, page), kb = new InlineKeyboard(), browse = { clubId: clubs.clubId, players: /* @__PURE__ */ new Map() };
+    const user = await getContextUser(context), page = Number(context.match[2]), players = await transfers.clubTargets(user.id, clubs.clubId, targetClubId, page), kb = new InlineKeyboard(), browse = { clubId: clubs.clubId, players: /* @__PURE__ */ new Map() };
     for (const [index, player] of players.entries()) {
       browse.players.set(String(index), player);
       kb.text(`${player.name} \xB7 ${player.position} \xB7 \u2B50${player.overall}`, `to:${index}`).row();
@@ -445,7 +470,7 @@ Misol: 55M yoki 55000000`, new InlineKeyboard().text("\u2190 Futbolchilar", `tf:
   bot.callbackQuery(/^io:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await users.upsertFromTelegram(context.from), clubId = context.match[1], offers = await transfers.incomingOffers(user.id, clubId), kb = new InlineKeyboard();
+    const user = await getContextUser(context), clubId = context.match[1], offers = await transfers.incomingOffers(user.id, clubId), kb = new InlineKeyboard();
     incomingOfferClubs.set(context.from.id, clubId);
     for (const offer of offers) kb.text(`${offer.playerName} \xB7 ${offer.buyerClub} \xB7 ${transferMoney(offer.amount)}`, `iv:${offer.offerId}`).row();
     kb.text("\u2190 Transfer markazi", `tr:${clubId}`);
@@ -455,7 +480,7 @@ Misol: 55M yoki 55000000`, new InlineKeyboard().text("\u2190 Futbolchilar", `tf:
     if (!context.from) return;
     const clubId = incomingOfferClubs.get(context.from.id);
     if (!clubId) return context.answerCallbackQuery({ text: "Transfer markazini qayta oching" });
-    const user = await users.upsertFromTelegram(context.from), offer = (await transfers.incomingOffers(user.id, clubId)).find((item) => item.offerId === context.match[1]);
+    const user = await getContextUser(context), offer = (await transfers.incomingOffers(user.id, clubId)).find((item) => item.offerId === context.match[1]);
     if (!offer) return context.answerCallbackQuery({ text: "Taklif endi faol emas" });
     await context.answerCallbackQuery();
     await editOrReply(context, `\u{1F4E9} TAKLIF
@@ -467,7 +492,7 @@ Misol: 55M yoki 55000000`, new InlineKeyboard().text("\u2190 Futbolchilar", `tf:
   });
   bot.callbackQuery(/^ic:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
-    const user = await users.upsertFromTelegram(context.from), offer = await transfers.notification(context.match[1]);
+    const user = await getContextUser(context), offer = await transfers.notification(context.match[1]);
     if (!offer || offer.sellerTelegramId !== context.from.id) return context.answerCallbackQuery({ text: "Taklif endi faol emas" });
     transferInputs.set(context.from.id, { mode: "COUNTER", clubId: "", offerId: offer.offerId, playerName: offer.playerName, minimum: offer.amount + 1e5 });
     await context.answerCallbackQuery();
@@ -478,7 +503,7 @@ Minimal: ${transferMoney(offer.amount + 1e5)}`, new InlineKeyboard().text("\u219
   });
   bot.callbackQuery(/^ac:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
-    const user = await users.upsertFromTelegram(context.from), offer = await transfers.notification(context.match[1]);
+    const user = await getContextUser(context), offer = await transfers.notification(context.match[1]);
     if (!offer || offer.buyerTelegramId !== context.from.id) return context.answerCallbackQuery({ text: "Taklif endi faol emas" });
     await context.answerCallbackQuery({ text: "Transfer yakunlanmoqda\u2026" });
     try {
@@ -491,7 +516,7 @@ Minimal: ${transferMoney(offer.amount + 1e5)}`, new InlineKeyboard().text("\u219
   });
   bot.callbackQuery(/^(ia|ir):([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
-    const user = await users.upsertFromTelegram(context.from), offer = await transfers.notification(context.match[2]);
+    const user = await getContextUser(context), offer = await transfers.notification(context.match[2]);
     if (!offer || offer.sellerTelegramId !== context.from.id) return context.answerCallbackQuery({ text: "Taklif endi faol emas" });
     await context.answerCallbackQuery({ text: "Taklif qayta ishlanmoqda\u2026" });
     try {
@@ -512,14 +537,14 @@ Minimal: ${transferMoney(offer.amount + 1e5)}`, new InlineKeyboard().text("\u219
     await context.answerCallbackQuery();
     const clubId = transferClubSelection.get(context.from.id);
     if (!clubId) return context.reply("Transfer markaziga qaytib, klubni qayta tanlang.");
-    const user = await users.upsertFromTelegram(context.from), item = await transfers.listing(user.id, clubId, context.match[1]);
+    const user = await getContextUser(context), item = await transfers.listing(user.id, clubId, context.match[1]);
     if (!item) return editOrReply(context, "Bu futbolchi sizning ligangiz bozorida faol emas.", new InlineKeyboard().text("\u2190 Bozor", `gm:${clubId}:0`));
     await editOrReply(context, formatListing(item), new InlineKeyboard().text("Xaridni tasdiqlash", `gc:${item.listingId}`).row().text("\u2190 Bozor", `gm:${clubId}:0`));
   });
   bot.callbackQuery(/^gc:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery({ text: "Transfer tekshirilmoqda\u2026" });
-    const user = await users.upsertFromTelegram(context.from), clubId = transferClubSelection.get(context.from.id);
+    const user = await getContextUser(context), clubId = transferClubSelection.get(context.from.id);
     if (!clubId) return context.reply("Transfer markaziga qaytib, klubni qayta tanlang.");
     try {
       const result = await transfers.buy(user.id, clubId, context.match[1]);
@@ -540,7 +565,7 @@ Minimal: ${transferMoney(offer.amount + 1e5)}`, new InlineKeyboard().text("\u219
       await context.reply(`Miqdor noto\u2018g\u2018ri. Kamida ${transferMoney(pending.minimum)} yuboring.`);
       return;
     }
-    const user = await users.upsertFromTelegram(context.from);
+    const user = await getContextUser(context);
     try {
       if (pending.mode === "SELL") {
         await transfers.listForSale(user.id, pending.clubId, pending.clubPlayerId, Math.round(amount));
@@ -600,7 +625,7 @@ Klub tanlang:`, { reply_markup: privateClubKeyboard(clubs, code, 0) });
   bot.callbackQuery(/^pc:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery({ text: "Private liga yaratilmoqda\u2026" });
-    const user = await users.upsertFromTelegram(context.from);
+    const user = await getContextUser(context);
     try {
       const league = await leagues.createPrivateLeague(user.id, context.match[1]);
       await editOrReply(context, `\u2705 PRIVATE LIGA TAYYOR
@@ -641,10 +666,10 @@ Kodni do\u2018stlaringizga yuboring. Ular \u201CKod bilan qo\u2018shilish\u201D 
   bot.callbackQuery(/^pcl:([0-9a-f-]{36}):([A-Z0-9]{8})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery({ text: "Klub biriktirilmoqda\u2026" });
-    const user = await users.upsertFromTelegram(context.from);
+    const user = await getContextUser(context);
     try {
       const result = await leagues.claimPrivateClub(user.id, context.match[2], context.match[1]);
-      const club = (await leagues.listManagedClubs(user.id)).find((item) => item.leagueClubId === result.leagueClubId);
+      const club = (await getContextManagedClubs(context, user.id)).find((item) => item.leagueClubId === result.leagueClubId);
       if (club) await showDashboard(context, club);
     } catch (error) {
       logger.warn({ event: "private_club_claim_failed", err: error }, "Private club claim failed");
@@ -693,7 +718,7 @@ Klubning mavjud holati saqlanadi.`, keyboard);
   bot.callbackQuery(/^cl:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery({ text: "Klub tekshirilmoqda\u2026" });
-    const user = await users.upsertFromTelegram(context.from);
+    const user = await getContextUser(context);
     try {
       const result = await leagues.claimClub(user.id, context.match[1]);
       logger.info({ event: "club_claimed", userId: user.id, leagueClubId: result.leagueClubId }, "Club claimed");
@@ -708,8 +733,8 @@ Klubning mavjud holati saqlanadi.`, keyboard);
   bot.callbackQuery(/^db:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await users.upsertFromTelegram(context.from);
-    const club = (await leagues.listManagedClubs(user.id)).find((item) => item.leagueClubId === context.match[1]);
+    const user = await getContextUser(context);
+    const club = (await getContextManagedClubs(context, user.id)).find((item) => item.leagueClubId === context.match[1]);
     if (!club) {
       await context.reply("Bu klub sizga tegishli emas.");
       return;
@@ -719,9 +744,9 @@ Klubning mavjud holati saqlanadi.`, keyboard);
   bot.callbackQuery(/^sq:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await users.upsertFromTelegram(context.from);
+    const user = await getContextUser(context);
     const leagueClubId = context.match[1];
-    const club = (await leagues.listManagedClubs(user.id)).find((item) => item.leagueClubId === leagueClubId);
+    const club = (await getContextManagedClubs(context, user.id)).find((item) => item.leagueClubId === leagueClubId);
     if (!club) {
       await context.reply("Bu klub sizga tegishli emas.");
       return;
@@ -736,7 +761,7 @@ Klubning mavjud holati saqlanadi.`, keyboard);
   bot.callbackQuery(/^mt:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await users.upsertFromTelegram(context.from);
+    const user = await getContextUser(context);
     const leagueClubId = context.match[1];
     const upcoming = await fixtures.listUpcoming(user.id, leagueClubId);
     await editOrReply(context, formatUpcomingFixtures(upcoming), new InlineKeyboard().text("Natijalar", `rs:${leagueClubId}`).text("Liga jadvali", `tb:${leagueClubId}`).row().text("\u2190 Klub", `db:${leagueClubId}`));
@@ -744,33 +769,33 @@ Klubning mavjud holati saqlanadi.`, keyboard);
   bot.callbackQuery(/^rs:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await users.upsertFromTelegram(context.from);
+    const user = await getContextUser(context);
     const club = context.match[1];
     await editOrReply(context, formatResults(await matches.history(user.id, club)), new InlineKeyboard().text("Keyingi matchlar", `mt:${club}`).text("\u2190 Klub", `db:${club}`));
   });
   bot.callbackQuery(/^tb:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await users.upsertFromTelegram(context.from);
+    const user = await getContextUser(context);
     const club = context.match[1];
     await editOrReply(context, formatTable(await matches.table(user.id, club)), new InlineKeyboard().text("\u2190 Klub", `db:${club}`));
   });
   bot.callbackQuery(/^sc:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await users.upsertFromTelegram(context.from), club = context.match[1];
+    const user = await getContextUser(context), club = context.match[1];
     await editOrReply(context, formatLeaders("\u{1F945} LIGA TO\u2018PURARLARI", await matches.leaders(user.id, club, "goals"), "gol"), new InlineKeyboard().text("\u{1F3AF} Assistentlar", `asst:${club}`).row().text("\u2190 Klub", `db:${club}`));
   });
   bot.callbackQuery(/^asst:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await users.upsertFromTelegram(context.from), club = context.match[1];
+    const user = await getContextUser(context), club = context.match[1];
     await editOrReply(context, formatLeaders("\u{1F3AF} LIGA ASSISTENTLARI", await matches.leaders(user.id, club, "assists"), "assist"), new InlineKeyboard().text("\u{1F945} To\u2018purarlar", `sc:${club}`).row().text("\u2190 Klub", `db:${club}`));
   });
   bot.callbackQuery(/^fn:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await users.upsertFromTelegram(context.from);
+    const user = await getContextUser(context);
     const club = context.match[1];
     await editOrReply(context, formatFinances(await matches.finances(user.id, club)), new InlineKeyboard().text("Homiylar", `sp:${club}`).row().text("\u2190 Klub", `db:${club}`));
   });
@@ -785,7 +810,7 @@ Klubning mavjud holati saqlanadi.`, keyboard);
   bot.callbackQuery(/^sa:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await users.upsertFromTelegram(context.from), club = (await leagues.listManagedClubs(user.id))[0]?.leagueClubId, sponsor = context.match[1];
+    const user = await getContextUser(context), club = (await getContextManagedClubs(context, user.id))[0]?.leagueClubId, sponsor = context.match[1];
     if (!club) return;
     await progression.acceptSponsor(user.id, club, sponsor);
     const selected = (await progression.sponsors()).find((s) => s.id === sponsor);
@@ -809,13 +834,13 @@ Klubning mavjud holati saqlanadi.`, keyboard);
   bot.callbackQuery(/^tc:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await users.upsertFromTelegram(context.from);
+    const user = await getContextUser(context);
     await showTactics(context, user.id, context.match[1]);
   });
   bot.callbackQuery(/^fm:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await users.upsertFromTelegram(context.from);
+    const user = await getContextUser(context);
     await tactics.get(user.id, context.match[1]);
     const keyboard = new InlineKeyboard();
     for (const formation of await tactics.listFormations()) keyboard.text(`\u{1F4D0} ${formation.name}`, `fs:${context.match[1]}:${formation.code}`).row();
@@ -825,14 +850,14 @@ Klubning mavjud holati saqlanadi.`, keyboard);
   bot.callbackQuery(/^fs:([0-9a-f-]{36}):(\d+)$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery({ text: "Boshlang\u2018ich tarkib moslanmoqda\u2026" });
-    const user = await users.upsertFromTelegram(context.from);
+    const user = await getContextUser(context);
     await tactics.autoSave(user.id, context.match[1], context.match[2]);
     await showTactics(context, user.id, context.match[1]);
   });
   bot.callbackQuery(/^xi:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await users.upsertFromTelegram(context.from);
+    const user = await getContextUser(context);
     const lineup = await tactics.lineup(user.id, context.match[1]);
     await editOrReply(context, formatLineup(lineup.formation, lineup.players), new InlineKeyboard().text("\u270F\uFE0F 11 talikni tanlash", `xe:${context.match[1]}`).row().text("\u{1F916} Avtomatik tanlash", `xa:${context.match[1]}`).row().text("\u2190 Taktika", `tc:${context.match[1]}`).text("\u2190 Klub", `db:${context.match[1]}`));
   });
@@ -856,7 +881,7 @@ Futbolchini tanlang:` : "Tarkib tayyor. Endi saqlang \u{1F447}"].join("\n");
   bot.callbackQuery(/^xe:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await users.upsertFromTelegram(context.from), clubId = context.match[1], tactic = await tactics.get(user.id, clubId), formation = (await tactics.listFormations()).find((f) => f.code === tactic.formationCode);
+    const user = await getContextUser(context), clubId = context.match[1], tactic = await tactics.get(user.id, clubId), formation = (await tactics.listFormations()).find((f) => f.code === tactic.formationCode);
     if (!formation) return;
     const draft = { clubId, formationCode: formation.code, formationName: formation.name, slots: formation.slots, players: await squads.listOwnedClubSquad(user.id, clubId), picks: [] };
     lineupDrafts.set(context.from.id, draft);
@@ -887,7 +912,7 @@ Futbolchini tanlang:` : "Tarkib tayyor. Endi saqlang \u{1F447}"].join("\n");
     lineupDrafts.delete(context.from.id);
     await context.answerCallbackQuery({ text: "Tanlash bekor qilindi" });
     if (draft) {
-      const user = await users.upsertFromTelegram(context.from);
+      const user = await getContextUser(context);
       await showTactics(context, user.id, draft.clubId);
     }
   });
@@ -896,7 +921,7 @@ Futbolchini tanlang:` : "Tarkib tayyor. Endi saqlang \u{1F447}"].join("\n");
     const draft = lineupDrafts.get(context.from.id);
     if (!draft || draft.picks.length !== 11) return context.answerCallbackQuery({ text: "Avval 11 futbolchini tanlang" });
     await context.answerCallbackQuery({ text: "Tarkib saqlanmoqda\u2026" });
-    const user = await users.upsertFromTelegram(context.from);
+    const user = await getContextUser(context);
     await tactics.saveManual(user.id, draft.clubId, draft.formationCode, draft.picks);
     lineupDrafts.delete(context.from.id);
     const lineup = await tactics.lineup(user.id, draft.clubId);
@@ -907,7 +932,7 @@ Futbolchini tanlang:` : "Tarkib tayyor. Endi saqlang \u{1F447}"].join("\n");
   bot.callbackQuery(/^xa:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery({ text: "Eng mos futbolchilar tanlanmoqda\u2026" });
-    const user = await users.upsertFromTelegram(context.from), clubId = context.match[1], tactic = await tactics.get(user.id, clubId);
+    const user = await getContextUser(context), clubId = context.match[1], tactic = await tactics.get(user.id, clubId);
     await tactics.autoSave(user.id, clubId, tactic.formationCode);
     const lineup = await tactics.lineup(user.id, clubId);
     await editOrReply(context, `${formatLineup(lineup.formation, lineup.players)}
@@ -916,7 +941,7 @@ Futbolchini tanlang:` : "Tarkib tayyor. Endi saqlang \u{1F447}"].join("\n");
   });
   bot.callbackQuery(/^nu:([0-9a-f-]{36}):(pressing|tempo|defensiveLine|width):([+-])$/, async (context) => {
     if (!context.from) return;
-    const user = await users.upsertFromTelegram(context.from);
+    const user = await getContextUser(context);
     const club = context.match[1], field = context.match[2];
     const current = await tactics.get(user.id, club);
     const value = Math.max(0, Math.min(100, current[field] + (context.match[3] === "+" ? 10 : -10)));
@@ -927,7 +952,7 @@ Futbolchini tanlang:` : "Tarkib tayyor. Endi saqlang \u{1F447}"].join("\n");
   bot.callbackQuery(/^cy:([0-9a-f-]{36}):(mentality|passingStyle|attackFocus|tackling)$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await users.upsertFromTelegram(context.from);
+    const user = await getContextUser(context);
     const club = context.match[1], field = context.match[2];
     const current = await tactics.get(user.id, club);
     const options = { mentality: ["VERY_DEFENSIVE", "DEFENSIVE", "BALANCED", "ATTACKING", "VERY_ATTACKING"], passingStyle: ["SHORT", "MIXED", "DIRECT"], attackFocus: ["LEFT", "CENTRE", "RIGHT", "BOTH_WINGS", "MIXED"], tackling: ["CAUTIOUS", "NORMAL", "AGGRESSIVE"] }[field];
@@ -1023,20 +1048,20 @@ var UserRepository = class {
 function one(value) {
   return Array.isArray(value) ? value[0] : value;
 }
+var globalCompetitionsCache = null;
 var LeagueRepository = class {
   constructor(database) {
     this.database = database;
   }
   database;
-  competitionsCache = null;
   async listCompetitions(forceRefresh = false) {
-    if (!forceRefresh && this.competitionsCache && Date.now() < this.competitionsCache.expiresAt) {
-      return this.competitionsCache.data;
+    if (!forceRefresh && globalCompetitionsCache && Date.now() < globalCompetitionsCache.expiresAt) {
+      return globalCompetitionsCache.data;
     }
     const { data, error } = await this.database.from("competitions").select("id, code, name").eq("is_active", true).order("name");
     if (error) throw new Error(`Competitionlarni olishda xato: ${error.message}`);
     const list = data;
-    this.competitionsCache = { data: list, expiresAt: Date.now() + 6e4 };
+    globalCompetitionsCache = { data: list, expiresAt: Date.now() + 6e4 };
     return list;
   }
   async listJoinableLeagues(competitionId) {
@@ -1210,6 +1235,7 @@ function autoPickLineup(players, slots) {
 
 // src/tactics/tactics.repository.ts
 var one3 = (value) => Array.isArray(value) ? value[0] : value;
+var globalFormationsCache = null;
 var TacticsRepository = class {
   constructor(db, squads) {
     this.db = db;
@@ -1217,13 +1243,15 @@ var TacticsRepository = class {
   }
   db;
   squads;
-  formationsCache = null;
   async listFormations(forceRefresh = false) {
-    if (!forceRefresh && this.formationsCache) return this.formationsCache;
+    if (!forceRefresh && globalFormationsCache && Date.now() < globalFormationsCache.expiresAt) {
+      return globalFormationsCache.data;
+    }
     const { data, error } = await this.db.from("formations").select("id,code,name,slots").order("name");
     if (error) throw error;
-    this.formationsCache = data;
-    return this.formationsCache;
+    const formations = data;
+    globalFormationsCache = { data: formations, expiresAt: Date.now() + 3e5 };
+    return formations;
   }
   async get(userId, clubId) {
     const { data, error } = await this.db.from("tactics").select("mentality,pressing,tempo,defensive_line,width,passing_style,attack_focus,tackling,formations!inner(code,name),league_clubs!inner(manager_user_id)").eq("league_club_id", clubId).eq("league_clubs.manager_user_id", userId).single();
@@ -1813,11 +1841,15 @@ function getSbRegion(req) {
   }
   return "unknown";
 }
+var isColdStart = true;
 function categorizeDurations(stages) {
   let databaseRpcDurationMs = 0;
   let telegramApiDurationMs = 0;
+  let callbackAckDurationMs = 0;
   for (const [stage, duration] of Object.entries(stages)) {
-    if (stage.startsWith("telegram_api")) {
+    if (stage === "callback_ack") {
+      callbackAckDurationMs += duration;
+    } else if (stage.startsWith("telegram_api")) {
       telegramApiDurationMs += duration;
     } else if (stage.startsWith("idempotency") || stage.includes("rpc") || stage.includes("user_") || stage.includes("manager_") || stage.includes("league_") || stage.includes("db") || stage.includes("query") || stage.includes("fixture") || stage.includes("squad") || stage.includes("tactics")) {
       databaseRpcDurationMs += duration;
@@ -1825,17 +1857,47 @@ function categorizeDurations(stages) {
   }
   return {
     databaseRpcDurationMs: Number(databaseRpcDurationMs.toFixed(2)),
-    telegramApiDurationMs: Number(telegramApiDurationMs.toFixed(2))
+    telegramApiDurationMs: Number(telegramApiDurationMs.toFixed(2)),
+    callbackAckDurationMs: Number(callbackAckDurationMs.toFixed(2))
   };
 }
 async function handleTelegramWebhook(req, deps) {
   const profiler = new RequestProfiler();
   deps.bot.__currentProfiler = profiler;
   if (req.method === "GET") {
+    const cold2 = isColdStart;
+    isColdStart = false;
+    let isWarmup = false;
+    try {
+      const url = new URL(req.url);
+      isWarmup = url.searchParams.get("warmup") === "1";
+    } catch {
+    }
+    if (isWarmup) {
+      deps.logger.info(
+        {
+          event: "webhook_warmup_ping",
+          cold_start: cold2,
+          SB_REGION: getSbRegion(req)
+        },
+        `Warmup ping received (cold_start: ${cold2})`
+      );
+      return Response.json(
+        {
+          status: "ok",
+          service: "telegram-webhook",
+          warmup: true,
+          cold_start: cold2,
+          timestamp: (/* @__PURE__ */ new Date()).toISOString()
+        },
+        { status: 200 }
+      );
+    }
     return Response.json(
       {
         status: "ok",
         service: "telegram-webhook",
+        cold_start: cold2,
         timestamp: (/* @__PURE__ */ new Date()).toISOString()
       },
       { status: 200 }
@@ -1850,6 +1912,8 @@ async function handleTelegramWebhook(req, deps) {
   if (req.method !== "POST") {
     return Response.json({ error: "Method not allowed" }, { status: 405 });
   }
+  const cold = isColdStart;
+  isColdStart = false;
   if (deps.secretToken && !verifySecretToken(req, deps.secretToken)) {
     deps.logger.warn({ event: "telegram_webhook_unauthorized" }, "Invalid Telegram secret token header");
     return Response.json({ error: "Unauthorized: invalid secret token" }, { status: 401 });
@@ -1883,18 +1947,24 @@ async function handleTelegramWebhook(req, deps) {
     }
     const metrics = profiler.getMetrics();
     const sbRegion = getSbRegion(req);
-    const { databaseRpcDurationMs, telegramApiDurationMs } = categorizeDurations(metrics.stages);
+    const { databaseRpcDurationMs, telegramApiDurationMs, callbackAckDurationMs } = categorizeDurations(metrics.stages);
+    const botInitMs = Number((metrics.stages.bot_init ?? 0).toFixed(2));
     deps.logger.info(
       {
         event: "telegram_update_profiled",
         update_id: update.update_id,
-        SB_REGION: sbRegion,
+        cold_start: cold,
+        bot_init_ms: botInitMs,
+        callback_ack_ms: callbackAckDurationMs,
+        db_ms: databaseRpcDurationMs,
+        telegram_api_ms: telegramApiDurationMs,
+        total_ms: metrics.totalDurationMs,
         total_duration_ms: metrics.totalDurationMs,
         database_rpc_duration_ms: databaseRpcDurationMs,
-        telegram_api_duration_ms: telegramApiDurationMs,
+        SB_REGION: sbRegion,
         stages: metrics.stages
       },
-      `[${sbRegion}] Telegram update ${update.update_id} processed in ${metrics.totalDurationMs}ms (DB/RPC: ${databaseRpcDurationMs}ms, Telegram API: ${telegramApiDurationMs}ms)`
+      `[${sbRegion}] Telegram update ${update.update_id} processed in ${metrics.totalDurationMs}ms (cold_start: ${cold}, bot_init: ${botInitMs}ms, callback_ack: ${callbackAckDurationMs}ms, db: ${databaseRpcDurationMs}ms, telegram_api: ${telegramApiDurationMs}ms)`
     );
     return Response.json({ ok: true }, { status: 200 });
   } catch (error) {
@@ -1902,15 +1972,21 @@ async function handleTelegramWebhook(req, deps) {
     await markTelegramUpdateFailed(deps.database, update.update_id, message);
     const metrics = profiler.getMetrics();
     const sbRegion = getSbRegion(req);
-    const { databaseRpcDurationMs, telegramApiDurationMs } = categorizeDurations(metrics.stages);
+    const { databaseRpcDurationMs, telegramApiDurationMs, callbackAckDurationMs } = categorizeDurations(metrics.stages);
+    const botInitMs = Number((metrics.stages.bot_init ?? 0).toFixed(2));
     deps.logger.error(
       {
         event: "telegram_update_processing_failed",
         update_id: update.update_id,
-        SB_REGION: sbRegion,
+        cold_start: cold,
+        bot_init_ms: botInitMs,
+        callback_ack_ms: callbackAckDurationMs,
+        db_ms: databaseRpcDurationMs,
+        telegram_api_ms: telegramApiDurationMs,
+        total_ms: metrics.totalDurationMs,
         total_duration_ms: metrics.totalDurationMs,
         database_rpc_duration_ms: databaseRpcDurationMs,
-        telegram_api_duration_ms: telegramApiDurationMs,
+        SB_REGION: sbRegion,
         stages: metrics.stages,
         err: error
       },

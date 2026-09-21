@@ -7,17 +7,20 @@ export interface Tactic { formationCode:string;formationName:string;mentality:st
 export interface LineupEntry { clubPlayerId:string;slotKey:string;slotPosition:string;shortName:string;overall:number;effectiveRating:number }
 const one=<T>(value:T|T[]):T=>Array.isArray(value)?value[0] as T:value;
 
-export class TacticsRepository {
-  private formationsCache: Formation[] | null = null;
+let globalFormationsCache: { data: Formation[]; expiresAt: number } | null = null;
 
+export class TacticsRepository {
   constructor(private readonly db:SupabaseClient,private readonly squads:SquadRepository){}
 
   async listFormations(forceRefresh = false): Promise<Formation[]> {
-    if (!forceRefresh && this.formationsCache) return this.formationsCache;
+    if (!forceRefresh && globalFormationsCache && Date.now() < globalFormationsCache.expiresAt) {
+      return globalFormationsCache.data;
+    }
     const { data, error } = await this.db.from("formations").select("id,code,name,slots").order("name");
     if (error) throw error;
-    this.formationsCache = data as Formation[];
-    return this.formationsCache;
+    const formations = data as Formation[];
+    globalFormationsCache = { data: formations, expiresAt: Date.now() + 300_000 };
+    return formations;
   }
 
   async get(userId:string,clubId:string):Promise<Tactic>{const{data,error}=await this.db.from("tactics").select("mentality,pressing,tempo,defensive_line,width,passing_style,attack_focus,tackling,formations!inner(code,name),league_clubs!inner(manager_user_id)").eq("league_club_id",clubId).eq("league_clubs.manager_user_id",userId).single();if(error)throw error;const formation=one<any>(data.formations);return{formationCode:formation.code,formationName:formation.name,mentality:data.mentality,pressing:data.pressing,tempo:data.tempo,defensiveLine:data.defensive_line,width:data.width,passingStyle:data.passing_style,attackFocus:data.attack_focus,tackling:data.tackling};}

@@ -88,6 +88,29 @@ describe("handleTelegramWebhook", () => {
     expect(body.timestamp).toBeDefined();
   });
 
+  it("GET /?warmup=1 so'roviga warmup: true va cold_start holatini qaytaradi (DB yoki Telegram ga bormasdan)", async () => {
+    const logger = createMockLogger();
+    const req = new Request("https://example.com/functions/v1/telegram-webhook?warmup=1", { method: "GET" });
+    const res = await handleTelegramWebhook(req, {
+      bot: {} as unknown as Bot<Context>,
+      database: {} as unknown as SupabaseClient,
+      logger,
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({
+      status: "ok",
+      service: "telegram-webhook",
+      warmup: true,
+    });
+    expect(typeof body.cold_start).toBe("boolean");
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ event: "webhook_warmup_ping" }),
+      expect.stringContaining("Warmup ping received")
+    );
+  });
+
   it("OPTIONS so'roviga 204 No Content qaytaradi", async () => {
     const req = new Request("https://example.com", { method: "OPTIONS" });
     const res = await handleTelegramWebhook(req, {
@@ -297,17 +320,19 @@ describe("getSbRegion", () => {
 });
 
 describe("categorizeDurations", () => {
-  it("bosqichlarni DB/RPC va Telegram API turlariga to'g'ri ajratadi", async () => {
+  it("bosqichlarni DB/RPC, Telegram API va callback ACK turlariga to'g'ri ajratadi", async () => {
     const { categorizeDurations } = await import("../src/webhook/telegram-handler.js");
     const stages = {
       idempotency_claim: 25.5,
       user_start_state_rpc: 45.2,
       "telegram_api:sendMessage": 120.3,
+      callback_ack: 42.1,
       bot_init: 0.1,
     };
     const result = categorizeDurations(stages);
     expect(result.databaseRpcDurationMs).toBe(70.7);
     expect(result.telegramApiDurationMs).toBe(120.3);
+    expect(result.callbackAckDurationMs).toBe(42.1);
   });
 });
 
