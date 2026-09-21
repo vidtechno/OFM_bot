@@ -1,6 +1,7 @@
 import { Bot, InlineKeyboard, type Context } from "grammy";
-import type { UserRepository } from "../users/user.repository.js";
+import type { UserRepository, RegisteredUser } from "../users/user.repository.js";
 import type { Logger } from "../lib/logger.js";
+import type { RequestProfiler } from "../lib/profiler.js";
 import type { LeagueRepository } from "../leagues/league.repository.js";
 import type { AvailableClub, ManagedClub } from "../leagues/types.js";
 import { claimErrorMessage, formatClubDashboard } from "../leagues/presentation.js";
@@ -71,6 +72,34 @@ function dashboardKeyboard(leagueClubId: string): InlineKeyboard {
 export function createBot({ token, users, leagues, squads, tactics, fixtures, matches, transfers, progression, admin, adminTelegramIds, logger }: BotDependencies): Bot {
   const bot = new Bot(token);
   const isAdmin=(telegramId:number)=>adminTelegramIds.includes(telegramId);
+
+  // Time all outgoing Telegram API calls for instrumentation
+  bot.api.config.use(async (prev, method, payload, signal) => {
+    const t0 = performance.now();
+    try {
+      return await prev(method, payload, signal);
+    } finally {
+      const elapsed = performance.now() - t0;
+      const profiler: RequestProfiler | undefined = (bot as any).__currentProfiler;
+      if (profiler) {
+        profiler.record(`telegram_api:${method}`, elapsed);
+        profiler.record("telegram_api", elapsed);
+      }
+    }
+  });
+
+  const getContextUser = async (context: Context): Promise<RegisteredUser> => {
+    const cached = (context as any).sessionUser as RegisteredUser | undefined;
+    if (cached) return cached;
+    if (!context.from) throw new Error("No telegram user");
+    const profiler: RequestProfiler | undefined = (context as any).profiler;
+    const user = profiler
+      ? await profiler.time("user_upsert", () => users.upsertFromTelegram(context.from!))
+      : await users.upsertFromTelegram(context.from!);
+    (context as any).sessionUser = user;
+    return user;
+  };
+
   type LineupDraft={clubId:string;formationCode:string;formationName:string;slots:Array<{key:string;position:string}>;players:SquadPlayer[];picks:Array<{slotKey:string;clubPlayerId:string}>};
   const lineupDrafts=new Map<number,LineupDraft>();
   const transferClubSelection=new Map<number,string>();
@@ -83,10 +112,22 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
   const targetClubBrowses=new Map<number,{clubId:string;clubs:Map<string,string>}>();
   const incomingOfferClubs=new Map<number,string>();
   const sendUpdate=async(telegramId:number|null,text:string,keyboard:InlineKeyboard):Promise<void>=>{if(!telegramId)return;try{await bot.api.sendMessage(telegramId,text,{reply_markup:keyboard});}catch(error){logger.warn({event:"transfer_notification_failed",err:error},"Transfer notification failed");}};
-  bot.use(async(context,next)=>{if(!context.from)return next();const user=await users.upsertFromTelegram(context.from);if(user.is_blocked&&!isAdmin(context.from.id)){await context.reply("Botdan foydalanish huquqingiz vaqtincha bloklangan.");return;}await next();});
+
+  bot.use(async(context,next)=>{
+    if(!context.from)return next();
+    const user = await getContextUser(context);
+    if(user.is_blocked&&!isAdmin(context.from.id)){
+      await context.reply("Botdan foydalanish huquqingiz vaqtincha bloklangan.");
+      return;
+    }
+    await next();
+  });
 
   const showCompetitions = async (context: Context): Promise<void> => {
-    const competitions = await leagues.listCompetitions();
+    const profiler: RequestProfiler | undefined = (context as any).profiler;
+    const competitions = profiler
+      ? await profiler.time("league_club_query", () => leagues.listCompetitions())
+      : await leagues.listCompetitions();
     const keyboard = new InlineKeyboard();
     for (const competition of competitions) keyboard.text(competition.name, `cmp:${competition.id}`).row();
     keyboard.text("🔒 Private liga yaratish", "pv").text("🔑 Kod bilan qo‘shilish", "pj");
@@ -96,7 +137,11 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
   const showDashboard = async (context: Context, club: ManagedClub): Promise<void> => {
     const telegramUser = context.from;
     const managerName = telegramUser?.username ? `@${telegramUser.username}` : telegramUser?.first_name ?? "Manager";
-    const [next] = await fixtures.listUpcoming((await users.upsertFromTelegram(telegramUser!)).id, club.leagueClubId, 1);
+    const user = await getContextUser(context);
+    const profiler: RequestProfiler | undefined = (context as any).profiler;
+    const [next] = profiler
+      ? await profiler.time("league_club_query", () => fixtures.listUpcoming(user.id, club.leagueClubId, 1, true))
+      : await fixtures.listUpcoming(user.id, club.leagueClubId, 1, true);
     await editOrReply(context, formatClubDashboard(club, managerName, next ? formatFixtureLine(next) : undefined), dashboardKeyboard(club.leagueClubId));
   };
 
@@ -107,37 +152,110 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
       return;
     }
 
-    const user = await users.upsertFromTelegram(telegramUser);
+    const profiler: RequestProfiler | undefined = (context as any).profiler;
+    // Fast single round-trip RPC or cached fetch
+    const startState = profiler
+      ? await profiler.time("user_upsert", () => users.getStartState(telegramUser))
+      : await users.getStartState(telegramUser);
+
+    const user = startState.user;
+    (context as any).sessionUser = user;
+    const managedClubs = startState.managedClubs;
+
     logger.info({ event: "user_registered", userId: user.id, telegramId: user.telegram_id }, "User registered or updated");
 
-    await context.reply(`⚽ Xush kelibsiz, ${telegramUser.first_name}!\n\nOFM Game’da sevimli klubingizni boshqaring: tarkib tuzing, taktika tanlang, transfer qiling va chempionlik uchun kurashing! 🏆`,{reply_markup:new InlineKeyboard().text("⚽ Klubim","home:club").text("🏆 Ligaga qo‘shilish","join").row().text("👤 Profilim","pf:0")});
-    await context.reply("Asosiy menyu doimo quyida 👇",{reply_markup:createMainKeyboard(isAdmin(telegramUser.id))});
-    const managedClubs = await leagues.listManagedClubs(user.id);
+    const welcomeLines = [
+      `⚽ Xush kelibsiz, ${telegramUser.first_name}!`,
+      "",
+      "OFM Game’da sevimli klubingizni boshqaring: tarkib tuzing, taktika tanlang, transfer qiling va chempionlik uchun kurashing! 🏆",
+    ];
     if (managedClubs.length === 0) {
-      await context.reply("Boshlash uchun public ligaga qo‘shiling.", {
-        reply_markup: new InlineKeyboard().text("Ligaga qo‘shilish", "join"),
-      });
+      welcomeLines.push("", "💡 Boshlash uchun ligaga qo‘shiling 👇");
     }
+
+    const inlineMarkup = new InlineKeyboard()
+      .text("⚽ Klubim", "home:club")
+      .text("🏆 Ligaga qo‘shilish", "join")
+      .row()
+      .text("👤 Profilim", "pf:0");
+
+    const mainKeyboard = createMainKeyboard(isAdmin(telegramUser.id));
+
+    // Send both messages concurrently to eliminate sequential waiting
+    await Promise.all([
+      context.reply(welcomeLines.join("\n"), { reply_markup: inlineMarkup }),
+      context.reply("Asosiy menyu doimo quyida 👇", { reply_markup: mainKeyboard }),
+    ]);
   });
 
   bot.hears(MAIN_MENU.club, async (context) => {
     if (!context.from) return;
-    const user = await users.upsertFromTelegram(context.from);
-    const clubs = await leagues.listManagedClubs(user.id);
+    const user = await getContextUser(context);
+    const profiler: RequestProfiler | undefined = (context as any).profiler;
+    const clubs = profiler
+      ? await profiler.time("league_club_query", () => leagues.listManagedClubs(user.id))
+      : await leagues.listManagedClubs(user.id);
     if (clubs.length === 0) return showCompetitions(context);
     if (clubs.length === 1) return showDashboard(context, clubs[0]!);
     const keyboard = new InlineKeyboard();
     for (const club of clubs) keyboard.text(`${club.clubName} · ${club.competitionName}`, `db:${club.leagueClubId}`).row();
     await context.reply("Klubingizni tanlang:", { reply_markup: keyboard });
   });
-  bot.callbackQuery("home:club",async context=>{if(!context.from)return;await context.answerCallbackQuery();const user=await users.upsertFromTelegram(context.from);const clubs=await leagues.listManagedClubs(user.id);if(!clubs.length)return showCompetitions(context);return showDashboard(context,clubs[0]!);});
+
+  bot.callbackQuery("home:club", async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const profiler: RequestProfiler | undefined = (context as any).profiler;
+    const clubs = profiler
+      ? await profiler.time("league_club_query", () => leagues.listManagedClubs(user.id))
+      : await leagues.listManagedClubs(user.id);
+    if (!clubs.length) return showCompetitions(context);
+    return showDashboard(context, clubs[0]!);
+  });
 
   bot.hears(MAIN_MENU.leagues, showCompetitions);
-  bot.hears(MAIN_MENU.profile,async(context)=>{if(!context.from)return;const user=await users.upsertFromTelegram(context.from);const [profile,clubs]=await Promise.all([progression.profile(user.id),leagues.listManagedClubs(user.id)]);await context.reply(formatProfile(profile,clubs),{reply_markup:new InlineKeyboard().text("🏅 Global reyting","lb:0")});});
-  bot.callbackQuery("lb:0",async context=>{await context.answerCallbackQuery();await editOrReply(context,formatLeaderboard(await progression.leaderboard()),new InlineKeyboard().text("← Profil","pf:0"));});
-  bot.callbackQuery("pf:0",async context=>{if(!context.from)return;await context.answerCallbackQuery();const user=await users.upsertFromTelegram(context.from);await editOrReply(context,formatProfile(await progression.profile(user.id)),new InlineKeyboard().text("Global reyting","lb:0"));});
-  const adminHome=async(context:Context)=>{await editOrReply(context,formatAdminStats(await admin.stats()),new InlineKeyboard().text("Users","ad:u").text("Sponsors","ad:s").row().text("Audit log","ad:a").text("Refresh","ad:h"));};
-  bot.hears(MAIN_MENU.admin,async context=>{if(!context.from||!isAdmin(context.from.id))return;await adminHome(context);});
+
+  bot.hears(MAIN_MENU.profile, async (context) => {
+    if (!context.from) return;
+    const user = await getContextUser(context);
+    const profiler: RequestProfiler | undefined = (context as any).profiler;
+    const [profile, clubs] = profiler
+      ? await Promise.all([
+          profiler.time("manager_profile", () => progression.profile(user.id)),
+          profiler.time("league_club_query", () => leagues.listManagedClubs(user.id)),
+        ])
+      : await Promise.all([progression.profile(user.id), leagues.listManagedClubs(user.id)]);
+    await context.reply(formatProfile(profile, clubs), { reply_markup: new InlineKeyboard().text("🏅 Global reyting", "lb:0") });
+  });
+
+  bot.callbackQuery("lb:0", async (context) => {
+    await context.answerCallbackQuery();
+    const profiler: RequestProfiler | undefined = (context as any).profiler;
+    const leaders = profiler
+      ? await profiler.time("manager_profile", () => progression.leaderboard())
+      : await progression.leaderboard();
+    await editOrReply(context, formatLeaderboard(leaders), new InlineKeyboard().text("← Profil", "pf:0"));
+  });
+
+  bot.callbackQuery("pf:0", async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const profiler: RequestProfiler | undefined = (context as any).profiler;
+    const profile = profiler
+      ? await profiler.time("manager_profile", () => progression.profile(user.id))
+      : await progression.profile(user.id);
+    await editOrReply(context, formatProfile(profile), new InlineKeyboard().text("Global reyting", "lb:0"));
+  });
+
+  const adminHome = async (context: Context) => {
+    await editOrReply(context, formatAdminStats(await admin.stats()), new InlineKeyboard().text("Users", "ad:u").text("Sponsors", "ad:s").row().text("Audit log", "ad:a").text("Refresh", "ad:h"));
+  };
+  bot.hears(MAIN_MENU.admin, async (context) => {
+    if (!context.from || !isAdmin(context.from.id)) return;
+    await adminHome(context);
+  });
   bot.callbackQuery(/^ad:([usah])$/,async context=>{if(!context.from||!isAdmin(context.from.id))return context.answerCallbackQuery({text:"Ruxsat yo‘q"});await context.answerCallbackQuery();const section=context.match[1];if(section==='h')return adminHome(context);if(section==='u'){const rows=await admin.users();const kb=new InlineKeyboard();for(const u of rows){if(u.telegramId===context.from.id)continue;kb.text(`${u.blocked?'✅ Unblock':'⛔ Block'} ${u.username?`@${u.username}`:u.name}`,`${u.blocked?'au':'ab'}:${u.id}`).row();}kb.text("← Admin","ad:h");return editOrReply(context,formatAdminUsers(rows),kb);}if(section==='s'){const rows=await admin.sponsors();const kb=new InlineKeyboard();for(const s of rows)kb.text(`${s.active?'⏸':'▶️'} ${s.name}`,`as:${s.id}:${s.active?'0':'1'}`).row();kb.text("← Admin","ad:h");return editOrReply(context,formatAdminSponsors(rows),kb);}const rows=await admin.audit();return editOrReply(context,["AUDIT LOG","",...(rows.length?rows.map((r:any)=>`${r.action} · ${r.target_type}\n${new Date(r.created_at).toLocaleString('uz-UZ')}`):["Hozircha audit yozuvlari yo‘q."])].join('\n'),new InlineKeyboard().text("← Admin","ad:h"));});
   bot.callbackQuery(/^(ab|au):([0-9a-f-]{36})$/,async context=>{if(!context.from||!isAdmin(context.from.id))return;await context.answerCallbackQuery();const actor=await users.upsertFromTelegram(context.from);await admin.setBlocked(actor.id,context.match[2]!,context.match[1]==='ab');await context.reply("User holati yangilandi.");});
   bot.callbackQuery(/^as:([0-9a-f-]{36}):([01])$/,async context=>{if(!context.from||!isAdmin(context.from.id))return;await context.answerCallbackQuery();const actor=await users.upsertFromTelegram(context.from);await admin.setSponsor(actor.id,context.match[1]!,context.match[2]==='1');await context.reply("Sponsor holati yangilandi.");});

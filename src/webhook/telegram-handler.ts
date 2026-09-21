@@ -1,6 +1,7 @@
 import type { Bot, Context } from "grammy";
 import type { Update } from "grammy/types";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { RequestProfiler } from "../lib/profiler.js";
 
 export interface WebhookLogger {
   info(obj: Record<string, unknown>, msg?: string): void;
@@ -105,7 +106,13 @@ export async function ensureBotInitialized(bot: Bot<Context>): Promise<void> {
   await promise;
 }
 
+// Declare EdgeRuntime global for waitUntil support in Supabase Functions
+declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined;
+
 export async function handleTelegramWebhook(req: Request, deps: WebhookDependencies): Promise<Response> {
+  const profiler = new RequestProfiler();
+  (deps.bot as any).__currentProfiler = profiler;
+
   // 1. Health check for GET
   if (req.method === "GET") {
     return Response.json(
@@ -151,7 +158,7 @@ export async function handleTelegramWebhook(req: Request, deps: WebhookDependenc
   }
 
   // 6. Idempotency Check
-  const isNewUpdate = await claimTelegramUpdate(deps.database, update.update_id);
+  const isNewUpdate = await profiler.time("idempotency_claim", () => claimTelegramUpdate(deps.database, update.update_id));
   if (!isNewUpdate) {
     deps.logger.warn(
       { event: "duplicate_telegram_update_skipped", updateId: update.update_id },
@@ -161,19 +168,27 @@ export async function handleTelegramWebhook(req: Request, deps: WebhookDependenc
   }
 
   // 7. Process Update with Bot
-  const startTime = Date.now();
   try {
-    await ensureBotInitialized(deps.bot);
+    await profiler.time("bot_init", () => ensureBotInitialized(deps.bot));
     await deps.bot.handleUpdate(update);
-    await markTelegramUpdateComplete(deps.database, update.update_id);
 
+    // Non-blocking completion: do not wait for DB write before returning response to Telegram
+    const completePromise = profiler.time("idempotency_complete", () => markTelegramUpdateComplete(deps.database, update.update_id));
+    if (typeof EdgeRuntime !== "undefined" && typeof EdgeRuntime.waitUntil === "function") {
+      EdgeRuntime.waitUntil(completePromise);
+    } else {
+      void completePromise;
+    }
+
+    const metrics = profiler.getMetrics();
     deps.logger.info(
       {
-        event: "telegram_update_processed",
+        event: "telegram_update_profiled",
         updateId: update.update_id,
-        durationMs: Date.now() - startTime,
+        totalDurationMs: metrics.totalDurationMs,
+        stages: metrics.stages,
       },
-      "Telegram update processed successfully"
+      `Telegram update processed in ${metrics.totalDurationMs}ms`
     );
 
     return Response.json({ ok: true }, { status: 200 });
@@ -181,11 +196,13 @@ export async function handleTelegramWebhook(req: Request, deps: WebhookDependenc
     const message = error instanceof Error ? error.message : String(error);
     await markTelegramUpdateFailed(deps.database, update.update_id, message);
 
+    const metrics = profiler.getMetrics();
     deps.logger.error(
       {
         event: "telegram_update_processing_failed",
         updateId: update.update_id,
-        durationMs: Date.now() - startTime,
+        totalDurationMs: metrics.totalDurationMs,
+        stages: metrics.stages,
         err: error,
       },
       "Telegram update processing failed"

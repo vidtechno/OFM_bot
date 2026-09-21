@@ -22,8 +22,10 @@ export class FixtureRepository {
     if (!data) throw new Error("CLUB_NOT_OWNED");
   }
 
-  async listUpcoming(userId: string, leagueClubId: string, limit = 10): Promise<ClubFixture[]> {
-    await this.assertOwnership(userId, leagueClubId);
+  async listUpcoming(userId: string, leagueClubId: string, limit = 10, skipOwnershipCheck = false): Promise<ClubFixture[]> {
+    if (!skipOwnershipCheck) {
+      await this.assertOwnership(userId, leagueClubId);
+    }
     const { data, error } = await this.database.from("fixtures")
       .select("id,round_number,scheduled_at,status,home_club_id,home:league_clubs!fixtures_home_club_id_fkey(clubs!inner(name)),away:league_clubs!fixtures_away_club_id_fkey(clubs!inner(name))")
       .or(`home_club_id.eq.${leagueClubId},away_club_id.eq.${leagueClubId}`)

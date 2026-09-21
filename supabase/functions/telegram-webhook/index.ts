@@ -172,6 +172,28 @@ function dashboardKeyboard(leagueClubId) {
 function createBot({ token, users, leagues, squads, tactics, fixtures, matches, transfers, progression, admin, adminTelegramIds, logger }) {
   const bot = new Bot(token);
   const isAdmin = (telegramId) => adminTelegramIds.includes(telegramId);
+  bot.api.config.use(async (prev, method, payload, signal) => {
+    const t0 = performance.now();
+    try {
+      return await prev(method, payload, signal);
+    } finally {
+      const elapsed = performance.now() - t0;
+      const profiler = bot.__currentProfiler;
+      if (profiler) {
+        profiler.record(`telegram_api:${method}`, elapsed);
+        profiler.record("telegram_api", elapsed);
+      }
+    }
+  });
+  const getContextUser = async (context) => {
+    const cached = context.sessionUser;
+    if (cached) return cached;
+    if (!context.from) throw new Error("No telegram user");
+    const profiler = context.profiler;
+    const user = profiler ? await profiler.time("user_upsert", () => users.upsertFromTelegram(context.from)) : await users.upsertFromTelegram(context.from);
+    context.sessionUser = user;
+    return user;
+  };
   const lineupDrafts = /* @__PURE__ */ new Map();
   const transferClubSelection = /* @__PURE__ */ new Map();
   const privateLeagueJoinPending = /* @__PURE__ */ new Set();
@@ -190,7 +212,7 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
   };
   bot.use(async (context, next) => {
     if (!context.from) return next();
-    const user = await users.upsertFromTelegram(context.from);
+    const user = await getContextUser(context);
     if (user.is_blocked && !isAdmin(context.from.id)) {
       await context.reply("Botdan foydalanish huquqingiz vaqtincha bloklangan.");
       return;
@@ -198,7 +220,8 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
     await next();
   });
   const showCompetitions = async (context) => {
-    const competitions = await leagues.listCompetitions();
+    const profiler = context.profiler;
+    const competitions = profiler ? await profiler.time("league_club_query", () => leagues.listCompetitions()) : await leagues.listCompetitions();
     const keyboard = new InlineKeyboard();
     for (const competition of competitions) keyboard.text(competition.name, `cmp:${competition.id}`).row();
     keyboard.text("\u{1F512} Private liga yaratish", "pv").text("\u{1F511} Kod bilan qo\u2018shilish", "pj");
@@ -207,7 +230,9 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
   const showDashboard = async (context, club) => {
     const telegramUser = context.from;
     const managerName = telegramUser?.username ? `@${telegramUser.username}` : telegramUser?.first_name ?? "Manager";
-    const [next] = await fixtures.listUpcoming((await users.upsertFromTelegram(telegramUser)).id, club.leagueClubId, 1);
+    const user = await getContextUser(context);
+    const profiler = context.profiler;
+    const [next] = profiler ? await profiler.time("league_club_query", () => fixtures.listUpcoming(user.id, club.leagueClubId, 1, true)) : await fixtures.listUpcoming(user.id, club.leagueClubId, 1, true);
     await editOrReply(context, formatClubDashboard(club, managerName, next ? formatFixtureLine(next) : void 0), dashboardKeyboard(club.leagueClubId));
   };
   bot.command("start", async (context) => {
@@ -216,23 +241,32 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
       await context.reply("Telegram profilingizni aniqlab bo\u2018lmadi. Iltimos, qayta urinib ko\u2018ring.");
       return;
     }
-    const user = await users.upsertFromTelegram(telegramUser);
+    const profiler = context.profiler;
+    const startState = profiler ? await profiler.time("user_upsert", () => users.getStartState(telegramUser)) : await users.getStartState(telegramUser);
+    const user = startState.user;
+    context.sessionUser = user;
+    const managedClubs = startState.managedClubs;
     logger.info({ event: "user_registered", userId: user.id, telegramId: user.telegram_id }, "User registered or updated");
-    await context.reply(`\u26BD Xush kelibsiz, ${telegramUser.first_name}!
-
-OFM Game\u2019da sevimli klubingizni boshqaring: tarkib tuzing, taktika tanlang, transfer qiling va chempionlik uchun kurashing! \u{1F3C6}`, { reply_markup: new InlineKeyboard().text("\u26BD Klubim", "home:club").text("\u{1F3C6} Ligaga qo\u2018shilish", "join").row().text("\u{1F464} Profilim", "pf:0") });
-    await context.reply("Asosiy menyu doimo quyida \u{1F447}", { reply_markup: createMainKeyboard(isAdmin(telegramUser.id)) });
-    const managedClubs = await leagues.listManagedClubs(user.id);
+    const welcomeLines = [
+      `\u26BD Xush kelibsiz, ${telegramUser.first_name}!`,
+      "",
+      "OFM Game\u2019da sevimli klubingizni boshqaring: tarkib tuzing, taktika tanlang, transfer qiling va chempionlik uchun kurashing! \u{1F3C6}"
+    ];
     if (managedClubs.length === 0) {
-      await context.reply("Boshlash uchun public ligaga qo\u2018shiling.", {
-        reply_markup: new InlineKeyboard().text("Ligaga qo\u2018shilish", "join")
-      });
+      welcomeLines.push("", "\u{1F4A1} Boshlash uchun ligaga qo\u2018shiling \u{1F447}");
     }
+    const inlineMarkup = new InlineKeyboard().text("\u26BD Klubim", "home:club").text("\u{1F3C6} Ligaga qo\u2018shilish", "join").row().text("\u{1F464} Profilim", "pf:0");
+    const mainKeyboard = createMainKeyboard(isAdmin(telegramUser.id));
+    await Promise.all([
+      context.reply(welcomeLines.join("\n"), { reply_markup: inlineMarkup }),
+      context.reply("Asosiy menyu doimo quyida \u{1F447}", { reply_markup: mainKeyboard })
+    ]);
   });
   bot.hears(MAIN_MENU.club, async (context) => {
     if (!context.from) return;
-    const user = await users.upsertFromTelegram(context.from);
-    const clubs = await leagues.listManagedClubs(user.id);
+    const user = await getContextUser(context);
+    const profiler = context.profiler;
+    const clubs = profiler ? await profiler.time("league_club_query", () => leagues.listManagedClubs(user.id)) : await leagues.listManagedClubs(user.id);
     if (clubs.length === 0) return showCompetitions(context);
     if (clubs.length === 1) return showDashboard(context, clubs[0]);
     const keyboard = new InlineKeyboard();
@@ -242,27 +276,36 @@ OFM Game\u2019da sevimli klubingizni boshqaring: tarkib tuzing, taktika tanlang,
   bot.callbackQuery("home:club", async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await users.upsertFromTelegram(context.from);
-    const clubs = await leagues.listManagedClubs(user.id);
+    const user = await getContextUser(context);
+    const profiler = context.profiler;
+    const clubs = profiler ? await profiler.time("league_club_query", () => leagues.listManagedClubs(user.id)) : await leagues.listManagedClubs(user.id);
     if (!clubs.length) return showCompetitions(context);
     return showDashboard(context, clubs[0]);
   });
   bot.hears(MAIN_MENU.leagues, showCompetitions);
   bot.hears(MAIN_MENU.profile, async (context) => {
     if (!context.from) return;
-    const user = await users.upsertFromTelegram(context.from);
-    const [profile, clubs] = await Promise.all([progression.profile(user.id), leagues.listManagedClubs(user.id)]);
+    const user = await getContextUser(context);
+    const profiler = context.profiler;
+    const [profile, clubs] = profiler ? await Promise.all([
+      profiler.time("manager_profile", () => progression.profile(user.id)),
+      profiler.time("league_club_query", () => leagues.listManagedClubs(user.id))
+    ]) : await Promise.all([progression.profile(user.id), leagues.listManagedClubs(user.id)]);
     await context.reply(formatProfile(profile, clubs), { reply_markup: new InlineKeyboard().text("\u{1F3C5} Global reyting", "lb:0") });
   });
   bot.callbackQuery("lb:0", async (context) => {
     await context.answerCallbackQuery();
-    await editOrReply(context, formatLeaderboard(await progression.leaderboard()), new InlineKeyboard().text("\u2190 Profil", "pf:0"));
+    const profiler = context.profiler;
+    const leaders = profiler ? await profiler.time("manager_profile", () => progression.leaderboard()) : await progression.leaderboard();
+    await editOrReply(context, formatLeaderboard(leaders), new InlineKeyboard().text("\u2190 Profil", "pf:0"));
   });
   bot.callbackQuery("pf:0", async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await users.upsertFromTelegram(context.from);
-    await editOrReply(context, formatProfile(await progression.profile(user.id)), new InlineKeyboard().text("Global reyting", "lb:0"));
+    const user = await getContextUser(context);
+    const profiler = context.profiler;
+    const profile = profiler ? await profiler.time("manager_profile", () => progression.profile(user.id)) : await progression.profile(user.id);
+    await editOrReply(context, formatProfile(profile), new InlineKeyboard().text("Global reyting", "lb:0"));
   });
   const adminHome = async (context) => {
     await editOrReply(context, formatAdminStats(await admin.stats()), new InlineKeyboard().text("Users", "ad:u").text("Sponsors", "ad:s").row().text("Audit log", "ad:a").text("Refresh", "ad:h"));
@@ -908,11 +951,33 @@ Futbolchini tanlang:` : "Tarkib tayyor. Endi saqlang \u{1F447}"].join("\n");
 
 // src/users/user.repository.ts
 var UserRepository = class {
+  // 15 seconds warm cache
   constructor(database) {
     this.database = database;
   }
   database;
-  async upsertFromTelegram(user) {
+  userCache = /* @__PURE__ */ new Map();
+  CACHE_TTL_MS = 15e3;
+  getCachedUser(telegramId) {
+    const entry = this.userCache.get(telegramId);
+    if (!entry) return void 0;
+    if (Date.now() > entry.expiresAt) {
+      this.userCache.delete(telegramId);
+      return void 0;
+    }
+    return entry.user;
+  }
+  setCachedUser(user) {
+    this.userCache.set(user.telegram_id, {
+      user,
+      expiresAt: Date.now() + this.CACHE_TTL_MS
+    });
+  }
+  async upsertFromTelegram(user, forceRefresh = false) {
+    if (!forceRefresh) {
+      const cached = this.getCachedUser(user.id);
+      if (cached) return cached;
+    }
     const record = {
       telegram_id: user.id,
       username: user.username ?? null,
@@ -923,7 +988,34 @@ var UserRepository = class {
     };
     const { data, error } = await this.database.from("users").upsert(record, { onConflict: "telegram_id" }).select("id, telegram_id, username, first_name, last_name, language_code, is_blocked").single();
     if (error) throw new Error(`Telegram userni saqlashda xato: ${error.message}`);
-    return data;
+    const registered = data;
+    this.setCachedUser(registered);
+    return registered;
+  }
+  async getStartState(user) {
+    try {
+      const { data, error } = await this.database.rpc("get_user_start_state", {
+        p_telegram_id: user.id,
+        p_username: user.username ?? null,
+        p_first_name: user.first_name,
+        p_last_name: user.last_name ?? null,
+        p_language_code: user.language_code ?? null
+      });
+      if (!error && data?.user) {
+        const registered2 = data.user;
+        this.setCachedUser(registered2);
+        return {
+          user: registered2,
+          managedClubs: data.managedClubs ?? []
+        };
+      }
+    } catch {
+    }
+    const registered = await this.upsertFromTelegram(user);
+    return {
+      user: registered,
+      managedClubs: []
+    };
   }
 };
 
@@ -936,10 +1028,16 @@ var LeagueRepository = class {
     this.database = database;
   }
   database;
-  async listCompetitions() {
+  competitionsCache = null;
+  async listCompetitions(forceRefresh = false) {
+    if (!forceRefresh && this.competitionsCache && Date.now() < this.competitionsCache.expiresAt) {
+      return this.competitionsCache.data;
+    }
     const { data, error } = await this.database.from("competitions").select("id, code, name").eq("is_active", true).order("name");
     if (error) throw new Error(`Competitionlarni olishda xato: ${error.message}`);
-    return data;
+    const list = data;
+    this.competitionsCache = { data: list, expiresAt: Date.now() + 6e4 };
+    return list;
   }
   async listJoinableLeagues(competitionId) {
     const { data, error } = await this.database.from("league_instances").select("id, instance_number, competitions!inner(name), league_clubs(manager_type)").eq("competition_id", competitionId).eq("status", "ACTIVE").eq("access_mode", "GLOBAL").or(`registration_closes_at.is.null,registration_closes_at.gt.${(/* @__PURE__ */ new Date()).toISOString()}`).order("instance_number");
@@ -1119,10 +1217,13 @@ var TacticsRepository = class {
   }
   db;
   squads;
-  async listFormations() {
+  formationsCache = null;
+  async listFormations(forceRefresh = false) {
+    if (!forceRefresh && this.formationsCache) return this.formationsCache;
     const { data, error } = await this.db.from("formations").select("id,code,name,slots").order("name");
     if (error) throw error;
-    return data;
+    this.formationsCache = data;
+    return this.formationsCache;
   }
   async get(userId, clubId) {
     const { data, error } = await this.db.from("tactics").select("mentality,pressing,tempo,defensive_line,width,passing_style,attack_focus,tackling,formations!inner(code,name),league_clubs!inner(manager_user_id)").eq("league_club_id", clubId).eq("league_clubs.manager_user_id", userId).single();
@@ -1131,7 +1232,6 @@ var TacticsRepository = class {
     return { formationCode: formation.code, formationName: formation.name, mentality: data.mentality, pressing: data.pressing, tempo: data.tempo, defensiveLine: data.defensive_line, width: data.width, passingStyle: data.passing_style, attackFocus: data.attack_focus, tackling: data.tackling };
   }
   async update(userId, clubId, patch) {
-    await this.get(userId, clubId);
     const row = {};
     if (patch.mentality !== void 0) row.mentality = patch.mentality;
     if (patch.pressing !== void 0) row.pressing = patch.pressing;
@@ -1141,9 +1241,10 @@ var TacticsRepository = class {
     if (patch.passingStyle !== void 0) row.passing_style = patch.passingStyle;
     if (patch.attackFocus !== void 0) row.attack_focus = patch.attackFocus;
     if (patch.tackling !== void 0) row.tackling = patch.tackling;
-    const { error } = await this.db.from("tactics").update(row).eq("league_club_id", clubId);
+    const { data, error } = await this.db.from("tactics").update(row).eq("league_club_id", clubId).select("mentality,pressing,tempo,defensive_line,width,passing_style,attack_focus,tackling,formations!inner(code,name),league_clubs!inner(manager_user_id)").eq("league_clubs.manager_user_id", userId).single();
     if (error) throw error;
-    return this.get(userId, clubId);
+    const formation = one3(data.formations);
+    return { formationCode: formation.code, formationName: formation.name, mentality: data.mentality, pressing: data.pressing, tempo: data.tempo, defensiveLine: data.defensive_line, width: data.width, passingStyle: data.passing_style, attackFocus: data.attack_focus, tackling: data.tackling };
   }
   async save(userId, clubId, code, assignments) {
     const { error } = await this.db.rpc("save_lineup", { p_user_id: userId, p_league_club_id: clubId, p_formation_code: code, p_assignments: assignments });
@@ -1196,8 +1297,10 @@ var FixtureRepository = class {
     if (error) throw new Error(`Klubni tekshirishda xato: ${error.message}`);
     if (!data) throw new Error("CLUB_NOT_OWNED");
   }
-  async listUpcoming(userId, leagueClubId, limit = 10) {
-    await this.assertOwnership(userId, leagueClubId);
+  async listUpcoming(userId, leagueClubId, limit = 10, skipOwnershipCheck = false) {
+    if (!skipOwnershipCheck) {
+      await this.assertOwnership(userId, leagueClubId);
+    }
     const { data, error } = await this.database.from("fixtures").select("id,round_number,scheduled_at,status,home_club_id,home:league_clubs!fixtures_home_club_id_fkey(clubs!inner(name)),away:league_clubs!fixtures_away_club_id_fkey(clubs!inner(name))").or(`home_club_id.eq.${leagueClubId},away_club_id.eq.${leagueClubId}`).in("status", ["SCHEDULED", "POSTPONED"]).order("scheduled_at", { ascending: true }).limit(limit);
     if (error) throw new Error(`Fixturelarni olishda xato: ${error.message}`);
     return (data ?? []).map((row) => ({
@@ -1592,6 +1695,40 @@ var AdminRepository = class {
   }
 };
 
+// src/lib/profiler.ts
+var RequestProfiler = class {
+  start = performance.now();
+  checkpoints = {};
+  async time(stage, fn) {
+    const t0 = performance.now();
+    try {
+      return await fn();
+    } finally {
+      const elapsed = Number((performance.now() - t0).toFixed(2));
+      this.checkpoints[stage] = Number(((this.checkpoints[stage] ?? 0) + elapsed).toFixed(2));
+    }
+  }
+  timeSync(stage, fn) {
+    const t0 = performance.now();
+    try {
+      return fn();
+    } finally {
+      const elapsed = Number((performance.now() - t0).toFixed(2));
+      this.checkpoints[stage] = Number(((this.checkpoints[stage] ?? 0) + elapsed).toFixed(2));
+    }
+  }
+  record(stage, durationMs) {
+    const rounded = Number(durationMs.toFixed(2));
+    this.checkpoints[stage] = Number(((this.checkpoints[stage] ?? 0) + rounded).toFixed(2));
+  }
+  getMetrics() {
+    return {
+      totalDurationMs: Number((performance.now() - this.start).toFixed(2)),
+      stages: { ...this.checkpoints }
+    };
+  }
+};
+
 // src/webhook/telegram-handler.ts
 function verifySecretToken(req, expectedSecret) {
   if (!expectedSecret) return true;
@@ -1657,6 +1794,8 @@ async function ensureBotInitialized(bot) {
   await promise;
 }
 async function handleTelegramWebhook(req, deps) {
+  const profiler = new RequestProfiler();
+  deps.bot.__currentProfiler = profiler;
   if (req.method === "GET") {
     return Response.json(
       {
@@ -1690,7 +1829,7 @@ async function handleTelegramWebhook(req, deps) {
   if (!update || typeof update.update_id !== "number") {
     return Response.json({ error: "Bad request: missing update_id" }, { status: 400 });
   }
-  const isNewUpdate = await claimTelegramUpdate(deps.database, update.update_id);
+  const isNewUpdate = await profiler.time("idempotency_claim", () => claimTelegramUpdate(deps.database, update.update_id));
   if (!isNewUpdate) {
     deps.logger.warn(
       { event: "duplicate_telegram_update_skipped", updateId: update.update_id },
@@ -1698,28 +1837,36 @@ async function handleTelegramWebhook(req, deps) {
     );
     return Response.json({ ok: true, skipped: true, reason: "duplicate_update" }, { status: 200 });
   }
-  const startTime = Date.now();
   try {
-    await ensureBotInitialized(deps.bot);
+    await profiler.time("bot_init", () => ensureBotInitialized(deps.bot));
     await deps.bot.handleUpdate(update);
-    await markTelegramUpdateComplete(deps.database, update.update_id);
+    const completePromise = profiler.time("idempotency_complete", () => markTelegramUpdateComplete(deps.database, update.update_id));
+    if (typeof EdgeRuntime !== "undefined" && typeof EdgeRuntime.waitUntil === "function") {
+      EdgeRuntime.waitUntil(completePromise);
+    } else {
+      void completePromise;
+    }
+    const metrics = profiler.getMetrics();
     deps.logger.info(
       {
-        event: "telegram_update_processed",
+        event: "telegram_update_profiled",
         updateId: update.update_id,
-        durationMs: Date.now() - startTime
+        totalDurationMs: metrics.totalDurationMs,
+        stages: metrics.stages
       },
-      "Telegram update processed successfully"
+      `Telegram update processed in ${metrics.totalDurationMs}ms`
     );
     return Response.json({ ok: true }, { status: 200 });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await markTelegramUpdateFailed(deps.database, update.update_id, message);
+    const metrics = profiler.getMetrics();
     deps.logger.error(
       {
         event: "telegram_update_processing_failed",
         updateId: update.update_id,
-        durationMs: Date.now() - startTime,
+        totalDurationMs: metrics.totalDurationMs,
+        stages: metrics.stages,
         err: error
       },
       "Telegram update processing failed"
