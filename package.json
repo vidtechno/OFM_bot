@@ -20,6 +20,7 @@
     "test:watch": "vitest",
     "data:import:players": "tsx src/data/import-players.ts",
     "data:import:fc27": "tsx src/data/import-fc27.ts",
+    "data:migrate:sydney": "tsx src/data/migrate-players-from-sydney.ts",
     "matches:process": "tsx src/matches/process-due-matches.ts",
     "check": "npm run typecheck && npm test"
   },
