@@ -15,7 +15,15 @@ import { formatFixtureLine, formatUpcomingFixtures } from "../fixtures/presentat
 import type { MatchRepository } from "../matches/match.repository.js";
 import { formatFinances, formatLeaders, formatResults, formatTable } from "../matches/presentation.js";
 import type { TransferRepository } from "../transfers/transfer.repository.js";
-import { formatListing, formatMarket, transferMoney } from "../transfers/presentation.js";
+import {
+  formatClubPlayers,
+  formatListing,
+  formatMarket,
+  formatPlayerProfile,
+  formatTransferHistory,
+  formatTransferHub,
+  transferMoney,
+} from "../transfers/presentation.js";
 import type { ProgressionRepository } from "../progression/progression.repository.js";
 import { formatLeaderboard, formatProfile, formatSponsors } from "../progression/presentation.js";
 import type { AdminRepository } from "../admin/admin.repository.js";
@@ -110,16 +118,15 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     return clubs;
   };
 
-  const transferClubSelection=new Map<number,string>();
-  const privateLeagueJoinPending=new Set<number>();
-  type TransferInput={mode:"SELL"|"OFFER";clubId:string;clubPlayerId:string;playerName:string;minimum:number}|{mode:"COUNTER";clubId:string;offerId:string;playerName:string;minimum:number};
-  const transferInputs=new Map<number,TransferInput>();
-  type TransferBrowse={clubId:string;players:Map<string,{clubPlayerId:string;name:string;clubName:string;position:string;overall:number;marketValue:number}>};
-  const saleBrowses=new Map<number,TransferBrowse>();
-  const targetBrowses=new Map<number,TransferBrowse>();
-  const targetClubBrowses=new Map<number,{clubId:string;clubs:Map<string,string>}>();
-  const incomingOfferClubs=new Map<number,string>();
-  const sendUpdate=async(telegramId:number|null,text:string,keyboard:InlineKeyboard):Promise<void>=>{if(!telegramId)return;try{await bot.api.sendMessage(telegramId,text,{reply_markup:keyboard});}catch(error){logger.warn({event:"transfer_notification_failed",err:error},"Transfer notification failed");}};
+  const privateLeagueJoinPending = new Set<number>();
+  const sendUpdate = async (telegramId: number | null, text: string, keyboard: InlineKeyboard): Promise<void> => {
+    if (!telegramId) return;
+    try {
+      await bot.api.sendMessage(telegramId, text, { reply_markup: keyboard });
+    } catch (error) {
+      logger.warn({ event: "transfer_notification_failed", err: error }, "Transfer notification failed");
+    }
+  };
 
   bot.use(async(context,next)=>{
     (context as any).profiler = (bot as any).__currentProfiler;
@@ -238,24 +245,6 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
 
   bot.hears(MAIN_MENU.leagues, showCompetitions);
 
-  bot.hears(MAIN_MENU.transfer, async (context) => {
-    if (!context.from) return;
-    const user = await getContextUser(context);
-    const clubs = await getContextManagedClubs(context, user.id);
-    if (clubs.length === 0) {
-      await context.reply("Sizda hali biriktirilgan klub yo‘q. Avval ligaga qo‘shiling va klub tanlang.");
-      return showCompetitions(context);
-    }
-    if (clubs.length === 1) {
-      return showTransferHub(context, clubs[0]!.leagueClubId);
-    }
-    const keyboard = new InlineKeyboard();
-    for (const club of clubs) {
-      keyboard.text(`${club.clubName} · ${club.competitionName}`, `tr:${club.leagueClubId}`).row();
-    }
-    await context.reply("Transfer markazi uchun klubingizni tanlang:", { reply_markup: keyboard });
-  });
-
   bot.hears(MAIN_MENU.profile, async (context) => {
     if (!context.from) return;
     const user = await getContextUser(context);
@@ -301,36 +290,549 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
   bot.callbackQuery(/^as:([0-9a-f-]{36}):([01])$/,async context=>{if(!context.from||!isAdmin(context.from.id))return;await context.answerCallbackQuery();const actor=await getContextUser(context);await admin.setSponsor(actor.id,context.match[1]!,context.match[2]==='1');await context.reply("Sponsor holati yangilandi.");});
 
   const showTransferHub = async (context: Context, clubId: string): Promise<void> => {
-    await editOrReply(
-      context,
-      "🔄 TRANSFER MARKAZI\n\nBu bo‘lim faqat tanlangan klubingiz uchun ishlaydi. Xarid, sotuv va takliflar shu klub budjetiga bog‘langan.",
-      new InlineKeyboard()
-        .text("🌍 Bozor", `gm:${clubId}:0`)
-        .text("🔎 Ligadan izlash", `tf:${clubId}:0`)
-        .row()
-        .text("📤 Sotuvga qo‘yish", `ts:${clubId}`)
-        .text("📩 Kelgan takliflar", `io:${clubId}`)
-        .row()
-        .text("← Klub", `db:${clubId}`),
-    );
+    const user = await getContextUser(context);
+    const clubs = await getContextManagedClubs(context, user.id);
+    const club = clubs.find((c) => c.leagueClubId === clubId);
+    const clubName = club?.clubName ?? "Klub";
+    const finances = await matches.finances(user.id, clubId);
+
+    await transfers.saveInputSession(user.id, "ACTIVE_CLUB", { clubId });
+
+    const keyboard = new InlineKeyboard()
+      .text("🔎 Ligadan izlash", `tf:${clubId}:0`)
+      .text("🌍 Global Transfer", `gm:${clubId}:0:ALL`)
+      .row()
+      .text("📤 Sotuvga qo‘yish", `ts:${clubId}`)
+      .text("📥 Takliflar", `io:${clubId}`)
+      .row()
+      .text("📜 Transfer tarixi", `th:${clubId}`)
+      .text("↩️ Klubga qaytish", `db:${clubId}`);
+
+    await editOrReply(context, formatTransferHub(clubName, finances.transferBudget, finances.cashBalance), keyboard);
   };
 
-  const showMarket=async(context:Context,clubId:string,page:number,group="ALL"):Promise<void>=>{if(!context.from)return;transferClubSelection.set(context.from.id,clubId);const user=await getContextUser(context),items=await transfers.market(user.id,clubId,page,8,group);const keyboard=new InlineKeyboard();for(const item of items)keyboard.text(`⚽ ${item.name} · ⭐${item.overall} · ${transferMoney(item.askingPrice)}`,`gb:${item.listingId}`).row();keyboard.text("🌟 Barchasi",`gm:${clubId}:0:ALL`).text("🥅 Darvozabon",`gm:${clubId}:0:GK`).row().text("🛡 Himoyachi",`gm:${clubId}:0:DEF`).text("🧠 Yarimhimoya",`gm:${clubId}:0:MID`).row().text("⚡ Hujumchi",`gm:${clubId}:0:ATT`);if(page>0)keyboard.row().text("← Oldingi",`gm:${clubId}:${page-1}:${group}`);if(items.length===8)keyboard.text("Keyingi →",`gm:${clubId}:${page+1}:${group}`);keyboard.row().text("← Transfer markazi",`tr:${clubId}`);await editOrReply(context,`🌍 BOZOR · ${group==="ALL"?"ENG KUCHLILAR":group==="GK"?"DARVOZABONLAR":group==="DEF"?"HIMOYACHILAR":group==="MID"?"YARIMHIMOYACHILAR":"HUJUMCHILAR"}\n\n${formatMarket(items).split("\n\n")[1]??"Hozir faol listing yo‘q."}`,keyboard);};
-  bot.callbackQuery(/^tr:([0-9a-f-]{36})$/,async context=>{if(!context.from)return;await context.answerCallbackQuery();const user=await getContextUser(context),clubId=context.match[1]!;if(!(await getContextManagedClubs(context,user.id)).some(club=>club.leagueClubId===clubId))return;await showTransferHub(context,clubId);});
-  bot.callbackQuery(/^ts:([0-9a-f-]{36})$/,async context=>{if(!context.from)return;await context.answerCallbackQuery();const user=await getContextUser(context),clubId=context.match[1]!,players=await transfers.saleCandidates(user.id,clubId),kb=new InlineKeyboard(),browse:TransferBrowse={clubId,players:new Map()};for(const [index,player]of players.slice(0,20).entries()){browse.players.set(String(index),player);kb.text(`${player.name} · ${player.position} · ⭐${player.overall}`,`tl:${index}`).row();}saleBrowses.set(context.from.id,browse);kb.text("← Transfer markazi",`tr:${clubId}`);await editOrReply(context,players.length?"📤 FUTBOLCHINI SOTUVGA QO‘YISH\n\nNarxini belgilash uchun futbolchini tanlang:":"Sotuvga qo‘yish mumkin bo‘lgan futbolchi yo‘q.",kb);});
-  bot.callbackQuery(/^tl:(\d+)$/,async context=>{if(!context.from)return;const browse=saleBrowses.get(context.from.id),player=browse?.players.get(context.match[1]!);if(!browse||!player)return context.answerCallbackQuery({text:"Ro‘yxat eskirgan, qayta oching"});transferInputs.set(context.from.id,{mode:"SELL",clubId:browse.clubId,clubPlayerId:player.clubPlayerId,playerName:player.name,minimum:Math.max(100000,Math.round(player.marketValue*.5))});await context.answerCallbackQuery();await editOrReply(context,`💰 ${player.name} uchun sotuv narxini yuboring.\n\nMinimal narx: ${transferMoney(Math.max(100000,Math.round(player.marketValue*.5)))}\nMisol: 45M yoki 45000000`,new InlineKeyboard().text("← Bekor qilish",`ts:${browse.clubId}`));});
-  bot.callbackQuery(/^tf:([0-9a-f-]{36}):(\d+)$/,async context=>{if(!context.from)return;await context.answerCallbackQuery();const user=await getContextUser(context),clubId=context.match[1]!,page=Number(context.match[2]),clubs=await transfers.leagueClubs(user.id,clubId),kb=new InlineKeyboard(),browse={clubId,clubs:new Map<string,string>()};for(const[index,club]of clubs.slice(page*10,(page+1)*10).entries()){browse.clubs.set(String(index),club.leagueClubId);kb.text(`🏟 ${club.clubName}`,`tk:${index}:0`).row();}targetClubBrowses.set(context.from.id,browse);if(page)kb.text("← Oldingi",`tf:${clubId}:${page-1}`);if((page+1)*10<clubs.length)kb.text("Keyingi →",`tf:${clubId}:${page+1}`);kb.row().text("← Transfer markazi",`tr:${clubId}`);await editOrReply(context,clubs.length?"🔎 LIGADAN IZLASH\n\nAvval raqib klubni tanlang, keyin uning barcha futbolchilaridan biriga taklif yuboring:":"Bu ligada raqib klublar topilmadi.",kb);});
-  bot.callbackQuery(/^tk:(\d+):(\d+)$/,async context=>{if(!context.from)return;const clubs=targetClubBrowses.get(context.from.id),targetClubId=clubs?.clubs.get(context.match[1]!);if(!clubs||!targetClubId)return context.answerCallbackQuery({text:"Klublar ro‘yxati eskirgan, qayta oching"});await context.answerCallbackQuery();const user=await getContextUser(context),page=Number(context.match[2]),players=await transfers.clubTargets(user.id,clubs.clubId,targetClubId,page),kb=new InlineKeyboard(),browse:TransferBrowse={clubId:clubs.clubId,players:new Map()};for(const[index,player]of players.entries()){browse.players.set(String(index),player);kb.text(`${player.name} · ${player.position} · ⭐${player.overall}`,`to:${index}`).row();}targetBrowses.set(context.from.id,browse);if(page)kb.text("← Oldingi",`tk:${context.match[1]}:${page-1}`);if(players.length===25)kb.text("Keyingi →",`tk:${context.match[1]}:${page+1}`);kb.row().text("← Klublar",`tf:${clubs.clubId}:0`).text("← Transfer markazi",`tr:${clubs.clubId}`);await editOrReply(context,players.length?`🏟 ${players[0]!.clubName.toUpperCase()} FUTBOLCHILARI\n\nTaklif yuborish uchun futbolchini tanlang:`:"Bu klubda transferga taklif yuborish mumkin bo‘lgan futbolchi yo‘q.",kb);});
-  bot.callbackQuery(/^to:(\d+)$/,async context=>{if(!context.from)return;const browse=targetBrowses.get(context.from.id),target=browse?.players.get(context.match[1]!);if(!browse||!target)return context.answerCallbackQuery({text:"Ro‘yxat eskirgan, qayta oching"});transferInputs.set(context.from.id,{mode:"OFFER",clubId:browse.clubId,clubPlayerId:target.clubPlayerId,playerName:target.name,minimum:Math.max(100000,Math.round(target.marketValue*.5))});await context.answerCallbackQuery();await editOrReply(context,`🤝 ${target.name} uchun taklif miqdorini yuboring.\n\nBozor qiymati: ${transferMoney(target.marketValue)}\nMinimal taklif: ${transferMoney(Math.max(100000,Math.round(target.marketValue*.5)))}\nMisol: 55M yoki 55000000`,new InlineKeyboard().text("← Futbolchilar",`tf:${browse.clubId}:0`));});
-  bot.callbackQuery(/^io:([0-9a-f-]{36})$/,async context=>{if(!context.from)return;await context.answerCallbackQuery();const user=await getContextUser(context),clubId=context.match[1]!,offers=await transfers.incomingOffers(user.id,clubId),kb=new InlineKeyboard();incomingOfferClubs.set(context.from.id,clubId);for(const offer of offers)kb.text(`${offer.playerName} · ${offer.buyerClub} · ${transferMoney(offer.amount)}`,`iv:${offer.offerId}`).row();kb.text("← Transfer markazi",`tr:${clubId}`);await editOrReply(context,offers.length?"📩 KELGAN TAKLIFLAR\n\nTaklifni ochib qabul qiling yoki rad eting:":"📩 Hozircha sizning klubingizga kelgan faol taklif yo‘q.",kb);});
-  bot.callbackQuery(/^iv:([0-9a-f-]{36})$/,async context=>{if(!context.from)return;const clubId=incomingOfferClubs.get(context.from.id);if(!clubId)return context.answerCallbackQuery({text:"Transfer markazini qayta oching"});const user=await getContextUser(context),offer=(await transfers.incomingOffers(user.id,clubId)).find(item=>item.offerId===context.match[1]);if(!offer)return context.answerCallbackQuery({text:"Taklif endi faol emas"});await context.answerCallbackQuery();await editOrReply(context,`📩 TAKLIF\n\n⚽ ${offer.playerName} · ${offer.position} · ⭐${offer.overall}\n🏟 Xaridor: ${offer.buyerClub}\n💰 Taklif: ${transferMoney(offer.amount)}\n⏳ Amal qiladi: ${new Date(offer.expiresAt).toLocaleString("uz-UZ")}`,new InlineKeyboard().text("✅ Qabul qilish",`ia:${offer.offerId}`).text("❌ Rad etish",`ir:${offer.offerId}`).row().text("💬 Qarshi taklif",`ic:${offer.offerId}`).row().text("← Takliflar",`io:${clubId}`));});
-  bot.callbackQuery(/^ic:([0-9a-f-]{36})$/,async context=>{if(!context.from)return;const user=await getContextUser(context),offer=await transfers.notification(context.match[1]!);if(!offer||offer.sellerTelegramId!==context.from.id)return context.answerCallbackQuery({text:"Taklif endi faol emas"});transferInputs.set(context.from.id,{mode:"COUNTER",clubId:"",offerId:offer.offerId,playerName:offer.playerName,minimum:offer.amount+100000});await context.answerCallbackQuery();await editOrReply(context,`💬 ${offer.playerName} uchun qarshi taklif summasini yuboring.\n\nAsl taklif: ${transferMoney(offer.amount)}\nMinimal: ${transferMoney(offer.amount+100000)}`,new InlineKeyboard().text("← Taklif",`iv:${offer.offerId}`));});
-  bot.callbackQuery(/^ac:([0-9a-f-]{36})$/,async context=>{if(!context.from)return;const user=await getContextUser(context),offer=await transfers.notification(context.match[1]!);if(!offer||offer.buyerTelegramId!==context.from.id)return context.answerCallbackQuery({text:"Taklif endi faol emas"});await context.answerCallbackQuery({text:"Transfer yakunlanmoqda…"});try{await transfers.acceptCounterOffer(user.id,offer.offerId);await sendUpdate(offer.sellerTelegramId,`✅ ${offer.playerName} bo‘yicha qarshi taklif qabul qilindi. Transfer yakunlandi.`,new InlineKeyboard());await editOrReply(context,`✅ ${offer.playerName} transferi yakunlandi.`,new InlineKeyboard());}catch{await context.reply("Qarshi taklif endi faol emas yoki budjet yetarli emas.");}});
-  bot.callbackQuery(/^(ia|ir):([0-9a-f-]{36})$/,async context=>{if(!context.from)return;const user=await getContextUser(context),offer=await transfers.notification(context.match[2]!);if(!offer||offer.sellerTelegramId!==context.from.id)return context.answerCallbackQuery({text:"Taklif endi faol emas"});await context.answerCallbackQuery({text:"Taklif qayta ishlanmoqda…"});try{const accepted=context.match[1]==="ia",result=await transfers.respondToOffer(user.id,offer.offerId,accepted?"ACCEPT":"REJECT");await sendUpdate(offer.buyerTelegramId,accepted?`✅ ${offer.playerName} uchun ${transferMoney(offer.amount)} taklifingiz qabul qilindi. Transfer yakunlandi.`:`❌ ${offer.playerName} uchun taklifingiz rad etildi.`,new InlineKeyboard());await editOrReply(context,result==="ACCEPTED"?"✅ Transfer qabul qilindi. Futbolchi xaridor klubiga o‘tdi.":"❌ Taklif rad etildi.",new InlineKeyboard().text("← Transfer markazi",`tr:${offer.sellerClubId}`));}catch(error){logger.warn({event:"incoming_offer_response_failed",err:error},"Incoming offer response failed");await context.reply("Taklifni qayta ishlab bo‘lmadi. U muddatidan o‘tgan bo‘lishi mumkin.");}});
-  bot.callbackQuery(/^gm:([0-9a-f-]{36}):(\d+)(?::(ALL|GK|DEF|MID|ATT))?$/,async context=>{await context.answerCallbackQuery();await showMarket(context,context.match[1]!,Number(context.match[2]),context.match[3]??"ALL");});
-  bot.callbackQuery(/^gb:([0-9a-f-]{36})$/,async context=>{if(!context.from)return;await context.answerCallbackQuery();const clubId=transferClubSelection.get(context.from.id);if(!clubId)return context.reply("Transfer markaziga qaytib, klubni qayta tanlang.");const user=await getContextUser(context),item=await transfers.listing(user.id,clubId,context.match[1]!);if(!item)return editOrReply(context,"Bu futbolchi sizning ligangiz bozorida faol emas.",new InlineKeyboard().text("← Bozor",`gm:${clubId}:0`));await editOrReply(context,formatListing(item),new InlineKeyboard().text("Xaridni tasdiqlash",`gc:${item.listingId}`).row().text("← Bozor",`gm:${clubId}:0`));});
-  bot.callbackQuery(/^gc:([0-9a-f-]{36})$/,async context=>{if(!context.from)return;await context.answerCallbackQuery({text:"Transfer tekshirilmoqda…"});const user=await getContextUser(context),clubId=transferClubSelection.get(context.from.id);if(!clubId)return context.reply("Transfer markaziga qaytib, klubni qayta tanlang.");try{const result=await transfers.buy(user.id,clubId,context.match[1]!);const msg=result.status==="ACCEPTED"?"✅ TRANSFER YAKUNLANDI\n\nFutbolchi klubingizga qo‘shildi.":result.status==="COUNTERED"?`🤝 AI qarshi taklifi: ${transferMoney(result.counterAmount!)}`:"❌ Taklif rad etildi.";await editOrReply(context,msg,new InlineKeyboard().text("← Bozor",`gm:${clubId}:0`).text("🏟 Klub",`db:${clubId}`));}catch(error){logger.warn({event:"transfer_failed",err:error},"Transfer failed");await context.reply("Transfer amalga oshmadi: budjet, tarkib limiti yoki listing holatini tekshiring.");}});
-  bot.on("message:text",async(context,next)=>{if(!context.from)return next();const pending=transferInputs.get(context.from.id);if(!pending)return next();const raw=context.message.text.trim().replace(/\s/g,"").replace(",",".");const isMillions=raw.toLowerCase().endsWith("m"),amount=Number(isMillions?raw.slice(0,-1):raw)*(isMillions?1_000_000:1);if(!Number.isFinite(amount)||amount<pending.minimum){await context.reply(`Miqdor noto‘g‘ri. Kamida ${transferMoney(pending.minimum)} yuboring.`);return;}const user=await getContextUser(context);try{if(pending.mode==="SELL"){await transfers.listForSale(user.id,pending.clubId,pending.clubPlayerId,Math.round(amount));await context.reply(`✅ ${pending.playerName} ${transferMoney(Math.round(amount))} narxda transfer bozoriga qo‘yildi.`,{reply_markup:new InlineKeyboard().text("← Transfer markazi",`tr:${pending.clubId}`)});}else if(pending.mode==="COUNTER"){await transfers.counterOffer(user.id,pending.offerId,Math.round(amount));const offer=await transfers.notification(pending.offerId);await sendUpdate(offer?.buyerTelegramId??null,`💬 ${offer?.sellerClub??"Murabbiy"} ${pending.playerName} uchun qarshi taklif yubordi: ${transferMoney(Math.round(amount))}`,new InlineKeyboard().text("✅ Qarshi taklifni qabul qilish",`ac:${pending.offerId}`));await context.reply("✅ Qarshi taklif xaridor murabbiyiga yuborildi.");}else{const result=await transfers.offer(user.id,pending.clubId,pending.clubPlayerId,Math.round(amount));const offer=await transfers.notification(result.offerId);if(result.status==="PENDING")await sendUpdate(offer?.sellerTelegramId??null,`📩 YANGI TRANSFER TAKLIFI\n\n⚽ ${pending.playerName}\n🏟 Xaridor: ${offer?.buyerClub??"Klub"}\n💰 Taklif: ${transferMoney(Math.round(amount))}`,new InlineKeyboard().text("✅ Qabul qilish",`ia:${result.offerId}`).text("❌ Rad etish",`ir:${result.offerId}`).row().text("💬 Qarshi taklif",`ic:${result.offerId}`));const text=result.status==="ACCEPTED"?`✅ ${pending.playerName} transferi yakunlandi!`:result.status==="COUNTERED"?`🤝 Qarshi taklif: ${transferMoney(result.counterAmount!)}`:result.status==="PENDING"?"⏳ Taklif klub murabbiyiga yuborildi.":"❌ Taklif rad etildi.";await context.reply(text,{reply_markup:new InlineKeyboard().text("← Transfer markazi",`tr:${pending.clubId}`)});}transferInputs.delete(context.from.id);}catch(error){logger.warn({event:"transfer_input_failed",err:error},"Transfer input failed");await context.reply("Transfer amalga oshmadi: budjet, tarkib limiti yoki futbolchi holatini tekshiring.");}});
+  const showMarket = async (
+    context: Context,
+    clubId: string,
+    page: number,
+    group = "ALL"
+  ): Promise<void> => {
+    if (!context.from) return;
+    const user = await getContextUser(context);
+    await transfers.saveInputSession(user.id, "ACTIVE_CLUB", { clubId });
+    const items = await transfers.market(user.id, clubId, page, 8, group);
+    const keyboard = new InlineKeyboard();
+
+    for (const item of items) {
+      keyboard.text(`⚽ ${item.name} · ⭐${item.overall} · ${transferMoney(item.askingPrice)}`, `gb:${item.listingId}`).row();
+    }
+
+    keyboard
+      .text("🌟 Barchasi", `gm:${clubId}:0:ALL`)
+      .text("🥅 Darvozabon", `gm:${clubId}:0:GK`)
+      .row()
+      .text("🛡 Himoyachi", `gm:${clubId}:0:DEF`)
+      .text("🧠 Yarimhimoya", `gm:${clubId}:0:MID`)
+      .row()
+      .text("⚡ Hujumchi", `gm:${clubId}:0:ATT`);
+
+    if (page > 0) keyboard.row().text("← Oldingi", `gm:${clubId}:${page - 1}:${group}`);
+    if (items.length === 8) keyboard.text("Keyingi →", `gm:${clubId}:${page + 1}:${group}`);
+    keyboard.row().text("← Transfer markazi", `tr:${clubId}`);
+
+    const groupTitle =
+      group === "ALL"
+        ? "YULDUZLAR"
+        : group === "GK"
+        ? "DARVOZABONLAR"
+        : group === "DEF"
+        ? "HIMOYACHILAR"
+        : group === "MID"
+        ? "YARIMHIMOYACHILAR"
+        : "HUJUMCHILAR";
+
+    await editOrReply(context, `🌍 GLOBAL TRANSFER · ${groupTitle}\n\n${formatMarket(items)}`, keyboard);
+  };
+
+  bot.callbackQuery(/^tr:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const clubId = context.match[1]!;
+    if (!(await getContextManagedClubs(context, user.id)).some((c) => c.leagueClubId === clubId)) return;
+    await showTransferHub(context, clubId);
+  });
+
+  bot.callbackQuery(/^ts:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const clubId = context.match[1]!;
+    const players = await transfers.saleCandidates(user.id, clubId);
+    const kb = new InlineKeyboard();
+
+    for (const player of players.slice(0, 20)) {
+      kb.text(`${player.name} · ${player.position} · ⭐${player.overall}`, `tl:${player.clubPlayerId}`).row();
+    }
+    kb.text("← Transfer markazi", `tr:${clubId}`);
+
+    await editOrReply(
+      context,
+      players.length
+        ? "📤 FUTBOLCHINI SOTUVGA QO‘YISH\n\nNarxini belgilash uchun futbolchini tanlang:"
+        : "Sotuvga qo‘yish mumkin bo‘lgan futbolchi yo‘q (kamida 18 futbolchi qolishi kerak).",
+      kb
+    );
+  });
+
+  bot.callbackQuery(/^tl:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const clubPlayerId = context.match[1]!;
+    const player = await transfers.targetPlayer(clubPlayerId);
+    if (!player) {
+      await context.reply("Futbolchi topilmadi.");
+      return;
+    }
+
+    const minimum = Math.max(100_000, Math.round(player.marketValue * 0.5));
+    await transfers.saveInputSession(user.id, "SELL", {
+      clubId: player.targetClubId,
+      clubPlayerId,
+      playerName: player.name,
+      minimum,
+    });
+
+    await editOrReply(
+      context,
+      `💰 ${player.name} uchun sotuv narxini yuboring.\n\nMinimal narx: ${transferMoney(minimum)}\nMisol: 45M yoki 45000000`,
+      new InlineKeyboard().text("← Bekor qilish", `ts:${player.targetClubId}`)
+    );
+  });
+
+  bot.callbackQuery(/^tf:([0-9a-f-]{36}):(\d+)$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const clubId = context.match[1]!;
+    const page = Number(context.match[2]);
+    const clubs = await transfers.leagueClubs(user.id, clubId);
+    const kb = new InlineKeyboard();
+
+    for (const club of clubs.slice(page * 10, (page + 1) * 10)) {
+      kb.text(`🏟 ${club.clubName}`, `tk:${club.leagueClubId}:0`).row();
+    }
+
+    if (page > 0) kb.text("← Oldingi", `tf:${clubId}:${page - 1}`);
+    if ((page + 1) * 10 < clubs.length) kb.text("Keyingi →", `tf:${clubId}:${page + 1}`);
+    if (page > 0 || (page + 1) * 10 < clubs.length) kb.row();
+    kb.text("← Transfer markazi", `tr:${clubId}`);
+
+    await editOrReply(
+      context,
+      clubs.length
+        ? "🔎 LIGADAN IZLASH\n\nRaqib klubni tanlang va uning futbolchilariga taklif yuboring:"
+        : "Bu ligada boshqa raqib klublar topilmadi.",
+      kb
+    );
+  });
+
+  bot.callbackQuery(/^tk:([0-9a-f-]{36}):(\d+)$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const targetClubId = context.match[1]!;
+    const page = Number(context.match[2]);
+
+    const buyerClubId = await transfers.buyerClubForTarget(user.id, targetClubId);
+    if (!buyerClubId) {
+      await context.reply("Ushbu ligada sizning faol klubingiz topilmadi.");
+      return;
+    }
+
+    const players = await transfers.clubTargets(user.id, buyerClubId, targetClubId, page, 15);
+    const targetClubName = players[0]?.clubName ?? "Raqib klub";
+    const kb = new InlineKeyboard();
+
+    for (const player of players) {
+      kb.text(`⚽ ${player.name} · ${player.position} · ⭐${player.overall}`, `tp:${player.clubPlayerId}`).row();
+    }
+
+    if (page > 0) kb.text("← Oldingi", `tk:${targetClubId}:${page - 1}`);
+    if (players.length === 15) kb.text("Keyingi →", `tk:${targetClubId}:${page + 1}`);
+    if (page > 0 || players.length === 15) kb.row();
+    kb.text("← Klublar", `tf:${buyerClubId}:0`).text("← Transfer", `tr:${buyerClubId}`);
+
+    await editOrReply(context, formatClubPlayers(targetClubName, players), kb);
+  });
+
+  bot.callbackQuery(/^tp:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const player = await transfers.targetPlayer(context.match[1]!);
+    if (!player) {
+      await context.reply("Futbolchi ma’lumotlari topilmadi.");
+      return;
+    }
+
+    const kb = new InlineKeyboard()
+      .text(`120% (${transferMoney(Math.round(player.marketValue * 1.2))})`, `of:${player.clubPlayerId}:120`)
+      .text(`130% (${transferMoney(Math.round(player.marketValue * 1.3))})`, `of:${player.clubPlayerId}:130`)
+      .row()
+      .text(`140% (${transferMoney(Math.round(player.marketValue * 1.4))})`, `of:${player.clubPlayerId}:140`)
+      .text(`150% (${transferMoney(Math.round(player.marketValue * 1.5))})`, `of:${player.clubPlayerId}:150`)
+      .row()
+      .text("✍️ Boshqa summa kiritish", `oc:${player.clubPlayerId}`)
+      .row()
+      .text("← Tarkib", player.targetClubId ? `tk:${player.targetClubId}:0` : "home:club");
+
+    await editOrReply(context, formatPlayerProfile(player), kb);
+  });
+
+  bot.callbackQuery(/^of:([0-9a-f-]{36}):(\d+)$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery({ text: "Taklif yuborilmoqda…" });
+    const user = await getContextUser(context);
+    const clubPlayerId = context.match[1]!;
+    const pct = Number(context.match[2]);
+
+    const player = await transfers.targetPlayer(clubPlayerId);
+    if (!player) {
+      await context.reply("Futbolchi topilmadi.");
+      return;
+    }
+
+    const buyerClubId = await transfers.buyerClubForPlayer(user.id, clubPlayerId);
+    if (!buyerClubId) {
+      await context.reply("Ushbu futbolchining ligasida klubingiz topilmadi.");
+      return;
+    }
+
+    const amount = Math.round(player.marketValue * (pct / 100));
+
+    try {
+      const result = await transfers.offer(user.id, buyerClubId, clubPlayerId, amount);
+      const offer = await transfers.notification(result.offerId);
+
+      if (result.status === "PENDING" && offer?.sellerTelegramId) {
+        await sendUpdate(
+          offer.sellerTelegramId,
+          `📩 YANGI TRANSFER TAKLIFI\n\n⚽ ${player.name}\n🏟 Xaridor: ${offer.buyerClub}\n💰 Taklif: ${transferMoney(amount)}`,
+          new InlineKeyboard()
+            .text("✅ Qabul qilish", `ia:${result.offerId}`)
+            .text("❌ Rad etish", `ir:${result.offerId}`)
+            .row()
+            .text("💬 Qarshi taklif", `ic:${result.offerId}`)
+        );
+      }
+
+      const text =
+        result.status === "ACCEPTED"
+          ? `✅ ${player.name} transferi muvaffaqiyatli yakunlandi! Futbolchi klubingizga qo‘shildi.`
+          : result.status === "COUNTERED"
+          ? `🤝 AI qarshi taklif bildirdi: ${transferMoney(result.counterAmount!)}`
+          : result.status === "PENDING"
+          ? `⏳ Taklif ${player.clubName} murabbiyiga yuborildi.`
+          : `❌ ${player.clubName} taklifni rad etdi.`;
+
+      await editOrReply(
+        context,
+        text,
+        new InlineKeyboard()
+          .text("← Klub tarkibi", player.targetClubId ? `tk:${player.targetClubId}:0` : `tr:${buyerClubId}`)
+          .text("← Transfer markazi", `tr:${buyerClubId}`)
+      );
+    } catch (error: any) {
+      const code = error?.message ?? "";
+      const msg =
+        code === "INSUFFICIENT_BUDGET"
+          ? "❌ Klub budjetida mablag‘ yetarli emas."
+          : code === "PLAYER_NOT_AVAILABLE"
+          ? "❌ Futbolchi transfer uchun ochiq emas yoki yaqinda sotib olingan."
+          : "❌ Taklifni yuborib bo‘lmadi. Qayta urinib ko‘ring.";
+      await context.reply(msg);
+    }
+  });
+
+  bot.callbackQuery(/^oc:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const clubPlayerId = context.match[1]!;
+
+    const player = await transfers.targetPlayer(clubPlayerId);
+    if (!player) {
+      await context.reply("Futbolchi topilmadi.");
+      return;
+    }
+
+    const buyerClubId = await transfers.buyerClubForPlayer(user.id, clubPlayerId);
+    if (!buyerClubId) {
+      await context.reply("Ushbu ligada klubingiz topilmadi.");
+      return;
+    }
+
+    const minimum = Math.max(100_000, Math.round(player.marketValue * 0.5));
+    await transfers.saveInputSession(user.id, "OFFER", {
+      clubId: buyerClubId,
+      clubPlayerId,
+      playerName: player.name,
+      minimum,
+    });
+
+    await editOrReply(
+      context,
+      `🤝 ${player.name} uchun taklif miqdorini yuboring.\n\nBozor qiymati: ${transferMoney(player.marketValue)}\nMinimal taklif: ${transferMoney(minimum)}\nMisol: 55M yoki 55000000`,
+      new InlineKeyboard().text("← Bekor qilish", `tp:${clubPlayerId}`)
+    );
+  });
+
+  bot.callbackQuery(/^io:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const clubId = context.match[1]!;
+    const offers = await transfers.incomingOffers(user.id, clubId);
+    const kb = new InlineKeyboard();
+
+    for (const offer of offers) {
+      kb.text(`${offer.playerName} · ${offer.buyerClub} · ${transferMoney(offer.amount)}`, `iv:${offer.offerId}`).row();
+    }
+    kb.text("← Transfer markazi", `tr:${clubId}`);
+
+    await editOrReply(
+      context,
+      offers.length ? "📩 KELGAN TAKLIFLAR\n\nTaklifni ochib qabul qiling yoki rad eting:" : "📩 Hozircha sizning klubingizga kelgan faol taklif yo‘q.",
+      kb
+    );
+  });
+
+  bot.callbackQuery(/^iv:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const offerId = context.match[1]!;
+    const offer = await transfers.notification(offerId);
+    if (!offer) return context.answerCallbackQuery({ text: "Taklif endi faol emas" });
+
+    await editOrReply(
+      context,
+      `📩 TAKLIF\n\n⚽ ${offer.playerName}\n🏟 Xaridor: ${offer.buyerClub}\n💰 Taklif: ${transferMoney(offer.amount)}`,
+      new InlineKeyboard()
+        .text("✅ Qabul qilish", `ia:${offer.offerId}`)
+        .text("❌ Rad etish", `ir:${offer.offerId}`)
+        .row()
+        .text("💬 Qarshi taklif", `ic:${offer.offerId}`)
+        .row()
+        .text("← Takliflar", `io:${offer.sellerClubId}`)
+    );
+  });
+
+  bot.callbackQuery(/^ic:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const offer = await transfers.notification(context.match[1]!);
+    if (!offer || offer.sellerTelegramId !== context.from.id) {
+      return context.answerCallbackQuery({ text: "Taklif endi faol emas" });
+    }
+
+    const minimum = offer.amount + 100_000;
+    await transfers.saveInputSession(user.id, "COUNTER", {
+      offerId: offer.offerId,
+      playerName: offer.playerName,
+      minimum,
+    });
+
+    await editOrReply(
+      context,
+      `💬 ${offer.playerName} uchun qarshi taklif summasini yuboring.\n\nAsl taklif: ${transferMoney(offer.amount)}\nMinimal: ${transferMoney(minimum)}`,
+      new InlineKeyboard().text("← Taklif", `iv:${offer.offerId}`)
+    );
+  });
+
+  bot.callbackQuery(/^ac:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    const user = await getContextUser(context);
+    const offer = await transfers.notification(context.match[1]!);
+    if (!offer || offer.buyerTelegramId !== context.from.id) {
+      return context.answerCallbackQuery({ text: "Taklif endi faol emas" });
+    }
+    await context.answerCallbackQuery({ text: "Transfer yakunlanmoqda…" });
+    try {
+      await transfers.acceptCounterOffer(user.id, offer.offerId);
+      await sendUpdate(offer.sellerTelegramId, `✅ ${offer.playerName} bo‘yicha qarshi taklif qabul qilindi. Transfer yakunlandi.`, new InlineKeyboard());
+      await editOrReply(context, `✅ ${offer.playerName} transferi yakunlandi.`, new InlineKeyboard().text("← Transfer markazi", `tr:${offer.buyerClubId}`));
+    } catch {
+      await context.reply("Qarshi taklif endi faol emas yoki budjet yetarli emas.");
+    }
+  });
+
+  bot.callbackQuery(/^(ia|ir):([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    const user = await getContextUser(context);
+    const offer = await transfers.notification(context.match[2]!);
+    if (!offer || offer.sellerTelegramId !== context.from.id) {
+      return context.answerCallbackQuery({ text: "Taklif endi faol emas" });
+    }
+    await context.answerCallbackQuery({ text: "Taklif qayta ishlanmoqda…" });
+    try {
+      const accepted = context.match[1] === "ia";
+      const result = await transfers.respondToOffer(user.id, offer.offerId, accepted ? "ACCEPT" : "REJECT");
+      await sendUpdate(
+        offer.buyerTelegramId,
+        accepted
+          ? `✅ ${offer.playerName} uchun ${transferMoney(offer.amount)} taklifingiz qabul qilindi. Transfer yakunlandi.`
+          : `❌ ${offer.playerName} uchun taklifingiz rad etildi.`,
+        new InlineKeyboard()
+      );
+      await editOrReply(
+        context,
+        result === "ACCEPTED" ? "✅ Transfer qabul qilindi. Futbolchi xaridor klubiga o‘tdi." : "❌ Taklif rad etildi.",
+        new InlineKeyboard().text("← Transfer markazi", `tr:${offer.sellerClubId}`)
+      );
+    } catch (error) {
+      logger.warn({ event: "incoming_offer_response_failed", err: error }, "Incoming offer response failed");
+      await context.reply("Taklifni qayta ishlab bo‘lmadi. U muddatidan o‘tgan bo‘lishi mumkin.");
+    }
+  });
+
+  bot.callbackQuery(/^th:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const clubId = context.match[1]!;
+    const history = await transfers.transferHistory(clubId);
+
+    await editOrReply(
+      context,
+      formatTransferHistory(history),
+      new InlineKeyboard().text("← Transfer markazi", `tr:${clubId}`)
+    );
+  });
+
+  bot.callbackQuery(/^gm:([0-9a-f-]{36}):(\d+)(?::(ALL|GK|DEF|MID|ATT))?$/, async (context) => {
+    await context.answerCallbackQuery();
+    await showMarket(context, context.match[1]!, Number(context.match[2]), context.match[3] ?? "ALL");
+  });
+
+  bot.callbackQuery(/^gb:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const session = await transfers.getInputSession(user.id);
+    const clubId = (session?.mode === "ACTIVE_CLUB" ? (session.data.clubId as string) : undefined)
+      ?? (await getContextManagedClubs(context, user.id))[0]?.leagueClubId;
+
+    if (!clubId) return context.reply("Transfer markaziga qaytib, klubni qayta tanlang.");
+    const item = await transfers.listing(user.id, clubId, context.match[1]!);
+    if (!item) {
+      return editOrReply(context, "Bu futbolchi Global Transfer bozorida faol emas.", new InlineKeyboard().text("← Bozor", `gm:${clubId}:0`));
+    }
+    await editOrReply(
+      context,
+      formatListing(item),
+      new InlineKeyboard().text("✅ Xaridni tasdiqlash", `gc:${item.listingId}`).row().text("← Bozor", `gm:${clubId}:0`)
+    );
+  });
+
+  bot.callbackQuery(/^gc:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery({ text: "Transfer tekshirilmoqda…" });
+    const user = await getContextUser(context);
+    const session = await transfers.getInputSession(user.id);
+    const clubId = (session?.mode === "ACTIVE_CLUB" ? (session.data.clubId as string) : undefined)
+      ?? (await getContextManagedClubs(context, user.id))[0]?.leagueClubId;
+
+    if (!clubId) return context.reply("Transfer markaziga qaytib, klubni qayta tanlang.");
+    try {
+      await transfers.buy(user.id, clubId, context.match[1]!);
+      await editOrReply(
+        context,
+        "✅ TRANSFER YAKUNLANDI\n\nFutbolchi klubingizga qo‘shildi va asosiy tarkibingizga kiritildi.",
+        new InlineKeyboard().text("← Bozor", `gm:${clubId}:0`).text("🏟 Klub", `db:${clubId}`)
+      );
+    } catch (error: any) {
+      logger.warn({ event: "global_transfer_failed", err: error }, "Global transfer failed");
+      const err = error?.message ?? "";
+      const text =
+        err === "INSUFFICIENT_BUDGET"
+          ? "❌ Klub budjetida mablag‘ yetarli emas."
+          : err === "SQUAD_LIMIT_REACHED"
+          ? "❌ Tarkibda bo‘sh joy yo‘q (maksimal 30 futbolchi)."
+          : err === "LISTING_NOT_ACTIVE"
+          ? "❌ Ushbu futbolchi allaqachon sotilgan yoki listing muddati tugagan."
+          : "❌ Transfer amalga oshmadi: budjet, tarkib limiti yoki listing holatini tekshiring.";
+      await context.reply(text);
+    }
+  });
+
+  bot.on("message:text", async (context, next) => {
+    if (!context.from) return next();
+    const user = await getContextUser(context);
+    const pending = await transfers.getInputSession(user.id);
+    if (!pending || (pending.mode !== "SELL" && pending.mode !== "OFFER" && pending.mode !== "COUNTER")) {
+      return next();
+    }
+
+    const data = pending.data as any;
+    const raw = context.message.text.trim().replace(/\s/g, "").replace(",", ".");
+    const isMillions = raw.toLowerCase().endsWith("m");
+    const amount = Number(isMillions ? raw.slice(0, -1) : raw) * (isMillions ? 1_000_000 : 1);
+
+    if (!Number.isFinite(amount) || amount < data.minimum) {
+      await context.reply(`Miqdor noto‘g‘ri. Kamida ${transferMoney(data.minimum)} yuboring.`);
+      return;
+    }
+
+    await transfers.clearInputSession(user.id);
+
+    try {
+      if (pending.mode === "SELL") {
+        await transfers.listForSale(user.id, data.clubId, data.clubPlayerId, Math.round(amount));
+        await context.reply(`✅ ${data.playerName} ${transferMoney(Math.round(amount))} narxda transfer bozoriga qo‘yildi.`, {
+          reply_markup: new InlineKeyboard().text("← Transfer markazi", `tr:${data.clubId}`),
+        });
+      } else if (pending.mode === "COUNTER") {
+        await transfers.counterOffer(user.id, data.offerId, Math.round(amount));
+        const offer = await transfers.notification(data.offerId);
+        await sendUpdate(
+          offer?.buyerTelegramId ?? null,
+          `💬 ${offer?.sellerClub ?? "Murabbiy"} ${data.playerName} uchun qarshi taklif yubordi: ${transferMoney(Math.round(amount))}`,
+          new InlineKeyboard().text("✅ Qarshi taklifni qabul qilish", `ac:${data.offerId}`)
+        );
+        await context.reply("✅ Qarshi taklif xaridor murabbiyiga yuborildi.");
+      } else {
+        const result = await transfers.offer(user.id, data.clubId, data.clubPlayerId, Math.round(amount));
+        const offer = await transfers.notification(result.offerId);
+        if (result.status === "PENDING") {
+          await sendUpdate(
+            offer?.sellerTelegramId ?? null,
+            `📩 YANGI TRANSFER TAKLIFI\n\n⚽ ${data.playerName}\n🏟 Xaridor: ${offer?.buyerClub ?? "Klub"}\n💰 Taklif: ${transferMoney(Math.round(amount))}`,
+            new InlineKeyboard()
+              .text("✅ Qabul qilish", `ia:${result.offerId}`)
+              .text("❌ Rad etish", `ir:${result.offerId}`)
+              .row()
+              .text("💬 Qarshi taklif", `ic:${result.offerId}`)
+          );
+        }
+        const text =
+          result.status === "ACCEPTED"
+            ? `✅ ${data.playerName} transferi yakunlandi!`
+            : result.status === "COUNTERED"
+            ? `🤝 Qarshi taklif: ${transferMoney(result.counterAmount!)}`
+            : result.status === "PENDING"
+            ? "⏳ Taklif klub murabbiyiga yuborildi."
+            : "❌ Taklif rad etildi.";
+        await context.reply(text, {
+          reply_markup: new InlineKeyboard().text("← Transfer markazi", `tr:${data.clubId}`),
+        });
+      }
+    } catch (error: any) {
+      logger.warn({ event: "transfer_input_failed", err: error }, "Transfer input failed");
+      await context.reply("Transfer amalga oshmadi: budjet, tarkib limiti yoki futbolchi holatini tekshiring.");
+    }
+  });
   bot.on("message:text",async(context,next)=>{if(!context.from)return next();if(!privateLeagueJoinPending.delete(context.from.id))return next();const code=context.message.text.trim().toUpperCase();if(!/^[A-Z0-9]{8}$/.test(code)){await context.reply("Kod 8 ta harf yoki raqamdan iborat bo‘lishi kerak. Qaytadan “Kod bilan qo‘shilish” ni bosing.");return;}const privateLeague=await leagues.privateLeagueByCode(code);if(!privateLeague){await context.reply("Bunday private liga kodi topilmadi.");return;}const clubs=await leagues.listPrivateAvailableClubs(privateLeague.leagueId);await context.reply(`🔒 PRIVATE LIGA · ${code}\n\nKlub tanlang:`,{reply_markup:privateClubKeyboard(clubs,code,0)});});
 
   bot.callbackQuery("join", async (context) => {

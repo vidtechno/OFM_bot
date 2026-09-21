@@ -203,11 +203,80 @@ var reportDate = new Intl.DateTimeFormat("uz-UZ", { timeZone: "Asia/Tashkent", d
 
 // src/transfers/presentation.ts
 var transferMoney = (n) => `\u20AC${(n / 1e6).toFixed(1)}M`;
+function formatTransferHub(clubName, budget, cash) {
+  return [
+    `\u{1F501} ${clubName.toUpperCase()} \u2014 TRANSFER`,
+    "",
+    `\u{1F4B0} Transfer budjeti: ${transferMoney(budget)}`,
+    `\u{1F3E6} G\u2018azna: ${transferMoney(cash)}`,
+    "",
+    "Kerakli bo\u2018limni tanlang:"
+  ].join("\n");
+}
+function formatClubPlayers(clubName, players, page = 0, total = players.length) {
+  if (!players.length) {
+    return `\u{1F3DF} ${clubName.toUpperCase()} \u2014 FUTBOLCHILAR
+
+Bu klubda transferga ochiq futbolchi topilmadi.`;
+  }
+  const lines = [
+    `\u{1F3DF} ${clubName.toUpperCase()} \u2014 FUTBOLCHILAR`,
+    `\u{1F4CB} ${total} nafar futbolchi`,
+    ""
+  ];
+  players.forEach((p, idx) => {
+    lines.push(`${idx + 1}. ${p.name} \u2014 ${p.position} \u2014 \u2B50${p.overall} \u2014 ${transferMoney(p.marketValue)}`);
+  });
+  return lines.join("\n");
+}
+function formatPlayerProfile(p) {
+  return [
+    "\u{1F464} FUTBOLCHI PROFILI",
+    "",
+    `\u26BD ${p.name}`,
+    `\u{1F3DF} Joriy klub: ${p.clubName}`,
+    `\u2B50 Overall: ${p.overall}`,
+    `\u{1F4CD} Amplua: ${p.position}`,
+    p.age ? `\u{1F382} Yoshi: ${p.age} yosh` : "",
+    p.nationality ? `\u{1F30D} Millati: ${p.nationality}` : "",
+    `\u{1F4B0} Bozor qiymati: ${transferMoney(p.marketValue)}`,
+    "",
+    "Taklif summasini tanlang:"
+  ].filter(Boolean).join("\n");
+}
 function formatMarket(players) {
-  return players.length ? ["GLOBAL TRANSFER MARKET", "", ...players.map((p, i) => `${i + 1}. ${p.name} \xB7 ${p.position} \xB7 OVR ${p.overall} \xB7 ${transferMoney(p.askingPrice)}`)].join("\n") : "GLOBAL TRANSFER MARKET\n\nHozir faol listing yo\u2018q.";
+  return players.length ? [
+    "\u{1F30D} GLOBAL TRANSFER MARKET",
+    "",
+    ...players.map(
+      (p, i) => `${i + 1}. ${p.name} (${p.sellerName ?? "Global"}) \u2014 ${p.position} \u2014 \u2B50${p.overall} \u2014 ${transferMoney(p.askingPrice)}`
+    )
+  ].join("\n") : "\u{1F30D} GLOBAL TRANSFER MARKET\n\nHozir faol listing yo\u2018q.";
 }
 function formatListing(p) {
-  return ["PLAYER TRANSFER", "", p.name, `${p.position} \xB7 OVR ${p.overall} \xB7 ${p.age} yosh`, `Narx: ${transferMoney(p.askingPrice)}`, "", "Xarid pul va futbolchini atomik ko\u2018chiradi."].join("\n");
+  return [
+    "\u{1F30D} GLOBAL TRANSFER",
+    "",
+    `\u26BD ${p.name}`,
+    `\u{1F3DF} Klub: ${p.sellerName ?? "Global Market"}`,
+    `\u{1F4CD} ${p.position} \xB7 \u2B50${p.overall} \xB7 ${p.age} yosh`,
+    `\u{1F4B0} Narxi: ${transferMoney(p.askingPrice)}`,
+    "",
+    "Xarid darhol amalga oshadi va futbolchi klubingiz tarkibiga qo\u2018shiladi."
+  ].join("\n");
+}
+function formatTransferHistory(history) {
+  if (!history.length) {
+    return "\u{1F4DC} TRANSFER TARIXI\n\nHozircha yakunlangan transferlar mavjud emas.";
+  }
+  const lines = ["\u{1F4DC} TRANSFER TARIXI", ""];
+  for (const item of history) {
+    const icon = item.type === "INCOMING" ? "\u{1F7E2} Xarid" : "\u{1F534} Sotuv";
+    const dateStr = new Date(item.date).toLocaleDateString("uz-UZ");
+    lines.push(`${icon}: ${item.playerName} (${transferMoney(item.fee)})`);
+    lines.push(`   ${item.fromClub} \u2794 ${item.toClub} \xB7 ${dateStr}`);
+  }
+  return lines.join("\n");
 }
 
 // src/progression/presentation.ts
@@ -239,7 +308,7 @@ var MAIN_MENU = {
   admin: "\u{1F6E0} Admin panel"
 };
 function createMainKeyboard(isAdmin = false) {
-  const keyboard = new Keyboard().text(MAIN_MENU.club).text(MAIN_MENU.leagues).row().text(MAIN_MENU.transfer).text(MAIN_MENU.profile);
+  const keyboard = new Keyboard().text(MAIN_MENU.club).text(MAIN_MENU.leagues).row().text(MAIN_MENU.profile);
   if (isAdmin) keyboard.row().text(MAIN_MENU.admin);
   return keyboard.resized().persistent();
 }
@@ -302,13 +371,7 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
     context.managedClubs = clubs;
     return clubs;
   };
-  const transferClubSelection = /* @__PURE__ */ new Map();
   const privateLeagueJoinPending = /* @__PURE__ */ new Set();
-  const transferInputs = /* @__PURE__ */ new Map();
-  const saleBrowses = /* @__PURE__ */ new Map();
-  const targetBrowses = /* @__PURE__ */ new Map();
-  const targetClubBrowses = /* @__PURE__ */ new Map();
-  const incomingOfferClubs = /* @__PURE__ */ new Map();
   const sendUpdate = async (telegramId, text, keyboard) => {
     if (!telegramId) return;
     try {
@@ -408,23 +471,6 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
     return showDashboard(context, clubs[0]);
   });
   bot.hears(MAIN_MENU.leagues, showCompetitions);
-  bot.hears(MAIN_MENU.transfer, async (context) => {
-    if (!context.from) return;
-    const user = await getContextUser(context);
-    const clubs = await getContextManagedClubs(context, user.id);
-    if (clubs.length === 0) {
-      await context.reply("Sizda hali biriktirilgan klub yo\u2018q. Avval ligaga qo\u2018shiling va klub tanlang.");
-      return showCompetitions(context);
-    }
-    if (clubs.length === 1) {
-      return showTransferHub(context, clubs[0].leagueClubId);
-    }
-    const keyboard = new InlineKeyboard();
-    for (const club of clubs) {
-      keyboard.text(`${club.clubName} \xB7 ${club.competitionName}`, `tr:${club.leagueClubId}`).row();
-    }
-    await context.reply("Transfer markazi uchun klubingizni tanlang:", { reply_markup: keyboard });
-  });
   bot.hears(MAIN_MENU.profile, async (context) => {
     if (!context.from) return;
     const user = await getContextUser(context);
@@ -497,160 +543,323 @@ ${new Date(r.created_at).toLocaleString("uz-UZ")}`) : ["Hozircha audit yozuvlari
     await context.reply("Sponsor holati yangilandi.");
   });
   const showTransferHub = async (context, clubId) => {
-    await editOrReply(
-      context,
-      "\u{1F504} TRANSFER MARKAZI\n\nBu bo\u2018lim faqat tanlangan klubingiz uchun ishlaydi. Xarid, sotuv va takliflar shu klub budjetiga bog\u2018langan.",
-      new InlineKeyboard().text("\u{1F30D} Bozor", `gm:${clubId}:0`).text("\u{1F50E} Ligadan izlash", `tf:${clubId}:0`).row().text("\u{1F4E4} Sotuvga qo\u2018yish", `ts:${clubId}`).text("\u{1F4E9} Kelgan takliflar", `io:${clubId}`).row().text("\u2190 Klub", `db:${clubId}`)
-    );
+    const user = await getContextUser(context);
+    const clubs = await getContextManagedClubs(context, user.id);
+    const club = clubs.find((c) => c.leagueClubId === clubId);
+    const clubName = club?.clubName ?? "Klub";
+    const finances = await matches.finances(user.id, clubId);
+    await transfers.saveInputSession(user.id, "ACTIVE_CLUB", { clubId });
+    const keyboard = new InlineKeyboard().text("\u{1F50E} Ligadan izlash", `tf:${clubId}:0`).text("\u{1F30D} Global Transfer", `gm:${clubId}:0:ALL`).row().text("\u{1F4E4} Sotuvga qo\u2018yish", `ts:${clubId}`).text("\u{1F4E5} Takliflar", `io:${clubId}`).row().text("\u{1F4DC} Transfer tarixi", `th:${clubId}`).text("\u21A9\uFE0F Klubga qaytish", `db:${clubId}`);
+    await editOrReply(context, formatTransferHub(clubName, finances.transferBudget, finances.cashBalance), keyboard);
   };
   const showMarket = async (context, clubId, page, group = "ALL") => {
     if (!context.from) return;
-    transferClubSelection.set(context.from.id, clubId);
-    const user = await getContextUser(context), items = await transfers.market(user.id, clubId, page, 8, group);
+    const user = await getContextUser(context);
+    await transfers.saveInputSession(user.id, "ACTIVE_CLUB", { clubId });
+    const items = await transfers.market(user.id, clubId, page, 8, group);
     const keyboard = new InlineKeyboard();
-    for (const item of items) keyboard.text(`\u26BD ${item.name} \xB7 \u2B50${item.overall} \xB7 ${transferMoney(item.askingPrice)}`, `gb:${item.listingId}`).row();
+    for (const item of items) {
+      keyboard.text(`\u26BD ${item.name} \xB7 \u2B50${item.overall} \xB7 ${transferMoney(item.askingPrice)}`, `gb:${item.listingId}`).row();
+    }
     keyboard.text("\u{1F31F} Barchasi", `gm:${clubId}:0:ALL`).text("\u{1F945} Darvozabon", `gm:${clubId}:0:GK`).row().text("\u{1F6E1} Himoyachi", `gm:${clubId}:0:DEF`).text("\u{1F9E0} Yarimhimoya", `gm:${clubId}:0:MID`).row().text("\u26A1 Hujumchi", `gm:${clubId}:0:ATT`);
     if (page > 0) keyboard.row().text("\u2190 Oldingi", `gm:${clubId}:${page - 1}:${group}`);
     if (items.length === 8) keyboard.text("Keyingi \u2192", `gm:${clubId}:${page + 1}:${group}`);
     keyboard.row().text("\u2190 Transfer markazi", `tr:${clubId}`);
-    await editOrReply(context, `\u{1F30D} BOZOR \xB7 ${group === "ALL" ? "ENG KUCHLILAR" : group === "GK" ? "DARVOZABONLAR" : group === "DEF" ? "HIMOYACHILAR" : group === "MID" ? "YARIMHIMOYACHILAR" : "HUJUMCHILAR"}
+    const groupTitle = group === "ALL" ? "YULDUZLAR" : group === "GK" ? "DARVOZABONLAR" : group === "DEF" ? "HIMOYACHILAR" : group === "MID" ? "YARIMHIMOYACHILAR" : "HUJUMCHILAR";
+    await editOrReply(context, `\u{1F30D} GLOBAL TRANSFER \xB7 ${groupTitle}
 
-${formatMarket(items).split("\n\n")[1] ?? "Hozir faol listing yo\u2018q."}`, keyboard);
+${formatMarket(items)}`, keyboard);
   };
   bot.callbackQuery(/^tr:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await getContextUser(context), clubId = context.match[1];
-    if (!(await getContextManagedClubs(context, user.id)).some((club) => club.leagueClubId === clubId)) return;
+    const user = await getContextUser(context);
+    const clubId = context.match[1];
+    if (!(await getContextManagedClubs(context, user.id)).some((c) => c.leagueClubId === clubId)) return;
     await showTransferHub(context, clubId);
   });
   bot.callbackQuery(/^ts:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await getContextUser(context), clubId = context.match[1], players = await transfers.saleCandidates(user.id, clubId), kb = new InlineKeyboard(), browse = { clubId, players: /* @__PURE__ */ new Map() };
-    for (const [index, player] of players.slice(0, 20).entries()) {
-      browse.players.set(String(index), player);
-      kb.text(`${player.name} \xB7 ${player.position} \xB7 \u2B50${player.overall}`, `tl:${index}`).row();
+    const user = await getContextUser(context);
+    const clubId = context.match[1];
+    const players = await transfers.saleCandidates(user.id, clubId);
+    const kb = new InlineKeyboard();
+    for (const player of players.slice(0, 20)) {
+      kb.text(`${player.name} \xB7 ${player.position} \xB7 \u2B50${player.overall}`, `tl:${player.clubPlayerId}`).row();
     }
-    saleBrowses.set(context.from.id, browse);
     kb.text("\u2190 Transfer markazi", `tr:${clubId}`);
-    await editOrReply(context, players.length ? "\u{1F4E4} FUTBOLCHINI SOTUVGA QO\u2018YISH\n\nNarxini belgilash uchun futbolchini tanlang:" : "Sotuvga qo\u2018yish mumkin bo\u2018lgan futbolchi yo\u2018q.", kb);
+    await editOrReply(
+      context,
+      players.length ? "\u{1F4E4} FUTBOLCHINI SOTUVGA QO\u2018YISH\n\nNarxini belgilash uchun futbolchini tanlang:" : "Sotuvga qo\u2018yish mumkin bo\u2018lgan futbolchi yo\u2018q (kamida 18 futbolchi qolishi kerak).",
+      kb
+    );
   });
-  bot.callbackQuery(/^tl:(\d+)$/, async (context) => {
+  bot.callbackQuery(/^tl:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
-    const browse = saleBrowses.get(context.from.id), player = browse?.players.get(context.match[1]);
-    if (!browse || !player) return context.answerCallbackQuery({ text: "Ro\u2018yxat eskirgan, qayta oching" });
-    transferInputs.set(context.from.id, { mode: "SELL", clubId: browse.clubId, clubPlayerId: player.clubPlayerId, playerName: player.name, minimum: Math.max(1e5, Math.round(player.marketValue * 0.5)) });
     await context.answerCallbackQuery();
-    await editOrReply(context, `\u{1F4B0} ${player.name} uchun sotuv narxini yuboring.
+    const user = await getContextUser(context);
+    const clubPlayerId = context.match[1];
+    const player = await transfers.targetPlayer(clubPlayerId);
+    if (!player) {
+      await context.reply("Futbolchi topilmadi.");
+      return;
+    }
+    const minimum = Math.max(1e5, Math.round(player.marketValue * 0.5));
+    await transfers.saveInputSession(user.id, "SELL", {
+      clubId: player.targetClubId,
+      clubPlayerId,
+      playerName: player.name,
+      minimum
+    });
+    await editOrReply(
+      context,
+      `\u{1F4B0} ${player.name} uchun sotuv narxini yuboring.
 
-Minimal narx: ${transferMoney(Math.max(1e5, Math.round(player.marketValue * 0.5)))}
-Misol: 45M yoki 45000000`, new InlineKeyboard().text("\u2190 Bekor qilish", `ts:${browse.clubId}`));
+Minimal narx: ${transferMoney(minimum)}
+Misol: 45M yoki 45000000`,
+      new InlineKeyboard().text("\u2190 Bekor qilish", `ts:${player.targetClubId}`)
+    );
   });
   bot.callbackQuery(/^tf:([0-9a-f-]{36}):(\d+)$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await getContextUser(context), clubId = context.match[1], page = Number(context.match[2]), clubs = await transfers.leagueClubs(user.id, clubId), kb = new InlineKeyboard(), browse = { clubId, clubs: /* @__PURE__ */ new Map() };
-    for (const [index, club] of clubs.slice(page * 10, (page + 1) * 10).entries()) {
-      browse.clubs.set(String(index), club.leagueClubId);
-      kb.text(`\u{1F3DF} ${club.clubName}`, `tk:${index}:0`).row();
+    const user = await getContextUser(context);
+    const clubId = context.match[1];
+    const page = Number(context.match[2]);
+    const clubs = await transfers.leagueClubs(user.id, clubId);
+    const kb = new InlineKeyboard();
+    for (const club of clubs.slice(page * 10, (page + 1) * 10)) {
+      kb.text(`\u{1F3DF} ${club.clubName}`, `tk:${club.leagueClubId}:0`).row();
     }
-    targetClubBrowses.set(context.from.id, browse);
-    if (page) kb.text("\u2190 Oldingi", `tf:${clubId}:${page - 1}`);
+    if (page > 0) kb.text("\u2190 Oldingi", `tf:${clubId}:${page - 1}`);
     if ((page + 1) * 10 < clubs.length) kb.text("Keyingi \u2192", `tf:${clubId}:${page + 1}`);
-    kb.row().text("\u2190 Transfer markazi", `tr:${clubId}`);
-    await editOrReply(context, clubs.length ? "\u{1F50E} LIGADAN IZLASH\n\nAvval raqib klubni tanlang, keyin uning barcha futbolchilaridan biriga taklif yuboring:" : "Bu ligada raqib klublar topilmadi.", kb);
+    if (page > 0 || (page + 1) * 10 < clubs.length) kb.row();
+    kb.text("\u2190 Transfer markazi", `tr:${clubId}`);
+    await editOrReply(
+      context,
+      clubs.length ? "\u{1F50E} LIGADAN IZLASH\n\nRaqib klubni tanlang va uning futbolchilariga taklif yuboring:" : "Bu ligada boshqa raqib klublar topilmadi.",
+      kb
+    );
   });
-  bot.callbackQuery(/^tk:(\d+):(\d+)$/, async (context) => {
+  bot.callbackQuery(/^tk:([0-9a-f-]{36}):(\d+)$/, async (context) => {
     if (!context.from) return;
-    const clubs = targetClubBrowses.get(context.from.id), targetClubId = clubs?.clubs.get(context.match[1]);
-    if (!clubs || !targetClubId) return context.answerCallbackQuery({ text: "Klublar ro\u2018yxati eskirgan, qayta oching" });
     await context.answerCallbackQuery();
-    const user = await getContextUser(context), page = Number(context.match[2]), players = await transfers.clubTargets(user.id, clubs.clubId, targetClubId, page), kb = new InlineKeyboard(), browse = { clubId: clubs.clubId, players: /* @__PURE__ */ new Map() };
-    for (const [index, player] of players.entries()) {
-      browse.players.set(String(index), player);
-      kb.text(`${player.name} \xB7 ${player.position} \xB7 \u2B50${player.overall}`, `to:${index}`).row();
+    const user = await getContextUser(context);
+    const targetClubId = context.match[1];
+    const page = Number(context.match[2]);
+    const buyerClubId = await transfers.buyerClubForTarget(user.id, targetClubId);
+    if (!buyerClubId) {
+      await context.reply("Ushbu ligada sizning faol klubingiz topilmadi.");
+      return;
     }
-    targetBrowses.set(context.from.id, browse);
-    if (page) kb.text("\u2190 Oldingi", `tk:${context.match[1]}:${page - 1}`);
-    if (players.length === 25) kb.text("Keyingi \u2192", `tk:${context.match[1]}:${page + 1}`);
-    kb.row().text("\u2190 Klublar", `tf:${clubs.clubId}:0`).text("\u2190 Transfer markazi", `tr:${clubs.clubId}`);
-    await editOrReply(context, players.length ? `\u{1F3DF} ${players[0].clubName.toUpperCase()} FUTBOLCHILARI
-
-Taklif yuborish uchun futbolchini tanlang:` : "Bu klubda transferga taklif yuborish mumkin bo\u2018lgan futbolchi yo\u2018q.", kb);
+    const players = await transfers.clubTargets(user.id, buyerClubId, targetClubId, page, 15);
+    const targetClubName = players[0]?.clubName ?? "Raqib klub";
+    const kb = new InlineKeyboard();
+    for (const player of players) {
+      kb.text(`\u26BD ${player.name} \xB7 ${player.position} \xB7 \u2B50${player.overall}`, `tp:${player.clubPlayerId}`).row();
+    }
+    if (page > 0) kb.text("\u2190 Oldingi", `tk:${targetClubId}:${page - 1}`);
+    if (players.length === 15) kb.text("Keyingi \u2192", `tk:${targetClubId}:${page + 1}`);
+    if (page > 0 || players.length === 15) kb.row();
+    kb.text("\u2190 Klublar", `tf:${buyerClubId}:0`).text("\u2190 Transfer", `tr:${buyerClubId}`);
+    await editOrReply(context, formatClubPlayers(targetClubName, players), kb);
   });
-  bot.callbackQuery(/^to:(\d+)$/, async (context) => {
+  bot.callbackQuery(/^tp:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
-    const browse = targetBrowses.get(context.from.id), target = browse?.players.get(context.match[1]);
-    if (!browse || !target) return context.answerCallbackQuery({ text: "Ro\u2018yxat eskirgan, qayta oching" });
-    transferInputs.set(context.from.id, { mode: "OFFER", clubId: browse.clubId, clubPlayerId: target.clubPlayerId, playerName: target.name, minimum: Math.max(1e5, Math.round(target.marketValue * 0.5)) });
     await context.answerCallbackQuery();
-    await editOrReply(context, `\u{1F91D} ${target.name} uchun taklif miqdorini yuboring.
+    const player = await transfers.targetPlayer(context.match[1]);
+    if (!player) {
+      await context.reply("Futbolchi ma\u2019lumotlari topilmadi.");
+      return;
+    }
+    const kb = new InlineKeyboard().text(`120% (${transferMoney(Math.round(player.marketValue * 1.2))})`, `of:${player.clubPlayerId}:120`).text(`130% (${transferMoney(Math.round(player.marketValue * 1.3))})`, `of:${player.clubPlayerId}:130`).row().text(`140% (${transferMoney(Math.round(player.marketValue * 1.4))})`, `of:${player.clubPlayerId}:140`).text(`150% (${transferMoney(Math.round(player.marketValue * 1.5))})`, `of:${player.clubPlayerId}:150`).row().text("\u270D\uFE0F Boshqa summa kiritish", `oc:${player.clubPlayerId}`).row().text("\u2190 Tarkib", player.targetClubId ? `tk:${player.targetClubId}:0` : "home:club");
+    await editOrReply(context, formatPlayerProfile(player), kb);
+  });
+  bot.callbackQuery(/^of:([0-9a-f-]{36}):(\d+)$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery({ text: "Taklif yuborilmoqda\u2026" });
+    const user = await getContextUser(context);
+    const clubPlayerId = context.match[1];
+    const pct = Number(context.match[2]);
+    const player = await transfers.targetPlayer(clubPlayerId);
+    if (!player) {
+      await context.reply("Futbolchi topilmadi.");
+      return;
+    }
+    const buyerClubId = await transfers.buyerClubForPlayer(user.id, clubPlayerId);
+    if (!buyerClubId) {
+      await context.reply("Ushbu futbolchining ligasida klubingiz topilmadi.");
+      return;
+    }
+    const amount = Math.round(player.marketValue * (pct / 100));
+    try {
+      const result = await transfers.offer(user.id, buyerClubId, clubPlayerId, amount);
+      const offer = await transfers.notification(result.offerId);
+      if (result.status === "PENDING" && offer?.sellerTelegramId) {
+        await sendUpdate(
+          offer.sellerTelegramId,
+          `\u{1F4E9} YANGI TRANSFER TAKLIFI
 
-Bozor qiymati: ${transferMoney(target.marketValue)}
-Minimal taklif: ${transferMoney(Math.max(1e5, Math.round(target.marketValue * 0.5)))}
-Misol: 55M yoki 55000000`, new InlineKeyboard().text("\u2190 Futbolchilar", `tf:${browse.clubId}:0`));
+\u26BD ${player.name}
+\u{1F3DF} Xaridor: ${offer.buyerClub}
+\u{1F4B0} Taklif: ${transferMoney(amount)}`,
+          new InlineKeyboard().text("\u2705 Qabul qilish", `ia:${result.offerId}`).text("\u274C Rad etish", `ir:${result.offerId}`).row().text("\u{1F4AC} Qarshi taklif", `ic:${result.offerId}`)
+        );
+      }
+      const text = result.status === "ACCEPTED" ? `\u2705 ${player.name} transferi muvaffaqiyatli yakunlandi! Futbolchi klubingizga qo\u2018shildi.` : result.status === "COUNTERED" ? `\u{1F91D} AI qarshi taklif bildirdi: ${transferMoney(result.counterAmount)}` : result.status === "PENDING" ? `\u23F3 Taklif ${player.clubName} murabbiyiga yuborildi.` : `\u274C ${player.clubName} taklifni rad etdi.`;
+      await editOrReply(
+        context,
+        text,
+        new InlineKeyboard().text("\u2190 Klub tarkibi", player.targetClubId ? `tk:${player.targetClubId}:0` : `tr:${buyerClubId}`).text("\u2190 Transfer markazi", `tr:${buyerClubId}`)
+      );
+    } catch (error) {
+      const code = error?.message ?? "";
+      const msg = code === "INSUFFICIENT_BUDGET" ? "\u274C Klub budjetida mablag\u2018 yetarli emas." : code === "PLAYER_NOT_AVAILABLE" ? "\u274C Futbolchi transfer uchun ochiq emas yoki yaqinda sotib olingan." : "\u274C Taklifni yuborib bo\u2018lmadi. Qayta urinib ko\u2018ring.";
+      await context.reply(msg);
+    }
+  });
+  bot.callbackQuery(/^oc:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const clubPlayerId = context.match[1];
+    const player = await transfers.targetPlayer(clubPlayerId);
+    if (!player) {
+      await context.reply("Futbolchi topilmadi.");
+      return;
+    }
+    const buyerClubId = await transfers.buyerClubForPlayer(user.id, clubPlayerId);
+    if (!buyerClubId) {
+      await context.reply("Ushbu ligada klubingiz topilmadi.");
+      return;
+    }
+    const minimum = Math.max(1e5, Math.round(player.marketValue * 0.5));
+    await transfers.saveInputSession(user.id, "OFFER", {
+      clubId: buyerClubId,
+      clubPlayerId,
+      playerName: player.name,
+      minimum
+    });
+    await editOrReply(
+      context,
+      `\u{1F91D} ${player.name} uchun taklif miqdorini yuboring.
+
+Bozor qiymati: ${transferMoney(player.marketValue)}
+Minimal taklif: ${transferMoney(minimum)}
+Misol: 55M yoki 55000000`,
+      new InlineKeyboard().text("\u2190 Bekor qilish", `tp:${clubPlayerId}`)
+    );
   });
   bot.callbackQuery(/^io:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await getContextUser(context), clubId = context.match[1], offers = await transfers.incomingOffers(user.id, clubId), kb = new InlineKeyboard();
-    incomingOfferClubs.set(context.from.id, clubId);
-    for (const offer of offers) kb.text(`${offer.playerName} \xB7 ${offer.buyerClub} \xB7 ${transferMoney(offer.amount)}`, `iv:${offer.offerId}`).row();
+    const user = await getContextUser(context);
+    const clubId = context.match[1];
+    const offers = await transfers.incomingOffers(user.id, clubId);
+    const kb = new InlineKeyboard();
+    for (const offer of offers) {
+      kb.text(`${offer.playerName} \xB7 ${offer.buyerClub} \xB7 ${transferMoney(offer.amount)}`, `iv:${offer.offerId}`).row();
+    }
     kb.text("\u2190 Transfer markazi", `tr:${clubId}`);
-    await editOrReply(context, offers.length ? "\u{1F4E9} KELGAN TAKLIFLAR\n\nTaklifni ochib qabul qiling yoki rad eting:" : "\u{1F4E9} Hozircha sizning klubingizga kelgan faol taklif yo\u2018q.", kb);
+    await editOrReply(
+      context,
+      offers.length ? "\u{1F4E9} KELGAN TAKLIFLAR\n\nTaklifni ochib qabul qiling yoki rad eting:" : "\u{1F4E9} Hozircha sizning klubingizga kelgan faol taklif yo\u2018q.",
+      kb
+    );
   });
   bot.callbackQuery(/^iv:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
-    const clubId = incomingOfferClubs.get(context.from.id);
-    if (!clubId) return context.answerCallbackQuery({ text: "Transfer markazini qayta oching" });
-    const user = await getContextUser(context), offer = (await transfers.incomingOffers(user.id, clubId)).find((item) => item.offerId === context.match[1]);
-    if (!offer) return context.answerCallbackQuery({ text: "Taklif endi faol emas" });
     await context.answerCallbackQuery();
-    await editOrReply(context, `\u{1F4E9} TAKLIF
+    const offerId = context.match[1];
+    const offer = await transfers.notification(offerId);
+    if (!offer) return context.answerCallbackQuery({ text: "Taklif endi faol emas" });
+    await editOrReply(
+      context,
+      `\u{1F4E9} TAKLIF
 
-\u26BD ${offer.playerName} \xB7 ${offer.position} \xB7 \u2B50${offer.overall}
+\u26BD ${offer.playerName}
 \u{1F3DF} Xaridor: ${offer.buyerClub}
-\u{1F4B0} Taklif: ${transferMoney(offer.amount)}
-\u23F3 Amal qiladi: ${new Date(offer.expiresAt).toLocaleString("uz-UZ")}`, new InlineKeyboard().text("\u2705 Qabul qilish", `ia:${offer.offerId}`).text("\u274C Rad etish", `ir:${offer.offerId}`).row().text("\u{1F4AC} Qarshi taklif", `ic:${offer.offerId}`).row().text("\u2190 Takliflar", `io:${clubId}`));
+\u{1F4B0} Taklif: ${transferMoney(offer.amount)}`,
+      new InlineKeyboard().text("\u2705 Qabul qilish", `ia:${offer.offerId}`).text("\u274C Rad etish", `ir:${offer.offerId}`).row().text("\u{1F4AC} Qarshi taklif", `ic:${offer.offerId}`).row().text("\u2190 Takliflar", `io:${offer.sellerClubId}`)
+    );
   });
   bot.callbackQuery(/^ic:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
-    const user = await getContextUser(context), offer = await transfers.notification(context.match[1]);
-    if (!offer || offer.sellerTelegramId !== context.from.id) return context.answerCallbackQuery({ text: "Taklif endi faol emas" });
-    transferInputs.set(context.from.id, { mode: "COUNTER", clubId: "", offerId: offer.offerId, playerName: offer.playerName, minimum: offer.amount + 1e5 });
     await context.answerCallbackQuery();
-    await editOrReply(context, `\u{1F4AC} ${offer.playerName} uchun qarshi taklif summasini yuboring.
+    const user = await getContextUser(context);
+    const offer = await transfers.notification(context.match[1]);
+    if (!offer || offer.sellerTelegramId !== context.from.id) {
+      return context.answerCallbackQuery({ text: "Taklif endi faol emas" });
+    }
+    const minimum = offer.amount + 1e5;
+    await transfers.saveInputSession(user.id, "COUNTER", {
+      offerId: offer.offerId,
+      playerName: offer.playerName,
+      minimum
+    });
+    await editOrReply(
+      context,
+      `\u{1F4AC} ${offer.playerName} uchun qarshi taklif summasini yuboring.
 
 Asl taklif: ${transferMoney(offer.amount)}
-Minimal: ${transferMoney(offer.amount + 1e5)}`, new InlineKeyboard().text("\u2190 Taklif", `iv:${offer.offerId}`));
+Minimal: ${transferMoney(minimum)}`,
+      new InlineKeyboard().text("\u2190 Taklif", `iv:${offer.offerId}`)
+    );
   });
   bot.callbackQuery(/^ac:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
-    const user = await getContextUser(context), offer = await transfers.notification(context.match[1]);
-    if (!offer || offer.buyerTelegramId !== context.from.id) return context.answerCallbackQuery({ text: "Taklif endi faol emas" });
+    const user = await getContextUser(context);
+    const offer = await transfers.notification(context.match[1]);
+    if (!offer || offer.buyerTelegramId !== context.from.id) {
+      return context.answerCallbackQuery({ text: "Taklif endi faol emas" });
+    }
     await context.answerCallbackQuery({ text: "Transfer yakunlanmoqda\u2026" });
     try {
       await transfers.acceptCounterOffer(user.id, offer.offerId);
       await sendUpdate(offer.sellerTelegramId, `\u2705 ${offer.playerName} bo\u2018yicha qarshi taklif qabul qilindi. Transfer yakunlandi.`, new InlineKeyboard());
-      await editOrReply(context, `\u2705 ${offer.playerName} transferi yakunlandi.`, new InlineKeyboard());
+      await editOrReply(context, `\u2705 ${offer.playerName} transferi yakunlandi.`, new InlineKeyboard().text("\u2190 Transfer markazi", `tr:${offer.buyerClubId}`));
     } catch {
       await context.reply("Qarshi taklif endi faol emas yoki budjet yetarli emas.");
     }
   });
   bot.callbackQuery(/^(ia|ir):([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
-    const user = await getContextUser(context), offer = await transfers.notification(context.match[2]);
-    if (!offer || offer.sellerTelegramId !== context.from.id) return context.answerCallbackQuery({ text: "Taklif endi faol emas" });
+    const user = await getContextUser(context);
+    const offer = await transfers.notification(context.match[2]);
+    if (!offer || offer.sellerTelegramId !== context.from.id) {
+      return context.answerCallbackQuery({ text: "Taklif endi faol emas" });
+    }
     await context.answerCallbackQuery({ text: "Taklif qayta ishlanmoqda\u2026" });
     try {
-      const accepted = context.match[1] === "ia", result = await transfers.respondToOffer(user.id, offer.offerId, accepted ? "ACCEPT" : "REJECT");
-      await sendUpdate(offer.buyerTelegramId, accepted ? `\u2705 ${offer.playerName} uchun ${transferMoney(offer.amount)} taklifingiz qabul qilindi. Transfer yakunlandi.` : `\u274C ${offer.playerName} uchun taklifingiz rad etildi.`, new InlineKeyboard());
-      await editOrReply(context, result === "ACCEPTED" ? "\u2705 Transfer qabul qilindi. Futbolchi xaridor klubiga o\u2018tdi." : "\u274C Taklif rad etildi.", new InlineKeyboard().text("\u2190 Transfer markazi", `tr:${offer.sellerClubId}`));
+      const accepted = context.match[1] === "ia";
+      const result = await transfers.respondToOffer(user.id, offer.offerId, accepted ? "ACCEPT" : "REJECT");
+      await sendUpdate(
+        offer.buyerTelegramId,
+        accepted ? `\u2705 ${offer.playerName} uchun ${transferMoney(offer.amount)} taklifingiz qabul qilindi. Transfer yakunlandi.` : `\u274C ${offer.playerName} uchun taklifingiz rad etildi.`,
+        new InlineKeyboard()
+      );
+      await editOrReply(
+        context,
+        result === "ACCEPTED" ? "\u2705 Transfer qabul qilindi. Futbolchi xaridor klubiga o\u2018tdi." : "\u274C Taklif rad etildi.",
+        new InlineKeyboard().text("\u2190 Transfer markazi", `tr:${offer.sellerClubId}`)
+      );
     } catch (error) {
       logger.warn({ event: "incoming_offer_response_failed", err: error }, "Incoming offer response failed");
       await context.reply("Taklifni qayta ishlab bo\u2018lmadi. U muddatidan o\u2018tgan bo\u2018lishi mumkin.");
     }
+  });
+  bot.callbackQuery(/^th:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const clubId = context.match[1];
+    const history = await transfers.transferHistory(clubId);
+    await editOrReply(
+      context,
+      formatTransferHistory(history),
+      new InlineKeyboard().text("\u2190 Transfer markazi", `tr:${clubId}`)
+    );
   });
   bot.callbackQuery(/^gm:([0-9a-f-]{36}):(\d+)(?::(ALL|GK|DEF|MID|ATT))?$/, async (context) => {
     await context.answerCallbackQuery();
@@ -659,58 +868,91 @@ Minimal: ${transferMoney(offer.amount + 1e5)}`, new InlineKeyboard().text("\u219
   bot.callbackQuery(/^gb:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const clubId = transferClubSelection.get(context.from.id);
+    const user = await getContextUser(context);
+    const session = await transfers.getInputSession(user.id);
+    const clubId = (session?.mode === "ACTIVE_CLUB" ? session.data.clubId : void 0) ?? (await getContextManagedClubs(context, user.id))[0]?.leagueClubId;
     if (!clubId) return context.reply("Transfer markaziga qaytib, klubni qayta tanlang.");
-    const user = await getContextUser(context), item = await transfers.listing(user.id, clubId, context.match[1]);
-    if (!item) return editOrReply(context, "Bu futbolchi sizning ligangiz bozorida faol emas.", new InlineKeyboard().text("\u2190 Bozor", `gm:${clubId}:0`));
-    await editOrReply(context, formatListing(item), new InlineKeyboard().text("Xaridni tasdiqlash", `gc:${item.listingId}`).row().text("\u2190 Bozor", `gm:${clubId}:0`));
+    const item = await transfers.listing(user.id, clubId, context.match[1]);
+    if (!item) {
+      return editOrReply(context, "Bu futbolchi Global Transfer bozorida faol emas.", new InlineKeyboard().text("\u2190 Bozor", `gm:${clubId}:0`));
+    }
+    await editOrReply(
+      context,
+      formatListing(item),
+      new InlineKeyboard().text("\u2705 Xaridni tasdiqlash", `gc:${item.listingId}`).row().text("\u2190 Bozor", `gm:${clubId}:0`)
+    );
   });
   bot.callbackQuery(/^gc:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery({ text: "Transfer tekshirilmoqda\u2026" });
-    const user = await getContextUser(context), clubId = transferClubSelection.get(context.from.id);
+    const user = await getContextUser(context);
+    const session = await transfers.getInputSession(user.id);
+    const clubId = (session?.mode === "ACTIVE_CLUB" ? session.data.clubId : void 0) ?? (await getContextManagedClubs(context, user.id))[0]?.leagueClubId;
     if (!clubId) return context.reply("Transfer markaziga qaytib, klubni qayta tanlang.");
     try {
-      const result = await transfers.buy(user.id, clubId, context.match[1]);
-      const msg = result.status === "ACCEPTED" ? "\u2705 TRANSFER YAKUNLANDI\n\nFutbolchi klubingizga qo\u2018shildi." : result.status === "COUNTERED" ? `\u{1F91D} AI qarshi taklifi: ${transferMoney(result.counterAmount)}` : "\u274C Taklif rad etildi.";
-      await editOrReply(context, msg, new InlineKeyboard().text("\u2190 Bozor", `gm:${clubId}:0`).text("\u{1F3DF} Klub", `db:${clubId}`));
+      await transfers.buy(user.id, clubId, context.match[1]);
+      await editOrReply(
+        context,
+        "\u2705 TRANSFER YAKUNLANDI\n\nFutbolchi klubingizga qo\u2018shildi va asosiy tarkibingizga kiritildi.",
+        new InlineKeyboard().text("\u2190 Bozor", `gm:${clubId}:0`).text("\u{1F3DF} Klub", `db:${clubId}`)
+      );
     } catch (error) {
-      logger.warn({ event: "transfer_failed", err: error }, "Transfer failed");
-      await context.reply("Transfer amalga oshmadi: budjet, tarkib limiti yoki listing holatini tekshiring.");
+      logger.warn({ event: "global_transfer_failed", err: error }, "Global transfer failed");
+      const err = error?.message ?? "";
+      const text = err === "INSUFFICIENT_BUDGET" ? "\u274C Klub budjetida mablag\u2018 yetarli emas." : err === "SQUAD_LIMIT_REACHED" ? "\u274C Tarkibda bo\u2018sh joy yo\u2018q (maksimal 30 futbolchi)." : err === "LISTING_NOT_ACTIVE" ? "\u274C Ushbu futbolchi allaqachon sotilgan yoki listing muddati tugagan." : "\u274C Transfer amalga oshmadi: budjet, tarkib limiti yoki listing holatini tekshiring.";
+      await context.reply(text);
     }
   });
   bot.on("message:text", async (context, next) => {
     if (!context.from) return next();
-    const pending = transferInputs.get(context.from.id);
-    if (!pending) return next();
+    const user = await getContextUser(context);
+    const pending = await transfers.getInputSession(user.id);
+    if (!pending || pending.mode !== "SELL" && pending.mode !== "OFFER" && pending.mode !== "COUNTER") {
+      return next();
+    }
+    const data = pending.data;
     const raw = context.message.text.trim().replace(/\s/g, "").replace(",", ".");
-    const isMillions = raw.toLowerCase().endsWith("m"), amount = Number(isMillions ? raw.slice(0, -1) : raw) * (isMillions ? 1e6 : 1);
-    if (!Number.isFinite(amount) || amount < pending.minimum) {
-      await context.reply(`Miqdor noto\u2018g\u2018ri. Kamida ${transferMoney(pending.minimum)} yuboring.`);
+    const isMillions = raw.toLowerCase().endsWith("m");
+    const amount = Number(isMillions ? raw.slice(0, -1) : raw) * (isMillions ? 1e6 : 1);
+    if (!Number.isFinite(amount) || amount < data.minimum) {
+      await context.reply(`Miqdor noto\u2018g\u2018ri. Kamida ${transferMoney(data.minimum)} yuboring.`);
       return;
     }
-    const user = await getContextUser(context);
+    await transfers.clearInputSession(user.id);
     try {
       if (pending.mode === "SELL") {
-        await transfers.listForSale(user.id, pending.clubId, pending.clubPlayerId, Math.round(amount));
-        await context.reply(`\u2705 ${pending.playerName} ${transferMoney(Math.round(amount))} narxda transfer bozoriga qo\u2018yildi.`, { reply_markup: new InlineKeyboard().text("\u2190 Transfer markazi", `tr:${pending.clubId}`) });
+        await transfers.listForSale(user.id, data.clubId, data.clubPlayerId, Math.round(amount));
+        await context.reply(`\u2705 ${data.playerName} ${transferMoney(Math.round(amount))} narxda transfer bozoriga qo\u2018yildi.`, {
+          reply_markup: new InlineKeyboard().text("\u2190 Transfer markazi", `tr:${data.clubId}`)
+        });
       } else if (pending.mode === "COUNTER") {
-        await transfers.counterOffer(user.id, pending.offerId, Math.round(amount));
-        const offer = await transfers.notification(pending.offerId);
-        await sendUpdate(offer?.buyerTelegramId ?? null, `\u{1F4AC} ${offer?.sellerClub ?? "Murabbiy"} ${pending.playerName} uchun qarshi taklif yubordi: ${transferMoney(Math.round(amount))}`, new InlineKeyboard().text("\u2705 Qarshi taklifni qabul qilish", `ac:${pending.offerId}`));
+        await transfers.counterOffer(user.id, data.offerId, Math.round(amount));
+        const offer = await transfers.notification(data.offerId);
+        await sendUpdate(
+          offer?.buyerTelegramId ?? null,
+          `\u{1F4AC} ${offer?.sellerClub ?? "Murabbiy"} ${data.playerName} uchun qarshi taklif yubordi: ${transferMoney(Math.round(amount))}`,
+          new InlineKeyboard().text("\u2705 Qarshi taklifni qabul qilish", `ac:${data.offerId}`)
+        );
         await context.reply("\u2705 Qarshi taklif xaridor murabbiyiga yuborildi.");
       } else {
-        const result = await transfers.offer(user.id, pending.clubId, pending.clubPlayerId, Math.round(amount));
+        const result = await transfers.offer(user.id, data.clubId, data.clubPlayerId, Math.round(amount));
         const offer = await transfers.notification(result.offerId);
-        if (result.status === "PENDING") await sendUpdate(offer?.sellerTelegramId ?? null, `\u{1F4E9} YANGI TRANSFER TAKLIFI
+        if (result.status === "PENDING") {
+          await sendUpdate(
+            offer?.sellerTelegramId ?? null,
+            `\u{1F4E9} YANGI TRANSFER TAKLIFI
 
-\u26BD ${pending.playerName}
+\u26BD ${data.playerName}
 \u{1F3DF} Xaridor: ${offer?.buyerClub ?? "Klub"}
-\u{1F4B0} Taklif: ${transferMoney(Math.round(amount))}`, new InlineKeyboard().text("\u2705 Qabul qilish", `ia:${result.offerId}`).text("\u274C Rad etish", `ir:${result.offerId}`).row().text("\u{1F4AC} Qarshi taklif", `ic:${result.offerId}`));
-        const text = result.status === "ACCEPTED" ? `\u2705 ${pending.playerName} transferi yakunlandi!` : result.status === "COUNTERED" ? `\u{1F91D} Qarshi taklif: ${transferMoney(result.counterAmount)}` : result.status === "PENDING" ? "\u23F3 Taklif klub murabbiyiga yuborildi." : "\u274C Taklif rad etildi.";
-        await context.reply(text, { reply_markup: new InlineKeyboard().text("\u2190 Transfer markazi", `tr:${pending.clubId}`) });
+\u{1F4B0} Taklif: ${transferMoney(Math.round(amount))}`,
+            new InlineKeyboard().text("\u2705 Qabul qilish", `ia:${result.offerId}`).text("\u274C Rad etish", `ir:${result.offerId}`).row().text("\u{1F4AC} Qarshi taklif", `ic:${result.offerId}`)
+          );
+        }
+        const text = result.status === "ACCEPTED" ? `\u2705 ${data.playerName} transferi yakunlandi!` : result.status === "COUNTERED" ? `\u{1F91D} Qarshi taklif: ${transferMoney(result.counterAmount)}` : result.status === "PENDING" ? "\u23F3 Taklif klub murabbiyiga yuborildi." : "\u274C Taklif rad etildi.";
+        await context.reply(text, {
+          reply_markup: new InlineKeyboard().text("\u2190 Transfer markazi", `tr:${data.clubId}`)
+        });
       }
-      transferInputs.delete(context.from.id);
     } catch (error) {
       logger.warn({ event: "transfer_input_failed", err: error }, "Transfer input failed");
       await context.reply("Transfer amalga oshmadi: budjet, tarkib limiti yoki futbolchi holatini tekshiring.");
@@ -1728,138 +1970,374 @@ var TransferRepository = class {
     this.database = database;
   }
   database;
-  async market(userId, buyerClubId, page = 0, pageSize = 8, group = "ALL") {
-    const owner = await this.ownerLeague(userId, buyerClubId);
-    const { data, error } = await this.database.from("global_market_listings").select("id,asking_price,available_until,seller_club_id,club_players!inner(league_club_id,players!inner(short_name,age,primary_position,player_attributes!inner(overall)),league_clubs!inner(league_instance_id))").eq("status", "ACTIVE").gt("available_until", (/* @__PURE__ */ new Date()).toISOString()).order("asking_price");
-    if (error) throw error;
-    const groups2 = { GK: ["GK"], DEF: ["CB", "LB", "RB", "LWB", "RWB"], MID: ["CDM", "CM", "CAM", "LM", "RM"], ATT: ["ST", "CF", "LW", "RW"] };
-    return (data ?? []).filter((row) => {
-      const player = one5(row.club_players), position = one5(player.players).primary_position;
-      return row.seller_club_id !== buyerClubId && player.league_club_id !== buyerClubId && player.league_club_id === row.seller_club_id && one5(player.league_clubs).league_instance_id === owner.league_instance_id && (!groups2[group] || groups2[group].includes(position));
-    }).map((row) => {
-      const p = one5(one5(row.club_players).players);
-      return { listingId: row.id, name: p.short_name, age: p.age, position: p.primary_position, overall: one5(p.player_attributes).overall, askingPrice: Number(row.asking_price), availableUntil: row.available_until };
-    }).sort((a, b) => b.overall - a.overall || a.askingPrice - b.askingPrice).slice(page * pageSize, (page + 1) * pageSize);
+  /**
+   * Resolves the manager's club in the same league instance as the target club.
+   */
+  async buyerClubForTarget(userId, targetClubId) {
+    const { data, error } = await this.database.from("league_clubs").select("league_instance_id").eq("id", targetClubId).maybeSingle();
+    if (error || !data) return null;
+    const { data: buyer, error: buyerError } = await this.database.from("league_clubs").select("id").eq("league_instance_id", data.league_instance_id).eq("manager_user_id", userId).maybeSingle();
+    if (buyerError || !buyer) return null;
+    return buyer.id;
   }
-  async listing(userId, buyerClubId, id) {
-    for (const group of ["ALL", "GK", "DEF", "MID", "ATT"]) {
-      const item = (await this.market(userId, buyerClubId, 0, 500, group)).find((player) => player.listingId === id);
-      if (item) return item;
+  /**
+   * Resolves the manager's club in the same league instance as the player.
+   */
+  async buyerClubForPlayer(userId, clubPlayerId) {
+    const { data, error } = await this.database.from("club_players").select("league_club_id, league_clubs!inner(league_instance_id)").eq("id", clubPlayerId).maybeSingle();
+    if (error || !data) return null;
+    const instanceId = one5(data.league_clubs).league_instance_id;
+    const { data: buyer, error: buyerError } = await this.database.from("league_clubs").select("id").eq("league_instance_id", instanceId).eq("manager_user_id", userId).maybeSingle();
+    if (buyerError || !buyer) return null;
+    return buyer.id;
+  }
+  /**
+   * Fetches Global Transfer Market listings (external top stars).
+   * Returns up to `pageSize` active players, optionally filtered by position group.
+   */
+  async market(userId, clubId, page = 0, pageSize = 8, positionGroup = "ALL") {
+    await this.ownerLeague(userId, clubId);
+    let query = this.database.from("global_market_listings").select(
+      "id, asking_price, available_until, players!inner(short_name, age, primary_position, player_attributes!inner(overall)), clubs:seller_club_id(name)"
+    ).eq("status", "ACTIVE").order("asking_price", { ascending: false });
+    if (positionGroup !== "ALL") {
+      const posMap = {
+        GK: ["GK"],
+        DEF: ["CB", "LB", "RB", "RWB", "LWB"],
+        MID: ["CM", "CDM", "CAM", "LM", "RM"],
+        ATT: ["ST", "CF", "RW", "LW"]
+      };
+      const allowed = posMap[positionGroup];
+      if (allowed) {
+        query = query.in("players.primary_position", allowed);
+      }
     }
-    return null;
+    const from = page * pageSize;
+    const { data, error } = await query.range(from, from + pageSize - 1);
+    if (error) throw error;
+    return (data ?? []).map((row) => {
+      const player = one5(row.players);
+      const sellerClub = row.clubs ? one5(row.clubs).name : void 0;
+      return {
+        listingId: row.id,
+        name: player.short_name,
+        age: player.age,
+        position: player.primary_position,
+        overall: one5(player.player_attributes).overall,
+        askingPrice: Number(row.asking_price),
+        availableUntil: row.available_until,
+        sellerName: sellerClub
+      };
+    });
   }
+  /**
+   * Fetches full profile for a single market listing.
+   */
+  async listing(userId, clubId, listingId) {
+    await this.ownerLeague(userId, clubId);
+    const { data, error } = await this.database.from("global_market_listings").select(
+      "id, asking_price, available_until, players!inner(short_name, age, primary_position, player_attributes!inner(overall)), clubs:seller_club_id(name)"
+    ).eq("id", listingId).eq("status", "ACTIVE").maybeSingle();
+    if (error || !data) return null;
+    const player = one5(data.players);
+    const sellerClub = data.clubs ? one5(data.clubs).name : void 0;
+    return {
+      listingId: data.id,
+      name: player.short_name,
+      age: player.age,
+      position: player.primary_position,
+      overall: one5(player.player_attributes).overall,
+      askingPrice: Number(data.asking_price),
+      availableUntil: data.available_until,
+      sellerName: sellerClub
+    };
+  }
+  /**
+   * Purchases an external star from the Global Market atomically via RPC.
+   */
   async buy(userId, buyerClubId, listingId) {
-    const listing = await this.listing(userId, buyerClubId, listingId);
-    if (!listing) throw new Error("LISTING_NOT_AVAILABLE");
-    const { data: l, error: le } = await this.database.from("global_market_listings").select("asking_price,club_player_id").eq("id", listingId).eq("status", "ACTIVE").gt("available_until", (/* @__PURE__ */ new Date()).toISOString()).single();
-    if (le) throw le;
-    const { data, error } = await this.database.rpc("create_transfer_offer", { p_user_id: userId, p_buyer_club_id: buyerClubId, p_club_player_id: l.club_player_id, p_amount: l.asking_price });
+    const { data, error } = await this.database.rpc("buy_global_player", {
+      p_user_id: userId,
+      p_buyer_club_id: buyerClubId,
+      p_listing_id: listingId
+    });
     if (error) throw error;
-    const r = data?.[0];
-    return { offerId: r.offer_id, status: r.status, counterAmount: r.counter_amount ? Number(r.counter_amount) : null };
+    const result = data?.[0];
+    if (!result?.success) {
+      throw new Error(result?.error_code ?? "TRANSFER_FAILED");
+    }
+    return { status: "ACCEPTED" };
   }
+  /**
+   * Lists players owned by the club that can be put up for sale.
+   */
   async saleCandidates(userId, clubId) {
-    const { data, error } = await this.database.from("club_players").select("id,resale_locked_until,players!inner(short_name,primary_position,market_value,player_attributes!inner(overall)),league_clubs!inner(manager_user_id,clubs!inner(name))").eq("league_club_id", clubId).eq("league_clubs.manager_user_id", userId);
+    await this.ownerLeague(userId, clubId);
+    const { data, error } = await this.database.from("club_players").select(
+      "id, resale_locked_until, is_starting, players!inner(short_name, primary_position, market_value, age, nationality, player_attributes!inner(overall)), league_clubs!inner(league_instance_id, clubs!inner(name))"
+    ).eq("league_club_id", clubId);
     if (error) throw error;
-    return (data ?? []).filter((row) => !row.resale_locked_until || new Date(row.resale_locked_until) <= /* @__PURE__ */ new Date()).map((row) => {
-      const player = one5(row.players), club = one5(one5(row.league_clubs).clubs);
-      return { clubPlayerId: row.id, name: player.short_name, clubName: club.name, position: player.primary_position, overall: one5(player.player_attributes).overall, marketValue: Number(player.market_value) };
+    const now = /* @__PURE__ */ new Date();
+    return (data ?? []).filter((row) => !row.resale_locked_until || new Date(row.resale_locked_until) <= now).map((row) => {
+      const player = one5(row.players);
+      const leagueClub = one5(row.league_clubs);
+      const club = one5(leagueClub.clubs);
+      return {
+        clubPlayerId: row.id,
+        name: player.short_name,
+        clubName: club.name,
+        targetClubId: clubId,
+        leagueInstanceId: leagueClub.league_instance_id,
+        position: player.primary_position,
+        overall: one5(player.player_attributes).overall,
+        marketValue: Number(player.market_value),
+        age: player.age,
+        nationality: player.nationality
+      };
     }).sort((a, b) => b.overall - a.overall);
   }
+  /**
+   * Lists opponent clubs within the EXACT SAME league instance.
+   */
   async leagueClubs(userId, clubId) {
     const owner = await this.ownerLeague(userId, clubId);
-    const { data, error } = await this.database.from("league_clubs").select("id,clubs!inner(name)").eq("league_instance_id", owner.league_instance_id).neq("id", clubId).order("clubs(name)");
+    const { data, error } = await this.database.from("league_clubs").select("id, clubs!inner(name)").eq("league_instance_id", owner.league_instance_id).neq("id", clubId).order("clubs(name)");
     if (error) throw error;
-    return (data ?? []).map((row) => ({ leagueClubId: row.id, clubName: one5(row.clubs).name }));
+    return (data ?? []).map((row) => ({
+      leagueClubId: row.id,
+      clubName: one5(row.clubs).name
+    }));
   }
-  async clubTargets(userId, clubId, targetClubId, page = 0, pageSize = 25) {
-    const owner = await this.ownerLeague(userId, clubId);
-    if (targetClubId === clubId) throw new Error("OWN_CLUB");
-    const { data: target, error: targetError } = await this.database.from("league_clubs").select("id,league_instance_id,clubs!inner(name)").eq("id", targetClubId).maybeSingle();
-    if (targetError || !target || target.league_instance_id !== owner.league_instance_id) throw new Error("TARGET_CLUB_INVALID");
+  /**
+   * Fetches players of an opponent club in the same league instance.
+   */
+  async clubTargets(userId, buyerClubId, targetClubId, page = 0, pageSize = 20) {
+    const owner = await this.ownerLeague(userId, buyerClubId);
+    if (targetClubId === buyerClubId) throw new Error("OWN_CLUB");
+    const { data: target, error: targetError } = await this.database.from("league_clubs").select("id, league_instance_id, clubs!inner(name)").eq("id", targetClubId).maybeSingle();
+    if (targetError || !target || target.league_instance_id !== owner.league_instance_id) {
+      throw new Error("TARGET_CLUB_INVALID");
+    }
     const from = page * pageSize;
-    const { data, error } = await this.database.from("club_players").select("id,resale_locked_until,players!inner(short_name,primary_position,market_value,player_attributes!inner(overall))").eq("league_club_id", targetClubId).range(from, from + pageSize - 1);
+    const { data, error } = await this.database.from("club_players").select(
+      "id, resale_locked_until, players!inner(short_name, primary_position, market_value, age, nationality, player_attributes!inner(overall))"
+    ).eq("league_club_id", targetClubId).range(from, from + pageSize - 1);
     if (error) throw error;
     const clubName = one5(target.clubs).name;
     return (data ?? []).filter((row) => !row.resale_locked_until || new Date(row.resale_locked_until) <= /* @__PURE__ */ new Date()).map((row) => {
       const player = one5(row.players);
-      return { clubPlayerId: row.id, name: player.short_name, clubName, position: player.primary_position, overall: one5(player.player_attributes).overall, marketValue: Number(player.market_value) };
+      return {
+        clubPlayerId: row.id,
+        name: player.short_name,
+        clubName,
+        targetClubId,
+        position: player.primary_position,
+        overall: one5(player.player_attributes).overall,
+        marketValue: Number(player.market_value),
+        age: player.age,
+        nationality: player.nationality
+      };
     }).sort((a, b) => b.overall - a.overall);
   }
-  async leagueTargets(userId, clubId, page = 0, pageSize = 10) {
-    const { data: owner, error: ownerError } = await this.database.from("league_clubs").select("league_instance_id").eq("id", clubId).eq("manager_user_id", userId).maybeSingle();
-    if (ownerError || !owner) throw new Error("CLUB_NOT_OWNED");
-    const from = page * pageSize;
-    const { data, error } = await this.database.from("club_players").select("id,league_club_id,resale_locked_until,players!inner(short_name,primary_position,market_value,player_attributes!inner(overall)),league_clubs!inner(league_instance_id,clubs!inner(name))").eq("league_clubs.league_instance_id", owner.league_instance_id).neq("league_club_id", clubId).range(from, from + pageSize - 1);
-    if (error) throw error;
-    return (data ?? []).filter((row) => row.league_club_id !== clubId && (!row.resale_locked_until || new Date(row.resale_locked_until) <= /* @__PURE__ */ new Date())).map((row) => {
-      const player = one5(row.players), club = one5(one5(row.league_clubs).clubs);
-      return { clubPlayerId: row.id, name: player.short_name, clubName: club.name, position: player.primary_position, overall: one5(player.player_attributes).overall, marketValue: Number(player.market_value) };
-    }).sort((a, b) => b.overall - a.overall);
+  /**
+   * Fetches full profile for a single target player by clubPlayerId.
+   */
+  async targetPlayer(clubPlayerId) {
+    const { data, error } = await this.database.from("club_players").select(
+      "id, league_club_id, players!inner(short_name, primary_position, market_value, age, nationality, player_attributes!inner(overall)), league_clubs!inner(league_instance_id, clubs!inner(name))"
+    ).eq("id", clubPlayerId).maybeSingle();
+    if (error || !data) return null;
+    const player = one5(data.players);
+    const leagueClub = one5(data.league_clubs);
+    const club = one5(leagueClub.clubs);
+    return {
+      clubPlayerId: data.id,
+      name: player.short_name,
+      clubName: club.name,
+      targetClubId: data.league_club_id,
+      leagueInstanceId: leagueClub.league_instance_id,
+      position: player.primary_position,
+      overall: one5(player.player_attributes).overall,
+      marketValue: Number(player.market_value),
+      age: player.age,
+      nationality: player.nationality
+    };
   }
   async listForSale(userId, clubId, clubPlayerId, askingPrice) {
     const candidates = await this.saleCandidates(userId, clubId);
-    if (!candidates.some((player) => player.clubPlayerId === clubPlayerId)) throw new Error("PLAYER_NOT_AVAILABLE");
+    if (!candidates.some((player) => player.clubPlayerId === clubPlayerId)) {
+      throw new Error("PLAYER_NOT_AVAILABLE");
+    }
     const { count, error: countError } = await this.database.from("club_players").select("id", { count: "exact", head: true }).eq("league_club_id", clubId);
     if (countError) throw countError;
     if ((count ?? 0) <= 18) throw new Error("SELLER_MIN_SQUAD");
-    const { error } = await this.database.from("global_market_listings").insert({ club_player_id: clubPlayerId, seller_club_id: clubId, asking_price: askingPrice });
+    const { error } = await this.database.from("global_market_listings").insert({
+      club_player_id: clubPlayerId,
+      seller_club_id: clubId,
+      asking_price: askingPrice
+    });
     if (error) throw error;
   }
+  /**
+   * Submits an offer for a player in the same league.
+   */
   async offer(userId, buyerClubId, clubPlayerId, amount) {
-    const { data, error } = await this.database.rpc("create_transfer_offer", { p_user_id: userId, p_buyer_club_id: buyerClubId, p_club_player_id: clubPlayerId, p_amount: amount });
+    const { data, error } = await this.database.rpc("create_transfer_offer", {
+      p_user_id: userId,
+      p_buyer_club_id: buyerClubId,
+      p_club_player_id: clubPlayerId,
+      p_amount: amount
+    });
     if (error) throw error;
     const result = data?.[0];
-    return { offerId: result.offer_id, status: result.status, counterAmount: result.counter_amount ? Number(result.counter_amount) : null };
+    return {
+      offerId: result.offer_id,
+      status: result.status,
+      counterAmount: result.counter_amount ? Number(result.counter_amount) : null
+    };
   }
   async incomingOffers(userId, clubId) {
     const { data: club, error: clubError } = await this.database.from("league_clubs").select("id").eq("id", clubId).eq("manager_user_id", userId).maybeSingle();
     if (clubError || !club) throw new Error("CLUB_NOT_OWNED");
-    const { data, error } = await this.database.from("transfer_offers").select("id,buyer_club_id,club_player_id,amount,expires_at").eq("seller_club_id", clubId).eq("status", "PENDING").order("created_at", { ascending: false });
+    const { data, error } = await this.database.from("transfer_offers").select("id, buyer_club_id, club_player_id, amount, expires_at").eq("seller_club_id", clubId).eq("status", "PENDING").order("created_at", { ascending: false });
     if (error) throw error;
     const offers = data ?? [];
     if (!offers.length) return [];
-    const playerIds = offers.map((row) => row.club_player_id), buyerIds = offers.map((row) => row.buyer_club_id);
-    const [playersResult, buyersResult] = await Promise.all([this.database.from("club_players").select("id,players!inner(short_name,primary_position,player_attributes!inner(overall))").in("id", playerIds), this.database.from("league_clubs").select("id,clubs!inner(name)").in("id", buyerIds)]);
+    const playerIds = offers.map((row) => row.club_player_id);
+    const buyerIds = offers.map((row) => row.buyer_club_id);
+    const [playersResult, buyersResult] = await Promise.all([
+      this.database.from("club_players").select("id, players!inner(short_name, primary_position, player_attributes!inner(overall))").in("id", playerIds),
+      this.database.from("league_clubs").select("id, clubs!inner(name)").in("id", buyerIds)
+    ]);
     if (playersResult.error) throw playersResult.error;
     if (buyersResult.error) throw buyersResult.error;
-    const players = new Map((playersResult.data ?? []).map((row) => {
-      const p = one5(row.players);
-      return [row.id, p];
-    })), buyers = new Map((buyersResult.data ?? []).map((row) => [row.id, one5(row.clubs).name]));
+    const players = new Map(
+      (playersResult.data ?? []).map((row) => {
+        const p = one5(row.players);
+        return [row.id, p];
+      })
+    );
+    const buyers = new Map(
+      (buyersResult.data ?? []).map((row) => [row.id, one5(row.clubs).name])
+    );
     return offers.map((row) => {
       const p = players.get(row.club_player_id);
-      return { offerId: row.id, buyerClub: buyers.get(row.buyer_club_id) ?? "Noma\u2019lum klub", playerName: p?.short_name ?? "Futbolchi", position: p?.primary_position ?? "", overall: p ? one5(p.player_attributes).overall : 0, amount: Number(row.amount), expiresAt: row.expires_at };
+      return {
+        offerId: row.id,
+        buyerClub: buyers.get(row.buyer_club_id) ?? "Noma\u2019lum klub",
+        playerName: p?.short_name ?? "Futbolchi",
+        position: p?.primary_position ?? "",
+        overall: p ? one5(p.player_attributes).overall : 0,
+        amount: Number(row.amount),
+        expiresAt: row.expires_at
+      };
     });
   }
   async respondToOffer(userId, offerId, decision) {
-    const { data, error } = await this.database.rpc("respond_transfer_offer", { p_user_id: userId, p_offer_id: offerId, p_decision: decision, p_counter: null });
+    const { data, error } = await this.database.rpc("respond_transfer_offer", {
+      p_user_id: userId,
+      p_offer_id: offerId,
+      p_decision: decision,
+      p_counter: null
+    });
     if (error) throw error;
     return String(data);
   }
   async counterOffer(userId, offerId, amount) {
-    const { data, error } = await this.database.rpc("respond_transfer_offer", { p_user_id: userId, p_offer_id: offerId, p_decision: "COUNTER", p_counter: amount });
+    const { data, error } = await this.database.rpc("respond_transfer_offer", {
+      p_user_id: userId,
+      p_offer_id: offerId,
+      p_decision: "COUNTER",
+      p_counter: amount
+    });
     if (error) throw error;
     return String(data);
   }
   async acceptCounterOffer(userId, offerId) {
-    const { error } = await this.database.rpc("accept_counter_offer", { p_user_id: userId, p_offer_id: offerId });
+    const { error } = await this.database.rpc("accept_counter_offer", {
+      p_user_id: userId,
+      p_offer_id: offerId
+    });
     if (error) throw error;
   }
   async notification(offerId) {
-    const { data: offer, error } = await this.database.from("transfer_offers").select("id,buyer_club_id,seller_club_id,club_player_id,amount,counter_amount").eq("id", offerId).maybeSingle();
-    if (error) throw error;
-    if (!offer) return null;
-    const [clubsResult, playerResult] = await Promise.all([this.database.from("league_clubs").select("id,manager_user_id,clubs!inner(name)").in("id", [offer.buyer_club_id, offer.seller_club_id]), this.database.from("club_players").select("players!inner(short_name)").eq("id", offer.club_player_id).maybeSingle()]);
+    const { data: offer, error } = await this.database.from("transfer_offers").select("id, buyer_club_id, seller_club_id, club_player_id, amount, counter_amount").eq("id", offerId).maybeSingle();
+    if (error || !offer) return null;
+    const [clubsResult, playerResult] = await Promise.all([
+      this.database.from("league_clubs").select("id, manager_user_id, clubs!inner(name)").in("id", [offer.buyer_club_id, offer.seller_club_id]),
+      this.database.from("club_players").select("players!inner(short_name)").eq("id", offer.club_player_id).maybeSingle()
+    ]);
     if (clubsResult.error) throw clubsResult.error;
     if (playerResult.error) throw playerResult.error;
-    const clubs = new Map((clubsResult.data ?? []).map((row) => [row.id, { name: one5(row.clubs).name, userId: row.manager_user_id }]));
+    const clubs = new Map(
+      (clubsResult.data ?? []).map((row) => [
+        row.id,
+        { name: one5(row.clubs).name, userId: row.manager_user_id }
+      ])
+    );
     const ids = [...new Set([...clubs.values()].map((c) => c.userId).filter(Boolean))];
-    const { data: people, error: peopleError } = ids.length ? await this.database.from("users").select("id,telegram_id").in("id", ids) : { data: [], error: null };
+    const { data: people, error: peopleError } = ids.length ? await this.database.from("users").select("id, telegram_id").in("id", ids) : { data: [], error: null };
     if (peopleError) throw peopleError;
     const telegram = new Map((people ?? []).map((row) => [row.id, row.telegram_id]));
-    const buyer = clubs.get(offer.buyer_club_id), seller = clubs.get(offer.seller_club_id);
-    return { offerId: offer.id, playerName: one5(playerResult.data?.players).short_name, amount: Number(offer.amount), counterAmount: offer.counter_amount ? Number(offer.counter_amount) : null, buyerClub: buyer?.name ?? "Klub", sellerClub: seller?.name ?? "Klub", buyerClubId: offer.buyer_club_id, sellerClubId: offer.seller_club_id, buyerTelegramId: buyer?.userId ? telegram.get(buyer.userId) ?? null : null, sellerTelegramId: seller?.userId ? telegram.get(seller.userId) ?? null : null };
+    const buyer = clubs.get(offer.buyer_club_id);
+    const seller = clubs.get(offer.seller_club_id);
+    return {
+      offerId: offer.id,
+      playerName: one5(playerResult.data?.players).short_name,
+      amount: Number(offer.amount),
+      counterAmount: offer.counter_amount ? Number(offer.counter_amount) : null,
+      buyerClub: buyer?.name ?? "Klub",
+      sellerClub: seller?.name ?? "Klub",
+      buyerClubId: offer.buyer_club_id,
+      sellerClubId: offer.seller_club_id,
+      buyerTelegramId: buyer?.userId ? telegram.get(buyer.userId) ?? null : null,
+      sellerTelegramId: seller?.userId ? telegram.get(seller.userId) ?? null : null
+    };
+  }
+  /**
+   * Fetches incoming and outgoing transfer history for a club.
+   */
+  async transferHistory(clubId) {
+    const { data, error } = await this.database.from("transfer_offers").select(
+      "id, amount, responded_at, buyer_club_id, seller_club_id, club_players!inner(players!inner(short_name)), buyer:league_clubs!buyer_club_id(clubs!inner(name)), seller:league_clubs!seller_club_id(clubs!inner(name))"
+    ).eq("status", "ACCEPTED").or(`buyer_club_id.eq.${clubId},seller_club_id.eq.${clubId}`).order("responded_at", { ascending: false }).limit(20);
+    if (error) throw error;
+    return (data ?? []).map((row) => {
+      const isBuyer = row.buyer_club_id === clubId;
+      const player = one5(row.club_players).players;
+      const buyerName = one5(row.buyer).clubs.name;
+      const sellerName = one5(row.seller).clubs.name;
+      return {
+        id: row.id,
+        type: isBuyer ? "INCOMING" : "OUTGOING",
+        playerName: player.short_name,
+        fromClub: sellerName,
+        toClub: buyerName,
+        fee: Number(row.amount),
+        date: row.responded_at
+      };
+    });
+  }
+  /**
+   * Database-backed session storage for custom user inputs (avoids in-memory Maps in serverless edge functions).
+   */
+  async saveInputSession(userId, mode, data) {
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1e3).toISOString();
+    await this.database.from("user_input_sessions").upsert({
+      user_id: userId,
+      mode,
+      data,
+      expires_at: expiresAt
+    }, { onConflict: "user_id" });
+  }
+  async getInputSession(userId) {
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    const { data, error } = await this.database.from("user_input_sessions").select("mode, data, expires_at").eq("user_id", userId).gt("expires_at", now).maybeSingle();
+    if (error || !data) return null;
+    return { mode: data.mode, data: data.data };
+  }
+  async clearInputSession(userId) {
+    await this.database.from("user_input_sessions").delete().eq("user_id", userId);
   }
   async ownerLeague(userId, clubId) {
     const { data, error } = await this.database.from("league_clubs").select("league_instance_id").eq("id", clubId).eq("manager_user_id", userId).maybeSingle();
@@ -1869,18 +2347,7 @@ var TransferRepository = class {
   async maintain() {
     const now = (/* @__PURE__ */ new Date()).toISOString();
     await this.database.rpc("expire_transfer_offers");
-    const { error } = await this.database.from("global_market_listings").update({ status: "EXPIRED" }).eq("status", "ACTIVE").lte("available_until", now);
-    if (error) throw error;
-    const { count } = await this.database.from("global_market_listings").select("id", { count: "exact", head: true }).eq("status", "ACTIVE");
-    const needed = Math.max(0, 80 - (count ?? 0));
-    if (!needed) return;
-    const { data: expired, error: expiredError } = await this.database.from("global_market_listings").select("id").eq("status", "EXPIRED").limit(needed);
-    if (expiredError) throw expiredError;
-    if (expired?.length) {
-      const until = new Date(Date.now() + 24 * 60 * 60 * 1e3).toISOString();
-      const { error: refreshError } = await this.database.from("global_market_listings").update({ status: "ACTIVE", available_until: until }).in("id", expired.map((row) => row.id));
-      if (refreshError) throw refreshError;
-    }
+    await this.database.from("global_market_listings").update({ status: "EXPIRED" }).eq("status", "ACTIVE").lte("available_until", now);
   }
 };
 

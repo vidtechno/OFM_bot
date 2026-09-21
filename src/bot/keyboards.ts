@@ -13,7 +13,6 @@ export function createMainKeyboard(isAdmin = false): Keyboard {
     .text(MAIN_MENU.club)
     .text(MAIN_MENU.leagues)
     .row()
-    .text(MAIN_MENU.transfer)
     .text(MAIN_MENU.profile);
   if (isAdmin) keyboard.row().text(MAIN_MENU.admin);
   return keyboard.resized().persistent();

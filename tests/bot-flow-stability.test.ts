@@ -30,12 +30,12 @@ describe("Bot Flow Stability & Callback Length Audits", () => {
     }
   });
 
-  it("bosh menyu klaviaturasi 2x2 gridda transfer tugmasini o'z ichiga oladi", () => {
+  it("bosh menyu klaviaturasi club, leagues va profile tugmalarini o'z ichiga oladi", () => {
     const keyboard = createMainKeyboard(false);
+    const getText = (btn: unknown) => (typeof btn === "string" ? btn : (btn as { text: string })?.text);
     expect(keyboard.keyboard.length).toBe(2);
-    expect(keyboard.keyboard[0]?.[0]?.text).toBe(MAIN_MENU.club);
-    expect(keyboard.keyboard[0]?.[1]?.text).toBe(MAIN_MENU.leagues);
-    expect(keyboard.keyboard[1]?.[0]?.text).toBe(MAIN_MENU.transfer);
-    expect(keyboard.keyboard[1]?.[1]?.text).toBe(MAIN_MENU.profile);
+    expect(getText(keyboard.keyboard[0]?.[0])).toBe(MAIN_MENU.club);
+    expect(getText(keyboard.keyboard[0]?.[1])).toBe(MAIN_MENU.leagues);
+    expect(getText(keyboard.keyboard[1]?.[0])).toBe(MAIN_MENU.profile);
   });
 });
