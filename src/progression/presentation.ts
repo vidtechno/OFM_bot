@@ -1,0 +1,6 @@
+import type{ManagerProfile,Sponsor}from"./progression.repository.js";
+import type{ManagedClub}from"../leagues/types.js";
+const money=(n:number)=>`€${(n/1_000_000).toFixed(1)}M`;
+export function formatProfile(p:ManagerProfile,clubs:ManagedClub[]=[]):string{return["👤 MURABBIY PROFILI",`${p.username?`@${p.username}`:p.name} · 🏅 Reyting ${p.rating}`,"",`🏆 Mavsum: ${p.seasons} · Sovrin: ${p.titles}`,`⚽ O‘yin: ${p.matches} · G‘alaba: ${p.wins} · Durang: ${p.draws} · Mag‘lubiyat: ${p.losses}`,"",`🔄 Transfer xarajati: ${money(p.spend)}`,`💵 Transfer daromadi: ${money(p.income)}`,`💎 Eng qimmat transfer: ${money(p.biggest)}`,"",`🏟 KLUBLARIM (${clubs.length})`,...(clubs.length?clubs.map((club,index)=>`${index+1}. ${club.clubName} · ${club.leagueName}\n   ${club.points} ochko · ${money(club.budget)}`):["Hali klub tanlanmagan."])].join("\n");}
+export function formatLeaderboard(rows:ManagerProfile[]):string{return["GLOBAL MANAGER RANKING","",...rows.map((p,i)=>`${i+1}. ${p.username?`@${p.username}`:p.name} · ${p.rating} · ${p.wins}W`)].join("\n");}
+export function formatSponsors(rows:Sponsor[]):string{return["HOMIYLAR","",...rows.map((s,i)=>`${i+1}. ${s.name} · ${money(s.payment)}/match${s.channelId?" · Kanal a’zoligi kerak":""}`)].join("\n");}

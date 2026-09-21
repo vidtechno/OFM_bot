@@ -1,0 +1,37 @@
+{
+  "name": "ofm-game-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OFM Game Telegram football manager bot",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "data:import:players": "tsx src/data/import-players.ts",
+    "data:import:fc27": "tsx src/data/import-fc27.ts",
+    "matches:process": "tsx src/matches/process-due-matches.ts",
+    "check": "npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.57.4",
+    "csv-parse": "^7.0.2",
+    "dotenv": "^17.2.2",
+    "grammy": "^1.38.2",
+    "pino": "^9.9.4",
+    "zod": "^4.1.11"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "pino-pretty": "^13.1.1",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
