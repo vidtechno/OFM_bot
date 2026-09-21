@@ -8,7 +8,7 @@ import { claimErrorMessage, formatClubDashboard } from "../leagues/presentation.
 import type { SquadRepository } from "../squads/squad.repository.js";
 import { formatSquad } from "../squads/presentation.js";
 import type { TacticsRepository, Tactic } from "../tactics/tactics.repository.js";
-import { formatLineup, formatTactics, positionName } from "../tactics/presentation.js";
+import { formatLineup, formatStartingXi, formatTactics, positionName } from "../tactics/presentation.js";
 import type { SquadPlayer } from "../squads/squad.repository.js";
 import type { FixtureRepository } from "../fixtures/fixture.repository.js";
 import { formatFixtureLine, formatUpcomingFixtures } from "../fixtures/presentation.js";
@@ -110,8 +110,6 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     return clubs;
   };
 
-  type LineupDraft={clubId:string;formationCode:string;formationName:string;slots:Array<{key:string;position:string}>;players:SquadPlayer[];picks:Array<{slotKey:string;clubPlayerId:string}>};
-  const lineupDrafts=new Map<number,LineupDraft>();
   const transferClubSelection=new Map<number,string>();
   const privateLeagueJoinPending=new Set<number>();
   type TransferInput={mode:"SELL"|"OFFER";clubId:string;clubPlayerId:string;playerName:string;minimum:number}|{mode:"COUNTER";clubId:string;offerId:string;playerName:string;minimum:number};
@@ -240,6 +238,24 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
 
   bot.hears(MAIN_MENU.leagues, showCompetitions);
 
+  bot.hears(MAIN_MENU.transfer, async (context) => {
+    if (!context.from) return;
+    const user = await getContextUser(context);
+    const clubs = await getContextManagedClubs(context, user.id);
+    if (clubs.length === 0) {
+      await context.reply("Sizda hali biriktirilgan klub yo‘q. Avval ligaga qo‘shiling va klub tanlang.");
+      return showCompetitions(context);
+    }
+    if (clubs.length === 1) {
+      return showTransferHub(context, clubs[0]!.leagueClubId);
+    }
+    const keyboard = new InlineKeyboard();
+    for (const club of clubs) {
+      keyboard.text(`${club.clubName} · ${club.competitionName}`, `tr:${club.leagueClubId}`).row();
+    }
+    await context.reply("Transfer markazi uchun klubingizni tanlang:", { reply_markup: keyboard });
+  });
+
   bot.hears(MAIN_MENU.profile, async (context) => {
     if (!context.from) return;
     const user = await getContextUser(context);
@@ -284,8 +300,23 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
   bot.callbackQuery(/^(ab|au):([0-9a-f-]{36})$/,async context=>{if(!context.from||!isAdmin(context.from.id))return;await context.answerCallbackQuery();const actor=await getContextUser(context);await admin.setBlocked(actor.id,context.match[2]!,context.match[1]==='ab');await context.reply("User holati yangilandi.");});
   bot.callbackQuery(/^as:([0-9a-f-]{36}):([01])$/,async context=>{if(!context.from||!isAdmin(context.from.id))return;await context.answerCallbackQuery();const actor=await getContextUser(context);await admin.setSponsor(actor.id,context.match[1]!,context.match[2]==='1');await context.reply("Sponsor holati yangilandi.");});
 
+  const showTransferHub = async (context: Context, clubId: string): Promise<void> => {
+    await editOrReply(
+      context,
+      "🔄 TRANSFER MARKAZI\n\nBu bo‘lim faqat tanlangan klubingiz uchun ishlaydi. Xarid, sotuv va takliflar shu klub budjetiga bog‘langan.",
+      new InlineKeyboard()
+        .text("🌍 Bozor", `gm:${clubId}:0`)
+        .text("🔎 Ligadan izlash", `tf:${clubId}:0`)
+        .row()
+        .text("📤 Sotuvga qo‘yish", `ts:${clubId}`)
+        .text("📩 Kelgan takliflar", `io:${clubId}`)
+        .row()
+        .text("← Klub", `db:${clubId}`),
+    );
+  };
+
   const showMarket=async(context:Context,clubId:string,page:number,group="ALL"):Promise<void>=>{if(!context.from)return;transferClubSelection.set(context.from.id,clubId);const user=await getContextUser(context),items=await transfers.market(user.id,clubId,page,8,group);const keyboard=new InlineKeyboard();for(const item of items)keyboard.text(`⚽ ${item.name} · ⭐${item.overall} · ${transferMoney(item.askingPrice)}`,`gb:${item.listingId}`).row();keyboard.text("🌟 Barchasi",`gm:${clubId}:0:ALL`).text("🥅 Darvozabon",`gm:${clubId}:0:GK`).row().text("🛡 Himoyachi",`gm:${clubId}:0:DEF`).text("🧠 Yarimhimoya",`gm:${clubId}:0:MID`).row().text("⚡ Hujumchi",`gm:${clubId}:0:ATT`);if(page>0)keyboard.row().text("← Oldingi",`gm:${clubId}:${page-1}:${group}`);if(items.length===8)keyboard.text("Keyingi →",`gm:${clubId}:${page+1}:${group}`);keyboard.row().text("← Transfer markazi",`tr:${clubId}`);await editOrReply(context,`🌍 BOZOR · ${group==="ALL"?"ENG KUCHLILAR":group==="GK"?"DARVOZABONLAR":group==="DEF"?"HIMOYACHILAR":group==="MID"?"YARIMHIMOYACHILAR":"HUJUMCHILAR"}\n\n${formatMarket(items).split("\n\n")[1]??"Hozir faol listing yo‘q."}`,keyboard);};
-  bot.callbackQuery(/^tr:([0-9a-f-]{36})$/,async context=>{if(!context.from)return;await context.answerCallbackQuery();const user=await getContextUser(context),clubId=context.match[1]!;if(!(await getContextManagedClubs(context,user.id)).some(club=>club.leagueClubId===clubId))return;await editOrReply(context,"🔄 TRANSFER MARKAZI\n\nBu bo‘lim faqat tanlangan klubingiz uchun ishlaydi. Xarid, sotuv va takliflar shu klub budjetiga bog‘langan.",new InlineKeyboard().text("🌍 Bozor",`gm:${clubId}:0`).text("🔎 Ligadan izlash",`tf:${clubId}:0`).row().text("📤 Sotuvga qo‘yish",`ts:${clubId}`).text("📩 Kelgan takliflar",`io:${clubId}`).row().text("← Klub",`db:${clubId}`));});
+  bot.callbackQuery(/^tr:([0-9a-f-]{36})$/,async context=>{if(!context.from)return;await context.answerCallbackQuery();const user=await getContextUser(context),clubId=context.match[1]!;if(!(await getContextManagedClubs(context,user.id)).some(club=>club.leagueClubId===clubId))return;await showTransferHub(context,clubId);});
   bot.callbackQuery(/^ts:([0-9a-f-]{36})$/,async context=>{if(!context.from)return;await context.answerCallbackQuery();const user=await getContextUser(context),clubId=context.match[1]!,players=await transfers.saleCandidates(user.id,clubId),kb=new InlineKeyboard(),browse:TransferBrowse={clubId,players:new Map()};for(const [index,player]of players.slice(0,20).entries()){browse.players.set(String(index),player);kb.text(`${player.name} · ${player.position} · ⭐${player.overall}`,`tl:${index}`).row();}saleBrowses.set(context.from.id,browse);kb.text("← Transfer markazi",`tr:${clubId}`);await editOrReply(context,players.length?"📤 FUTBOLCHINI SOTUVGA QO‘YISH\n\nNarxini belgilash uchun futbolchini tanlang:":"Sotuvga qo‘yish mumkin bo‘lgan futbolchi yo‘q.",kb);});
   bot.callbackQuery(/^tl:(\d+)$/,async context=>{if(!context.from)return;const browse=saleBrowses.get(context.from.id),player=browse?.players.get(context.match[1]!);if(!browse||!player)return context.answerCallbackQuery({text:"Ro‘yxat eskirgan, qayta oching"});transferInputs.set(context.from.id,{mode:"SELL",clubId:browse.clubId,clubPlayerId:player.clubPlayerId,playerName:player.name,minimum:Math.max(100000,Math.round(player.marketValue*.5))});await context.answerCallbackQuery();await editOrReply(context,`💰 ${player.name} uchun sotuv narxini yuboring.\n\nMinimal narx: ${transferMoney(Math.max(100000,Math.round(player.marketValue*.5)))}\nMisol: 45M yoki 45000000`,new InlineKeyboard().text("← Bekor qilish",`ts:${browse.clubId}`));});
   bot.callbackQuery(/^tf:([0-9a-f-]{36}):(\d+)$/,async context=>{if(!context.from)return;await context.answerCallbackQuery();const user=await getContextUser(context),clubId=context.match[1]!,page=Number(context.match[2]),clubs=await transfers.leagueClubs(user.id,clubId),kb=new InlineKeyboard(),browse={clubId,clubs:new Map<string,string>()};for(const[index,club]of clubs.slice(page*10,(page+1)*10).entries()){browse.clubs.set(String(index),club.leagueClubId);kb.text(`🏟 ${club.clubName}`,`tk:${index}:0`).row();}targetClubBrowses.set(context.from.id,browse);if(page)kb.text("← Oldingi",`tf:${clubId}:${page-1}`);if((page+1)*10<clubs.length)kb.text("Keyingi →",`tf:${clubId}:${page+1}`);kb.row().text("← Transfer markazi",`tr:${clubId}`);await editOrReply(context,clubs.length?"🔎 LIGADAN IZLASH\n\nAvval raqib klubni tanlang, keyin uning barcha futbolchilaridan biriga taklif yuboring:":"Bu ligada raqib klublar topilmadi.",kb);});
@@ -397,7 +428,11 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     await editOrReply(
       context,
       formatSquad(club.clubName, players),
-      new InlineKeyboard().text("Starting XI", `xi:${leagueClubId}`).text("← Klub", `db:${leagueClubId}`),
+      new InlineKeyboard()
+        .text("🔥 Asosiy XI", `xi:${leagueClubId}`)
+        .row()
+        .text("🧠 Taktika", `tc:${leagueClubId}`)
+        .text("↩️ Orqaga", `db:${leagueClubId}`),
     );
   });
 
@@ -427,7 +462,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     .text("🎯 Pas uslubi", `cy:${clubId}:passingStyle`).row()
     .text("🚀 Hujum yo‘nalishi", `cy:${clubId}:attackFocus`).row()
     .text("🦵 To‘p uchun kurash", `cy:${clubId}:tackling`).row()
-    .text("👥 Boshlang‘ich 11", `xi:${clubId}`).text("← Klub", `db:${clubId}`);
+    .text("🔥 Asosiy XI", `xi:${clubId}`).text("← Klub", `db:${clubId}`);
 
   const showTactics = async (context: Context, userId: string, clubId: string): Promise<void> => {
     const tactic = await tactics.get(userId, clubId);
@@ -448,17 +483,169 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     if (!context.from) return; await context.answerCallbackQuery({text:"Boshlang‘ich tarkib moslanmoqda…"});
     const user=await getContextUser(context);await tactics.autoSave(user.id,context.match[1]!,context.match[2]!);await showTactics(context,user.id,context.match[1]!);
   });
+  const showStartingXi = async (context: Context, clubId: string, alertText?: string): Promise<void> => {
+    const user = await getContextUser(context);
+    const clubs = await getContextManagedClubs(context, user.id);
+    const club = clubs.find((c) => c.leagueClubId === clubId);
+    const clubName = club?.clubName ?? "Klub";
+    const lineup = await tactics.lineup(user.id, clubId);
+
+    const keyboard = new InlineKeyboard()
+      .text("🔄 O‘yinchini almashtirish", `xsl:${clubId}`)
+      .text("🤖 Avtomatik tanlash", `xa:${clubId}`)
+      .row()
+      .text("📐 Sxemani o‘zgartirish", `fm:${clubId}`)
+      .row()
+      .text("← Jamoa", `sq:${clubId}`)
+      .text("← Klub", `db:${clubId}`);
+
+    const text = formatStartingXi(clubName, lineup.formation, lineup.players) + (alertText ? `\n\n${alertText}` : "");
+    await editOrReply(context, text, keyboard);
+  };
+
   bot.callbackQuery(/^xi:([0-9a-f-]{36})$/, async (context) => {
-    if(!context.from)return;await context.answerCallbackQuery();const user=await getContextUser(context);const lineup=await tactics.lineup(user.id,context.match[1]!);
-    await editOrReply(context,formatLineup(lineup.formation,lineup.players),new InlineKeyboard().text("✏️ 11 talikni tanlash",`xe:${context.match[1]}`).row().text("🤖 Avtomatik tanlash",`xa:${context.match[1]}`).row().text("← Taktika",`tc:${context.match[1]}`).text("← Klub",`db:${context.match[1]}`));
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    await showStartingXi(context, context.match[1]!);
   });
-  const showLineupDraft=async(context:Context,draft:LineupDraft):Promise<void>=>{const slot=draft.slots[draft.picks.length],selected=draft.picks.map((pick,index)=>{const player=draft.players.find(p=>p.clubPlayerId===pick.clubPlayerId)!;return `${index+1}. ${draft.slots[index]!.key} — ${player.shortName}`;});const text=["✏️ BOSHLANG‘ICH 11 TALIK",`📐 Sxema: ${draft.formationName}`,`✅ Tanlandi: ${draft.picks.length}/11`,"",...selected,"",slot?`Navbat: ${slot.key} — ${positionName(slot.position)}\nFutbolchini tanlang:`:"Tarkib tayyor. Endi saqlang 👇"].join("\n");const kb=new InlineKeyboard();if(slot){const used=new Set(draft.picks.map(p=>p.clubPlayerId));const candidates=draft.players.filter(p=>!used.has(p.clubPlayerId)).sort((a,b)=>Number(b.primaryPosition===slot.position)-Number(a.primaryPosition===slot.position)||b.overall-a.overall);for(const player of candidates)kb.text(`${player.primaryPosition===slot.position?'✅':'▫️'} ${player.shortName} · ${player.primaryPosition} · ⭐${player.overall}`,`xp:${player.clubPlayerId}`).row();}else kb.text("💾 Tarkibni saqlash","xs").row();if(draft.picks.length)kb.text("↩️ Oxirgi tanlovni bekor qilish","xb").row();kb.text("❌ Bekor qilish","xc");await editOrReply(context,text,kb);};
-  bot.callbackQuery(/^xe:([0-9a-f-]{36})$/,async context=>{if(!context.from)return;await context.answerCallbackQuery();const user=await getContextUser(context),clubId=context.match[1]!,tactic=await tactics.get(user.id,clubId),formation=(await tactics.listFormations()).find(f=>f.code===tactic.formationCode);if(!formation)return;const draft:LineupDraft={clubId,formationCode:formation.code,formationName:formation.name,slots:formation.slots,players:await squads.listOwnedClubSquad(user.id,clubId),picks:[]};lineupDrafts.set(context.from.id,draft);await showLineupDraft(context,draft);});
-  bot.callbackQuery(/^xp:([0-9a-f-]{36})$/,async context=>{if(!context.from)return;const draft=lineupDrafts.get(context.from.id);if(!draft)return context.answerCallbackQuery({text:"Tanlash muddati tugadi. Qayta boshlang."});if(draft.picks.some(p=>p.clubPlayerId===context.match[1]))return context.answerCallbackQuery({text:"Bu futbolchi allaqachon tanlangan"});const slot=draft.slots[draft.picks.length];if(!slot)return;draft.picks.push({slotKey:slot.key,clubPlayerId:context.match[1]!});await context.answerCallbackQuery({text:`${draft.picks.length}/11 tanlandi`});await showLineupDraft(context,draft);});
-  bot.callbackQuery("xb",async context=>{if(!context.from)return;const draft=lineupDrafts.get(context.from.id);if(!draft)return context.answerCallbackQuery();draft.picks.pop();await context.answerCallbackQuery();await showLineupDraft(context,draft);});
-  bot.callbackQuery("xc",async context=>{if(!context.from)return;const draft=lineupDrafts.get(context.from.id);lineupDrafts.delete(context.from.id);await context.answerCallbackQuery({text:"Tanlash bekor qilindi"});if(draft){const user=await getContextUser(context);await showTactics(context,user.id,draft.clubId);}});
-  bot.callbackQuery("xs",async context=>{if(!context.from)return;const draft=lineupDrafts.get(context.from.id);if(!draft||draft.picks.length!==11)return context.answerCallbackQuery({text:"Avval 11 futbolchini tanlang"});await context.answerCallbackQuery({text:"Tarkib saqlanmoqda…"});const user=await getContextUser(context);await tactics.saveManual(user.id,draft.clubId,draft.formationCode,draft.picks);lineupDrafts.delete(context.from.id);const lineup=await tactics.lineup(user.id,draft.clubId);await editOrReply(context,`${formatLineup(lineup.formation,lineup.players)}\n\n✅ Boshlang‘ich tarkib saqlandi!`,new InlineKeyboard().text("← Taktika",`tc:${draft.clubId}`).text("← Klub",`db:${draft.clubId}`));});
-  bot.callbackQuery(/^xa:([0-9a-f-]{36})$/,async context=>{if(!context.from)return;await context.answerCallbackQuery({text:"Eng mos futbolchilar tanlanmoqda…"});const user=await getContextUser(context),clubId=context.match[1]!,tactic=await tactics.get(user.id,clubId);await tactics.autoSave(user.id,clubId,tactic.formationCode);const lineup=await tactics.lineup(user.id,clubId);await editOrReply(context,`${formatLineup(lineup.formation,lineup.players)}\n\n✅ Avtomatik tarkib saqlandi!`,new InlineKeyboard().text("✏️ Qo‘lda o‘zgartirish",`xe:${clubId}`).row().text("← Taktika",`tc:${clubId}`));});
+
+  bot.callbackQuery(/^xsl:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const clubId = context.match[1]!;
+    const lineup = await tactics.lineup(user.id, clubId);
+    const keyboard = new InlineKeyboard();
+
+    let count = 0;
+    for (const player of lineup.players) {
+      keyboard.text(`${player.slotKey}: ${player.shortName}`, `xslot:${player.slotKey}:${clubId}`);
+      count++;
+      if (count % 2 === 0) keyboard.row();
+    }
+    if (count % 2 !== 0) keyboard.row();
+    keyboard.text("← Asosiy XI", `xi:${clubId}`);
+
+    await editOrReply(
+      context,
+      "🔄 Qaysi pozitsiyadagi futbolchini almashtirmoqchisiz?\n\nKerakli pozitsiyani tanlang:",
+      keyboard,
+    );
+  });
+
+  bot.callbackQuery(/^xslot:([A-Za-z0-9]+):([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const slotKey = context.match[1]!;
+    const clubId = context.match[2]!;
+
+    const [squad, lineup, tactic, formations] = await Promise.all([
+      squads.listOwnedClubSquad(user.id, clubId),
+      tactics.lineup(user.id, clubId),
+      tactics.get(user.id, clubId),
+      tactics.listFormations(),
+    ]);
+
+    const formation = formations.find((f) => f.code === tactic.formationCode);
+    const slotDef = formation?.slots.find((s) => s.key === slotKey);
+    const currentPick = lineup.players.find((p) => p.slotKey === slotKey);
+    const slotPosition = slotDef?.position ?? currentPick?.slotPosition ?? "CM";
+
+    const xiPlayerMap = new Map(lineup.players.map((p) => [p.clubPlayerId, p.slotKey]));
+
+    const naturalMatches: SquadPlayer[] = [];
+    const secondaryMatches: SquadPlayer[] = [];
+    const otherPlayers: SquadPlayer[] = [];
+
+    for (const player of squad) {
+      if (player.primaryPosition === slotPosition) {
+        naturalMatches.push(player);
+      } else if (player.secondaryPosition === slotPosition) {
+        secondaryMatches.push(player);
+      } else {
+        otherPlayers.push(player);
+      }
+    }
+
+    const sortedCandidates = [
+      ...naturalMatches.sort((a, b) => b.overall - a.overall),
+      ...secondaryMatches.sort((a, b) => b.overall - a.overall),
+      ...otherPlayers.sort((a, b) => b.overall - a.overall),
+    ];
+
+    const keyboard = new InlineKeyboard();
+    for (const player of sortedCandidates) {
+      const isCurrentInSlot = currentPick?.clubPlayerId === player.clubPlayerId;
+      const inOtherSlotKey = xiPlayerMap.get(player.clubPlayerId);
+
+      let icon = "▫️";
+      if (player.primaryPosition === slotPosition) {
+        icon = "✅";
+      } else if (player.secondaryPosition === slotPosition) {
+        icon = "🔹";
+      }
+
+      let status = "";
+      if (isCurrentInSlot) {
+        status = " (Hozirgi)";
+      } else if (inOtherSlotKey) {
+        status = ` (XI: ${inOtherSlotKey})`;
+      }
+
+      const label = `${icon} ${player.shortName} · ${player.primaryPosition} · ⭐${player.overall}${status}`;
+      keyboard.text(label.slice(0, 40), `xpick:${slotKey}:${player.clubPlayerId}`).row();
+    }
+
+    keyboard.text("← Pozitsiyalar", `xsl:${clubId}`).text("← Asosiy XI", `xi:${clubId}`);
+
+    const messageLines = [
+      `🔄 [${slotKey}] POZITSIYASIGA FUTBOLCHI TANLANG`,
+      `📍 Talab etilgan amplua: ${slotPosition} (${positionName(slotPosition)})`,
+      `👤 Hozirgi: ${currentPick ? `${currentPick.shortName} (⭐${currentPick.overall})` : "Bo‘sh"}`,
+      "",
+      "Belgilar:",
+      "✅ — Asosiy ampluasi mos",
+      "🔹 — Ikkinchi ampluasi mos",
+      "▫️ — Boshqa amplua",
+      "Agar futbolchi boshqa slotda bo‘lsa, tanlansa o‘rni almashadi (swap).",
+    ];
+
+    await editOrReply(context, messageLines.join("\n"), keyboard);
+  });
+
+  bot.callbackQuery(/^xpick:([A-Za-z0-9]+):([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery({ text: "Tarkib yangilanmoqda…" });
+    const user = await getContextUser(context);
+    const slotKey = context.match[1]!;
+    const clubPlayerId = context.match[2]!;
+
+    const clubs = await getContextManagedClubs(context, user.id);
+    if (!clubs.length) return;
+
+    let targetClubId = clubs[0]!.leagueClubId;
+    if (clubs.length > 1) {
+      for (const club of clubs) {
+        const squad = await squads.listOwnedClubSquad(user.id, club.leagueClubId);
+        if (squad.some((p) => p.clubPlayerId === clubPlayerId)) {
+          targetClubId = club.leagueClubId;
+          break;
+        }
+      }
+    }
+
+    await tactics.swapOrAssignPlayer(user.id, targetClubId, slotKey, clubPlayerId);
+    await showStartingXi(context, targetClubId, "✅ Tarkib muvaffaqiyatli saqlandi!");
+  });
+
+  bot.callbackQuery(/^xa:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery({ text: "Eng mos futbolchilar tanlanmoqda…" });
+    const user = await getContextUser(context), clubId = context.match[1]!, tactic = await tactics.get(user.id, clubId);
+    await tactics.autoSave(user.id, clubId, tactic.formationCode);
+    await showStartingXi(context, clubId, "✅ Avtomatik tarkib saqlandi!");
+  });
   bot.callbackQuery(/^nu:([0-9a-f-]{36}):(pressing|tempo|defensiveLine|width):([+-])$/,async context=>{
     if(!context.from)return;const user=await getContextUser(context);const club=context.match[1]!,field=context.match[2] as "pressing"|"tempo"|"defensiveLine"|"width";const current=await tactics.get(user.id,club);const value=Math.max(0,Math.min(100,current[field]+(context.match[3]==="+"?10:-10)));const updated=await tactics.update(user.id,club,{[field]:value});await context.answerCallbackQuery({text:`✅ ${field==='tempo'?'Sur’at':field==='defensiveLine'?'Himoya chizig‘i':field==='width'?'Kenglik':'Pressing'}: ${updated[field]}`});await showTactics(context,user.id,club);
   });

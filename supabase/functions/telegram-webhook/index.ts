@@ -39,28 +39,129 @@ function section(position) {
   if (midfielders.has(position)) return "MID";
   return "ATT";
 }
+function formatPlayerPosition(primary, secondary) {
+  return secondary && secondary.trim() ? `${primary}/${secondary}` : primary;
+}
 function formatSquad(clubName, players) {
-  const groups2 = /* @__PURE__ */ new Map([["GK", []], ["DEF", []], ["MID", []], ["ATT", []]]);
-  for (const player of players) groups2.get(section(player.primaryPosition)).push(player);
-  const lines = [`\u{1F465} ${clubName.toUpperCase()} \u2014 JAMOA`, "", `\u{1F4CB} ${players.length} nafar futbolchi`, ""];
-  for (const [label, group] of groups2) {
-    lines.push({ GK: "\u{1F9E4} DARVOZABONLAR", DEF: "\u{1F6E1} HIMOYACHILAR", MID: "\u{1F3AF} YARIM HIMOYACHILAR", ATT: "\u26A1 HUJUMCHILAR" }[label] ?? label);
-    if (group.length === 0) lines.push("\u2014");
-    for (let index = 0; index < group.length; index += 2) lines.push(group.slice(index, index + 2).map((player) => {
-      const secondary = player.secondaryPosition ? `/${player.secondaryPosition}` : "";
-      return `${player.shortName} (${player.primaryPosition}${secondary} \xB7 \u2B50${player.overall})`;
-    }).join("  \u2022  "));
-    lines.push("");
+  const groups2 = /* @__PURE__ */ new Map([
+    ["GK", []],
+    ["DEF", []],
+    ["MID", []],
+    ["ATT", []]
+  ]);
+  for (const player of players) {
+    const sec = section(player.primaryPosition);
+    groups2.get(sec)?.push(player);
   }
-  return lines.join("\n").trim();
+  for (const group of groups2.values()) {
+    group.sort((a, b) => b.overall - a.overall || a.shortName.localeCompare(b.shortName));
+  }
+  const sectionTitles = {
+    GK: "\u{1F9E4} DARVOZABONLAR",
+    DEF: "\u{1F6E1} HIMOYACHILAR",
+    MID: "\u{1F3AF} YARIM HIMOYACHILAR",
+    ATT: "\u26A1 HUJUMCHILAR"
+  };
+  const lines = [
+    `\u{1F465} ${clubName.toUpperCase()} \u2014 JAMOA`,
+    `\u{1F4CB} ${players.length} futbolchi`
+  ];
+  for (const [secKey, title] of Object.entries(sectionTitles)) {
+    const group = groups2.get(secKey) ?? [];
+    lines.push("", title);
+    if (group.length === 0) {
+      lines.push("\u2014");
+      continue;
+    }
+    group.forEach((p, idx) => {
+      const pos = formatPlayerPosition(p.primaryPosition, p.secondaryPosition);
+      lines.push(`${idx + 1}. ${p.shortName} \u2014 ${pos} \u2014 \u2B50${p.overall}`);
+    });
+  }
+  let text = lines.join("\n");
+  if (text.length > 4e3) {
+    text = text.slice(0, 3990) + "\n\u2026 [qolgan o\u2018yinchilar qisqartirildi]";
+  }
+  return text;
 }
 
 // src/tactics/presentation.ts
-var terms = { VERY_DEFENSIVE: "Juda himoyaviy", DEFENSIVE: "Himoyaviy", BALANCED: "Muvozanatli", ATTACKING: "Hujumkor", VERY_ATTACKING: "Juda hujumkor", SHORT: "Qisqa pas", MIXED: "Aralash", DIRECT: "To\u2018g\u2018ridan-to\u2018g\u2018ri", LEFT: "Chap qanot", CENTRE: "Markaz", RIGHT: "O\u2018ng qanot", BOTH_WINGS: "Ikki qanot", CAUTIOUS: "Ehtiyotkor", NORMAL: "Me\u2019yorida", AGGRESSIVE: "Keskin" };
+var terms = {
+  VERY_DEFENSIVE: "Juda himoyaviy",
+  DEFENSIVE: "Himoyaviy",
+  BALANCED: "Muvozanatli",
+  ATTACKING: "Hujumkor",
+  VERY_ATTACKING: "Juda hujumkor",
+  SHORT: "Qisqa pas",
+  MIXED: "Aralash",
+  DIRECT: "To\u2018g\u2018ridan-to\u2018g\u2018ri",
+  LEFT: "Chap qanot",
+  CENTRE: "Markaz",
+  RIGHT: "O\u2018ng qanot",
+  BOTH_WINGS: "Ikki qanot",
+  CAUTIOUS: "Ehtiyotkor",
+  NORMAL: "Me\u2019yorida",
+  AGGRESSIVE: "Keskin"
+};
 var footballTerm = (value) => terms[value] ?? value;
-var positionName = (value) => ({ GK: "Darvozabon", LB: "Chap himoyachi", LWB: "Chap qanot himoyachi", CB: "Markaziy himoyachi", RB: "O\u2018ng himoyachi", RWB: "O\u2018ng qanot himoyachi", LM: "Chap yarim himoyachi", CDM: "Tayanch yarim himoyachi", CM: "Markaziy yarim himoyachi", CAM: "Hujumkor yarim himoyachi", RM: "O\u2018ng yarim himoyachi", LW: "Chap qanot hujumchi", ST: "Markaziy hujumchi", RW: "O\u2018ng qanot hujumchi" })[value] ?? value;
-var formatTactics = (t) => ["\u{1F9E0} TAKTIK REJA", "", `\u{1F4D0} Sxema: ${t.formationName}`, `\u2696\uFE0F O\u2018yin uslubi: ${footballTerm(t.mentality)}`, `\u{1F525} Pressing: ${t.pressing}/100`, `\u26A1 Sur\u2019at: ${t.tempo}/100`, `\u{1F6E1} Himoya chizig\u2018i: ${t.defensiveLine}/100`, `\u2194\uFE0F Maydon kengligi: ${t.width}/100`, `\u{1F3AF} Pas uslubi: ${footballTerm(t.passingStyle)}`, `\u{1F680} Hujum yo\u2018nalishi: ${footballTerm(t.attackFocus)}`, `\u{1F9B5} To\u2018p uchun kurash: ${footballTerm(t.tackling)}`].join("\n");
-var formatLineup = (formation, players) => ["\u{1F465} BOSHLANG\u2018ICH 11 TALIK", `\u{1F4D0} Sxema: ${formation}`, "", ...players.map((p) => `${p.slotKey} \xB7 ${p.shortName}  \u2B50 ${p.overall}`), "", `Jamoaviy kuch: ${(players.reduce((sum, p) => sum + p.effectiveRating, 0) / Math.max(players.length, 1)).toFixed(1)}`].join("\n");
+var positionName = (value) => ({
+  GK: "Darvozabon",
+  LB: "Chap himoyachi",
+  LWB: "Chap qanot himoyachi",
+  CB: "Markaziy himoyachi",
+  RB: "O\u2018ng himoyachi",
+  RWB: "O\u2018ng qanot himoyachi",
+  LM: "Chap yarim himoyachi",
+  CDM: "Tayanch yarim himoyachi",
+  CM: "Markaziy yarim himoyachi",
+  CAM: "Hujumkor yarim himoyachi",
+  RM: "O\u2018ng yarim himoyachi",
+  LW: "Chap qanot hujumchi",
+  ST: "Markaziy hujumchi",
+  RW: "O\u2018ng qanot hujumchi"
+})[value] ?? value;
+var formatTactics = (t) => [
+  "\u{1F9E0} TAKTIK REJA",
+  "",
+  `\u{1F4D0} Sxema: ${t.formationName}`,
+  `\u2696\uFE0F O\u2018yin uslubi: ${footballTerm(t.mentality)}`,
+  `\u{1F525} Pressing: ${t.pressing}/100`,
+  `\u26A1 Sur\u2019at: ${t.tempo}/100`,
+  `\u{1F6E1} Himoya chizig\u2018i: ${t.defensiveLine}/100`,
+  `\u2194\uFE0F Maydon kengligi: ${t.width}/100`,
+  `\u{1F3AF} Pas uslubi: ${footballTerm(t.passingStyle)}`,
+  `\u{1F680} Hujum yo\u2018nalishi: ${footballTerm(t.attackFocus)}`,
+  `\u{1F9B5} To\u2018p uchun kurash: ${footballTerm(t.tackling)}`
+].join("\n");
+function formatStartingXi(clubName, formation, players) {
+  const avgStrength = (players.reduce((sum, p) => sum + p.effectiveRating, 0) / Math.max(players.length, 1)).toFixed(1);
+  const lines = [
+    `\u{1F525} ${clubName.toUpperCase()} \u2014 ASOSIY XI`,
+    `\u{1F4D0} Sxema: ${formation}`,
+    `\u2B50 Jamoaviy kuch: ${avgStrength}`,
+    ""
+  ];
+  const gkList = players.filter((p) => p.slotPosition === "GK");
+  const defList = players.filter((p) => ["LB", "LWB", "CB", "RB", "RWB"].includes(p.slotPosition));
+  const midList = players.filter((p) => ["LM", "CDM", "CM", "CAM", "RM"].includes(p.slotPosition));
+  const attList = players.filter((p) => ["LW", "ST", "RW", "CF"].includes(p.slotPosition));
+  const sections = [
+    { title: "\u{1F9E4} DARVOZABON", list: gkList },
+    { title: "\u{1F6E1} HIMOYACHILAR", list: defList },
+    { title: "\u{1F3AF} YARIM HIMOYACHILAR", list: midList },
+    { title: "\u26A1 HUJUMCHILAR", list: attList }
+  ];
+  for (const sec of sections) {
+    if (sec.list.length > 0) {
+      lines.push(sec.title);
+      for (const p of sec.list) {
+        lines.push(`${p.slotKey}: \u2705 ${p.shortName} \u2014 \u2B50${p.overall}`);
+      }
+      lines.push("");
+    }
+  }
+  return lines.join("\n").trim();
+}
 
 // src/fixtures/presentation.ts
 var dateTime = new Intl.DateTimeFormat("uz-UZ", {
@@ -138,7 +239,7 @@ var MAIN_MENU = {
   admin: "\u{1F6E0} Admin panel"
 };
 function createMainKeyboard(isAdmin = false) {
-  const keyboard = new Keyboard().text(MAIN_MENU.club).text(MAIN_MENU.leagues).row().text(MAIN_MENU.profile);
+  const keyboard = new Keyboard().text(MAIN_MENU.club).text(MAIN_MENU.leagues).row().text(MAIN_MENU.transfer).text(MAIN_MENU.profile);
   if (isAdmin) keyboard.row().text(MAIN_MENU.admin);
   return keyboard.resized().persistent();
 }
@@ -201,7 +302,6 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
     context.managedClubs = clubs;
     return clubs;
   };
-  const lineupDrafts = /* @__PURE__ */ new Map();
   const transferClubSelection = /* @__PURE__ */ new Map();
   const privateLeagueJoinPending = /* @__PURE__ */ new Set();
   const transferInputs = /* @__PURE__ */ new Map();
@@ -308,6 +408,23 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
     return showDashboard(context, clubs[0]);
   });
   bot.hears(MAIN_MENU.leagues, showCompetitions);
+  bot.hears(MAIN_MENU.transfer, async (context) => {
+    if (!context.from) return;
+    const user = await getContextUser(context);
+    const clubs = await getContextManagedClubs(context, user.id);
+    if (clubs.length === 0) {
+      await context.reply("Sizda hali biriktirilgan klub yo\u2018q. Avval ligaga qo\u2018shiling va klub tanlang.");
+      return showCompetitions(context);
+    }
+    if (clubs.length === 1) {
+      return showTransferHub(context, clubs[0].leagueClubId);
+    }
+    const keyboard = new InlineKeyboard();
+    for (const club of clubs) {
+      keyboard.text(`${club.clubName} \xB7 ${club.competitionName}`, `tr:${club.leagueClubId}`).row();
+    }
+    await context.reply("Transfer markazi uchun klubingizni tanlang:", { reply_markup: keyboard });
+  });
   bot.hears(MAIN_MENU.profile, async (context) => {
     if (!context.from) return;
     const user = await getContextUser(context);
@@ -379,6 +496,13 @@ ${new Date(r.created_at).toLocaleString("uz-UZ")}`) : ["Hozircha audit yozuvlari
     await admin.setSponsor(actor.id, context.match[1], context.match[2] === "1");
     await context.reply("Sponsor holati yangilandi.");
   });
+  const showTransferHub = async (context, clubId) => {
+    await editOrReply(
+      context,
+      "\u{1F504} TRANSFER MARKAZI\n\nBu bo\u2018lim faqat tanlangan klubingiz uchun ishlaydi. Xarid, sotuv va takliflar shu klub budjetiga bog\u2018langan.",
+      new InlineKeyboard().text("\u{1F30D} Bozor", `gm:${clubId}:0`).text("\u{1F50E} Ligadan izlash", `tf:${clubId}:0`).row().text("\u{1F4E4} Sotuvga qo\u2018yish", `ts:${clubId}`).text("\u{1F4E9} Kelgan takliflar", `io:${clubId}`).row().text("\u2190 Klub", `db:${clubId}`)
+    );
+  };
   const showMarket = async (context, clubId, page, group = "ALL") => {
     if (!context.from) return;
     transferClubSelection.set(context.from.id, clubId);
@@ -398,7 +522,7 @@ ${formatMarket(items).split("\n\n")[1] ?? "Hozir faol listing yo\u2018q."}`, key
     await context.answerCallbackQuery();
     const user = await getContextUser(context), clubId = context.match[1];
     if (!(await getContextManagedClubs(context, user.id)).some((club) => club.leagueClubId === clubId)) return;
-    await editOrReply(context, "\u{1F504} TRANSFER MARKAZI\n\nBu bo\u2018lim faqat tanlangan klubingiz uchun ishlaydi. Xarid, sotuv va takliflar shu klub budjetiga bog\u2018langan.", new InlineKeyboard().text("\u{1F30D} Bozor", `gm:${clubId}:0`).text("\u{1F50E} Ligadan izlash", `tf:${clubId}:0`).row().text("\u{1F4E4} Sotuvga qo\u2018yish", `ts:${clubId}`).text("\u{1F4E9} Kelgan takliflar", `io:${clubId}`).row().text("\u2190 Klub", `db:${clubId}`));
+    await showTransferHub(context, clubId);
   });
   bot.callbackQuery(/^ts:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
@@ -755,7 +879,7 @@ Klubning mavjud holati saqlanadi.`, keyboard);
     await editOrReply(
       context,
       formatSquad(club.clubName, players),
-      new InlineKeyboard().text("Starting XI", `xi:${leagueClubId}`).text("\u2190 Klub", `db:${leagueClubId}`)
+      new InlineKeyboard().text("\u{1F525} Asosiy XI", `xi:${leagueClubId}`).row().text("\u{1F9E0} Taktika", `tc:${leagueClubId}`).text("\u21A9\uFE0F Orqaga", `db:${leagueClubId}`)
     );
   });
   bot.callbackQuery(/^mt:([0-9a-f-]{36})$/, async (context) => {
@@ -826,7 +950,7 @@ Klubning mavjud holati saqlanadi.`, keyboard);
       await context.reply(eligible ? "Homiy faol. Kanal a\u2019zoligi tasdiqlandi." : "Homiy tanlandi, ammo kanal a\u2019zoligi tasdiqlanmadi.");
     } else await context.reply("Homiy shartnomasi faol qilindi.");
   });
-  const tacticKeyboard = (clubId, tactic) => new InlineKeyboard().text("\u{1F4D0} Sxema", `fm:${clubId}`).text("\u2696\uFE0F O\u2018yin uslubi", `cy:${clubId}:mentality`).row().text(`\u{1F525} Pressing ${tactic.pressing} \u2212`, `nu:${clubId}:pressing:-`).text(`\u{1F525} ${tactic.pressing} +`, `nu:${clubId}:pressing:+`).row().text(`\u26A1 Sur\u2019at ${tactic.tempo} \u2212`, `nu:${clubId}:tempo:-`).text(`\u26A1 ${tactic.tempo} +`, `nu:${clubId}:tempo:+`).row().text(`\u{1F6E1} Himoya ${tactic.defensiveLine} \u2212`, `nu:${clubId}:defensiveLine:-`).text(`\u{1F6E1} ${tactic.defensiveLine} +`, `nu:${clubId}:defensiveLine:+`).row().text(`\u2194\uFE0F Kenglik ${tactic.width} \u2212`, `nu:${clubId}:width:-`).text(`\u2194\uFE0F ${tactic.width} +`, `nu:${clubId}:width:+`).row().text("\u{1F3AF} Pas uslubi", `cy:${clubId}:passingStyle`).row().text("\u{1F680} Hujum yo\u2018nalishi", `cy:${clubId}:attackFocus`).row().text("\u{1F9B5} To\u2018p uchun kurash", `cy:${clubId}:tackling`).row().text("\u{1F465} Boshlang\u2018ich 11", `xi:${clubId}`).text("\u2190 Klub", `db:${clubId}`);
+  const tacticKeyboard = (clubId, tactic) => new InlineKeyboard().text("\u{1F4D0} Sxema", `fm:${clubId}`).text("\u2696\uFE0F O\u2018yin uslubi", `cy:${clubId}:mentality`).row().text(`\u{1F525} Pressing ${tactic.pressing} \u2212`, `nu:${clubId}:pressing:-`).text(`\u{1F525} ${tactic.pressing} +`, `nu:${clubId}:pressing:+`).row().text(`\u26A1 Sur\u2019at ${tactic.tempo} \u2212`, `nu:${clubId}:tempo:-`).text(`\u26A1 ${tactic.tempo} +`, `nu:${clubId}:tempo:+`).row().text(`\u{1F6E1} Himoya ${tactic.defensiveLine} \u2212`, `nu:${clubId}:defensiveLine:-`).text(`\u{1F6E1} ${tactic.defensiveLine} +`, `nu:${clubId}:defensiveLine:+`).row().text(`\u2194\uFE0F Kenglik ${tactic.width} \u2212`, `nu:${clubId}:width:-`).text(`\u2194\uFE0F ${tactic.width} +`, `nu:${clubId}:width:+`).row().text("\u{1F3AF} Pas uslubi", `cy:${clubId}:passingStyle`).row().text("\u{1F680} Hujum yo\u2018nalishi", `cy:${clubId}:attackFocus`).row().text("\u{1F9B5} To\u2018p uchun kurash", `cy:${clubId}:tackling`).row().text("\u{1F525} Asosiy XI", `xi:${clubId}`).text("\u2190 Klub", `db:${clubId}`);
   const showTactics = async (context, userId, clubId) => {
     const tactic = await tactics.get(userId, clubId);
     await editOrReply(context, formatTactics(tactic), tacticKeyboard(clubId, tactic));
@@ -854,90 +978,138 @@ Klubning mavjud holati saqlanadi.`, keyboard);
     await tactics.autoSave(user.id, context.match[1], context.match[2]);
     await showTactics(context, user.id, context.match[1]);
   });
+  const showStartingXi = async (context, clubId, alertText) => {
+    const user = await getContextUser(context);
+    const clubs = await getContextManagedClubs(context, user.id);
+    const club = clubs.find((c) => c.leagueClubId === clubId);
+    const clubName = club?.clubName ?? "Klub";
+    const lineup = await tactics.lineup(user.id, clubId);
+    const keyboard = new InlineKeyboard().text("\u{1F504} O\u2018yinchini almashtirish", `xsl:${clubId}`).text("\u{1F916} Avtomatik tanlash", `xa:${clubId}`).row().text("\u{1F4D0} Sxemani o\u2018zgartirish", `fm:${clubId}`).row().text("\u2190 Jamoa", `sq:${clubId}`).text("\u2190 Klub", `db:${clubId}`);
+    const text = formatStartingXi(clubName, lineup.formation, lineup.players) + (alertText ? `
+
+${alertText}` : "");
+    await editOrReply(context, text, keyboard);
+  };
   bot.callbackQuery(/^xi:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
+    await showStartingXi(context, context.match[1]);
+  });
+  bot.callbackQuery(/^xsl:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
     const user = await getContextUser(context);
-    const lineup = await tactics.lineup(user.id, context.match[1]);
-    await editOrReply(context, formatLineup(lineup.formation, lineup.players), new InlineKeyboard().text("\u270F\uFE0F 11 talikni tanlash", `xe:${context.match[1]}`).row().text("\u{1F916} Avtomatik tanlash", `xa:${context.match[1]}`).row().text("\u2190 Taktika", `tc:${context.match[1]}`).text("\u2190 Klub", `db:${context.match[1]}`));
-  });
-  const showLineupDraft = async (context, draft) => {
-    const slot = draft.slots[draft.picks.length], selected = draft.picks.map((pick, index) => {
-      const player = draft.players.find((p) => p.clubPlayerId === pick.clubPlayerId);
-      return `${index + 1}. ${draft.slots[index].key} \u2014 ${player.shortName}`;
-    });
-    const text = ["\u270F\uFE0F BOSHLANG\u2018ICH 11 TALIK", `\u{1F4D0} Sxema: ${draft.formationName}`, `\u2705 Tanlandi: ${draft.picks.length}/11`, "", ...selected, "", slot ? `Navbat: ${slot.key} \u2014 ${positionName(slot.position)}
-Futbolchini tanlang:` : "Tarkib tayyor. Endi saqlang \u{1F447}"].join("\n");
-    const kb = new InlineKeyboard();
-    if (slot) {
-      const used = new Set(draft.picks.map((p) => p.clubPlayerId));
-      const candidates = draft.players.filter((p) => !used.has(p.clubPlayerId)).sort((a, b) => Number(b.primaryPosition === slot.position) - Number(a.primaryPosition === slot.position) || b.overall - a.overall);
-      for (const player of candidates) kb.text(`${player.primaryPosition === slot.position ? "\u2705" : "\u25AB\uFE0F"} ${player.shortName} \xB7 ${player.primaryPosition} \xB7 \u2B50${player.overall}`, `xp:${player.clubPlayerId}`).row();
-    } else kb.text("\u{1F4BE} Tarkibni saqlash", "xs").row();
-    if (draft.picks.length) kb.text("\u21A9\uFE0F Oxirgi tanlovni bekor qilish", "xb").row();
-    kb.text("\u274C Bekor qilish", "xc");
-    await editOrReply(context, text, kb);
-  };
-  bot.callbackQuery(/^xe:([0-9a-f-]{36})$/, async (context) => {
-    if (!context.from) return;
-    await context.answerCallbackQuery();
-    const user = await getContextUser(context), clubId = context.match[1], tactic = await tactics.get(user.id, clubId), formation = (await tactics.listFormations()).find((f) => f.code === tactic.formationCode);
-    if (!formation) return;
-    const draft = { clubId, formationCode: formation.code, formationName: formation.name, slots: formation.slots, players: await squads.listOwnedClubSquad(user.id, clubId), picks: [] };
-    lineupDrafts.set(context.from.id, draft);
-    await showLineupDraft(context, draft);
-  });
-  bot.callbackQuery(/^xp:([0-9a-f-]{36})$/, async (context) => {
-    if (!context.from) return;
-    const draft = lineupDrafts.get(context.from.id);
-    if (!draft) return context.answerCallbackQuery({ text: "Tanlash muddati tugadi. Qayta boshlang." });
-    if (draft.picks.some((p) => p.clubPlayerId === context.match[1])) return context.answerCallbackQuery({ text: "Bu futbolchi allaqachon tanlangan" });
-    const slot = draft.slots[draft.picks.length];
-    if (!slot) return;
-    draft.picks.push({ slotKey: slot.key, clubPlayerId: context.match[1] });
-    await context.answerCallbackQuery({ text: `${draft.picks.length}/11 tanlandi` });
-    await showLineupDraft(context, draft);
-  });
-  bot.callbackQuery("xb", async (context) => {
-    if (!context.from) return;
-    const draft = lineupDrafts.get(context.from.id);
-    if (!draft) return context.answerCallbackQuery();
-    draft.picks.pop();
-    await context.answerCallbackQuery();
-    await showLineupDraft(context, draft);
-  });
-  bot.callbackQuery("xc", async (context) => {
-    if (!context.from) return;
-    const draft = lineupDrafts.get(context.from.id);
-    lineupDrafts.delete(context.from.id);
-    await context.answerCallbackQuery({ text: "Tanlash bekor qilindi" });
-    if (draft) {
-      const user = await getContextUser(context);
-      await showTactics(context, user.id, draft.clubId);
+    const clubId = context.match[1];
+    const lineup = await tactics.lineup(user.id, clubId);
+    const keyboard = new InlineKeyboard();
+    let count = 0;
+    for (const player of lineup.players) {
+      keyboard.text(`${player.slotKey}: ${player.shortName}`, `xslot:${player.slotKey}:${clubId}`);
+      count++;
+      if (count % 2 === 0) keyboard.row();
     }
+    if (count % 2 !== 0) keyboard.row();
+    keyboard.text("\u2190 Asosiy XI", `xi:${clubId}`);
+    await editOrReply(
+      context,
+      "\u{1F504} Qaysi pozitsiyadagi futbolchini almashtirmoqchisiz?\n\nKerakli pozitsiyani tanlang:",
+      keyboard
+    );
   });
-  bot.callbackQuery("xs", async (context) => {
+  bot.callbackQuery(/^xslot:([A-Za-z0-9]+):([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
-    const draft = lineupDrafts.get(context.from.id);
-    if (!draft || draft.picks.length !== 11) return context.answerCallbackQuery({ text: "Avval 11 futbolchini tanlang" });
-    await context.answerCallbackQuery({ text: "Tarkib saqlanmoqda\u2026" });
+    await context.answerCallbackQuery();
     const user = await getContextUser(context);
-    await tactics.saveManual(user.id, draft.clubId, draft.formationCode, draft.picks);
-    lineupDrafts.delete(context.from.id);
-    const lineup = await tactics.lineup(user.id, draft.clubId);
-    await editOrReply(context, `${formatLineup(lineup.formation, lineup.players)}
-
-\u2705 Boshlang\u2018ich tarkib saqlandi!`, new InlineKeyboard().text("\u2190 Taktika", `tc:${draft.clubId}`).text("\u2190 Klub", `db:${draft.clubId}`));
+    const slotKey = context.match[1];
+    const clubId = context.match[2];
+    const [squad, lineup, tactic, formations] = await Promise.all([
+      squads.listOwnedClubSquad(user.id, clubId),
+      tactics.lineup(user.id, clubId),
+      tactics.get(user.id, clubId),
+      tactics.listFormations()
+    ]);
+    const formation = formations.find((f) => f.code === tactic.formationCode);
+    const slotDef = formation?.slots.find((s) => s.key === slotKey);
+    const currentPick = lineup.players.find((p) => p.slotKey === slotKey);
+    const slotPosition = slotDef?.position ?? currentPick?.slotPosition ?? "CM";
+    const xiPlayerMap = new Map(lineup.players.map((p) => [p.clubPlayerId, p.slotKey]));
+    const naturalMatches = [];
+    const secondaryMatches = [];
+    const otherPlayers = [];
+    for (const player of squad) {
+      if (player.primaryPosition === slotPosition) {
+        naturalMatches.push(player);
+      } else if (player.secondaryPosition === slotPosition) {
+        secondaryMatches.push(player);
+      } else {
+        otherPlayers.push(player);
+      }
+    }
+    const sortedCandidates = [
+      ...naturalMatches.sort((a, b) => b.overall - a.overall),
+      ...secondaryMatches.sort((a, b) => b.overall - a.overall),
+      ...otherPlayers.sort((a, b) => b.overall - a.overall)
+    ];
+    const keyboard = new InlineKeyboard();
+    for (const player of sortedCandidates) {
+      const isCurrentInSlot = currentPick?.clubPlayerId === player.clubPlayerId;
+      const inOtherSlotKey = xiPlayerMap.get(player.clubPlayerId);
+      let icon = "\u25AB\uFE0F";
+      if (player.primaryPosition === slotPosition) {
+        icon = "\u2705";
+      } else if (player.secondaryPosition === slotPosition) {
+        icon = "\u{1F539}";
+      }
+      let status = "";
+      if (isCurrentInSlot) {
+        status = " (Hozirgi)";
+      } else if (inOtherSlotKey) {
+        status = ` (XI: ${inOtherSlotKey})`;
+      }
+      const label = `${icon} ${player.shortName} \xB7 ${player.primaryPosition} \xB7 \u2B50${player.overall}${status}`;
+      keyboard.text(label.slice(0, 40), `xpick:${slotKey}:${player.clubPlayerId}`).row();
+    }
+    keyboard.text("\u2190 Pozitsiyalar", `xsl:${clubId}`).text("\u2190 Asosiy XI", `xi:${clubId}`);
+    const messageLines = [
+      `\u{1F504} [${slotKey}] POZITSIYASIGA FUTBOLCHI TANLANG`,
+      `\u{1F4CD} Talab etilgan amplua: ${slotPosition} (${positionName(slotPosition)})`,
+      `\u{1F464} Hozirgi: ${currentPick ? `${currentPick.shortName} (\u2B50${currentPick.overall})` : "Bo\u2018sh"}`,
+      "",
+      "Belgilar:",
+      "\u2705 \u2014 Asosiy ampluasi mos",
+      "\u{1F539} \u2014 Ikkinchi ampluasi mos",
+      "\u25AB\uFE0F \u2014 Boshqa amplua",
+      "Agar futbolchi boshqa slotda bo\u2018lsa, tanlansa o\u2018rni almashadi (swap)."
+    ];
+    await editOrReply(context, messageLines.join("\n"), keyboard);
+  });
+  bot.callbackQuery(/^xpick:([A-Za-z0-9]+):([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery({ text: "Tarkib yangilanmoqda\u2026" });
+    const user = await getContextUser(context);
+    const slotKey = context.match[1];
+    const clubPlayerId = context.match[2];
+    const clubs = await getContextManagedClubs(context, user.id);
+    if (!clubs.length) return;
+    let targetClubId = clubs[0].leagueClubId;
+    if (clubs.length > 1) {
+      for (const club of clubs) {
+        const squad = await squads.listOwnedClubSquad(user.id, club.leagueClubId);
+        if (squad.some((p) => p.clubPlayerId === clubPlayerId)) {
+          targetClubId = club.leagueClubId;
+          break;
+        }
+      }
+    }
+    await tactics.swapOrAssignPlayer(user.id, targetClubId, slotKey, clubPlayerId);
+    await showStartingXi(context, targetClubId, "\u2705 Tarkib muvaffaqiyatli saqlandi!");
   });
   bot.callbackQuery(/^xa:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery({ text: "Eng mos futbolchilar tanlanmoqda\u2026" });
     const user = await getContextUser(context), clubId = context.match[1], tactic = await tactics.get(user.id, clubId);
     await tactics.autoSave(user.id, clubId, tactic.formationCode);
-    const lineup = await tactics.lineup(user.id, clubId);
-    await editOrReply(context, `${formatLineup(lineup.formation, lineup.players)}
-
-\u2705 Avtomatik tarkib saqlandi!`, new InlineKeyboard().text("\u270F\uFE0F Qo\u2018lda o\u2018zgartirish", `xe:${clubId}`).row().text("\u2190 Taktika", `tc:${clubId}`));
+    await showStartingXi(context, clubId, "\u2705 Avtomatik tarkib saqlandi!");
   });
   bot.callbackQuery(/^nu:([0-9a-f-]{36}):(pressing|tempo|defensiveLine|width):([+-])$/, async (context) => {
     if (!context.from) return;
@@ -1310,6 +1482,71 @@ var TacticsRepository = class {
       const clubPlayer = one3(row.club_players), player = one3(clubPlayer.players);
       return { clubPlayerId: clubPlayer.id, slotKey: row.slot_key, slotPosition: row.slot_position, shortName: player.short_name, overall: one3(player.player_attributes).overall, effectiveRating: Number(row.effective_rating) };
     }) };
+  }
+  async swapOrAssignPlayer(userId, clubId, targetSlotKey, clubPlayerId) {
+    const current = await this.lineup(userId, clubId);
+    const tactic = await this.get(userId, clubId);
+    const formation = (await this.listFormations()).find((f) => f.code === tactic.formationCode);
+    if (!formation) throw new Error("FORMATION_NOT_FOUND");
+    const targetSlot = formation.slots.find((s) => s.key === targetSlotKey);
+    if (!targetSlot) throw new Error("SLOT_NOT_FOUND");
+    const squad = await this.squads.listOwnedClubSquad(userId, clubId);
+    const candidate = squad.find((p) => p.clubPlayerId === clubPlayerId);
+    if (!candidate) throw new Error("PLAYER_NOT_IN_CLUB");
+    const existingSlot = current.players.find((p) => p.clubPlayerId === clubPlayerId);
+    const incumbent = current.players.find((p) => p.slotKey === targetSlotKey);
+    const picks = [];
+    for (const slot of formation.slots) {
+      if (slot.key === targetSlotKey) {
+        picks.push({ slotKey: slot.key, clubPlayerId });
+      } else if (existingSlot && slot.key === existingSlot.slotKey && incumbent) {
+        picks.push({ slotKey: slot.key, clubPlayerId: incumbent.clubPlayerId });
+      } else {
+        const existingPick = current.players.find((p) => p.slotKey === slot.key);
+        if (existingPick && existingPick.clubPlayerId !== clubPlayerId) {
+          picks.push({ slotKey: slot.key, clubPlayerId: existingPick.clubPlayerId });
+        }
+      }
+    }
+    if (picks.length < 11) {
+      const used = new Set(picks.map((p) => p.clubPlayerId));
+      for (const slot of formation.slots) {
+        if (!picks.some((p) => p.slotKey === slot.key)) {
+          const available = squad.filter((p) => !used.has(p.clubPlayerId));
+          const best = available.sort(
+            (a, b) => effectiveRating(
+              {
+                id: b.clubPlayerId,
+                overall: b.overall,
+                primaryPosition: b.primaryPosition,
+                secondaryPosition: b.secondaryPosition,
+                fitness: b.fitness,
+                form: b.form,
+                morale: b.morale
+              },
+              slot.position
+            ) - effectiveRating(
+              {
+                id: a.clubPlayerId,
+                overall: a.overall,
+                primaryPosition: a.primaryPosition,
+                secondaryPosition: a.secondaryPosition,
+                fitness: a.fitness,
+                form: a.form,
+                morale: a.morale
+              },
+              slot.position
+            )
+          )[0];
+          if (best) {
+            used.add(best.clubPlayerId);
+            picks.push({ slotKey: slot.key, clubPlayerId: best.clubPlayerId });
+          }
+        }
+      }
+    }
+    await this.saveManual(userId, clubId, tactic.formationCode, picks);
+    return this.lineup(userId, clubId);
   }
 };
 
