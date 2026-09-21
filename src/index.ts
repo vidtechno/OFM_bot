@@ -43,8 +43,17 @@ async function main(): Promise<void> {
   });
 
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
-    logger.info({ event: "shutdown", signal }, "Stopping bot");
-    await bot.stop();
+    logger.info({ event: "shutdown", signal }, "Stopping process");
+    clearInterval(matchTimer);
+    clearInterval(transferTimer);
+    clearInterval(globalLeagueTimer);
+    if (config.BOT_MODE === "polling") {
+      try {
+        await bot.stop();
+      } catch {
+        // Ignore stop error if not actively polling
+      }
+    }
   };
 
   process.once("SIGINT", () => void shutdown("SIGINT"));
@@ -75,10 +84,19 @@ async function main(): Promise<void> {
   const maintainGlobalLeagues=async():Promise<void>=>{if(!globalLeagueSchedulerReady)return;try{const created=await leagues.releaseScheduledGlobalLeagues();if(created)logger.info({event:"global_leagues_released",count:created},"Scheduled global leagues released");}catch(error:unknown){if((error as {code?:string}).code==="PGRST202"){globalLeagueSchedulerReady=false;logger.warn({event:"global_league_scheduler_waiting_for_migration"},"Global league scheduler is waiting for its database migration");return;}logger.error({event:"global_league_release_failed",err:error},"Scheduled global league release failed");}};
   const globalLeagueTimer=setInterval(()=>void maintainGlobalLeagues(),60_000);globalLeagueTimer.unref();void maintainGlobalLeagues();
 
-  logger.info({ event: "bot_start" }, "Starting OFM Game bot with long polling");
-  await bot.start({
-    onStart: (botInfo) => logger.info({ event: "bot_started", username: botInfo.username }, "Bot started"),
-  });
+  if (config.BOT_MODE === "webhook") {
+    logger.info(
+      { event: "bot_start_webhook_mode", mode: "webhook" },
+      "Running in WEBHOOK mode. Telegram updates are handled by Supabase Edge Function (telegram-webhook). Background workers active."
+    );
+    // Keep Node process alive for timers
+    await new Promise(() => {});
+  } else {
+    logger.info({ event: "bot_start", mode: "polling" }, "Starting OFM Game bot with long polling (development)");
+    await bot.start({
+      onStart: (botInfo) => logger.info({ event: "bot_started", username: botInfo.username }, "Bot started with long polling"),
+    });
+  }
 }
 
 main().catch((error: unknown) => {

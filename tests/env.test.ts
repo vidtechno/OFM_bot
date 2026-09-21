@@ -18,4 +18,33 @@ describe("loadConfig", () => {
   it("majburiy secret yo'q bo'lsa tushunarli xato beradi", () => {
     expect(() => loadConfig({ ...validEnvironment, TELEGRAM_BOT_TOKEN: "" })).toThrow("TELEGRAM_BOT_TOKEN");
   });
+
+  it("default BOT_MODE polling bo'ladi", () => {
+    const config = loadConfig(validEnvironment);
+    expect(config.BOT_MODE).toBe("polling");
+  });
+
+  it("BOT_MODE=webhook qabul qilinadi", () => {
+    const config = loadConfig({ ...validEnvironment, BOT_MODE: "webhook" });
+    expect(config.BOT_MODE).toBe("webhook");
+  });
+
+  it("production rejimida polling ishlatilsa xatolik beradi", () => {
+    expect(() =>
+      loadConfig({
+        ...validEnvironment,
+        NODE_ENV: "production",
+        BOT_MODE: "polling",
+      })
+    ).toThrow("Long polling productionda ruxsat etilmagan");
+  });
+
+  it("production rejimida webhook ruxsat etiladi", () => {
+    const config = loadConfig({
+      ...validEnvironment,
+      NODE_ENV: "production",
+      BOT_MODE: "webhook",
+    });
+    expect(config.BOT_MODE).toBe("webhook");
+  });
 });

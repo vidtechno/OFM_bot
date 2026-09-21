@@ -10,6 +10,17 @@ const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1, "SUPABASE_SERVICE_ROLE_KEY kiritilmagan"),
   OPENAI_API_KEY: z.string().min(1).optional(),
   ADMIN_TELEGRAM_IDS: z.string().default("6117815120").transform((value)=>value.split(",").map((id)=>Number(id.trim())).filter(Number.isSafeInteger)),
+  BOT_MODE: z.enum(["polling", "webhook"]).default("polling"),
+  TELEGRAM_WEBHOOK_URL: z.string().url("TELEGRAM_WEBHOOK_URL noto'g'ri URL").optional(),
+  TELEGRAM_WEBHOOK_SECRET: z.string().min(1).optional(),
+}).superRefine((data, ctx) => {
+  if (data.NODE_ENV === "production" && data.BOT_MODE === "polling") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["BOT_MODE"],
+      message: "Long polling productionda ruxsat etilmagan. Productionda BOT_MODE=webhook bo'lishi kerak.",
+    });
+  }
 });
 
 export type AppConfig = z.infer<typeof envSchema>;
