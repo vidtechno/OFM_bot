@@ -81,7 +81,7 @@ async function main(): Promise<void> {
 
   const config = loadConfig();
   const regionArg = process.argv.find((arg) => arg.startsWith("--region="))?.split("=")[1];
-  const targetRegion = regionArg ?? "ap-southeast-2";
+  const targetRegion = regionArg ?? "eu-central-1";
   const webhookUrl = resolveWebhookUrl(config.SUPABASE_URL, config.TELEGRAM_WEBHOOK_URL, targetRegion);
   const dropPending = process.argv.includes("--drop-pending");
 

@@ -306,8 +306,8 @@ describe("handleTelegramWebhook", () => {
 describe("getSbRegion", () => {
   it("forceFunctionRegion query parametri bo'lsa uni aniqlaydi", async () => {
     const { getSbRegion } = await import("../src/webhook/telegram-handler.js");
-    const req = new Request("https://example.supabase.co/functions/v1/telegram-webhook?forceFunctionRegion=ap-southeast-2");
-    expect(getSbRegion(req)).toBe("ap-southeast-2");
+    const req = new Request("https://example.supabase.co/functions/v1/telegram-webhook?forceFunctionRegion=eu-central-1");
+    expect(getSbRegion(req)).toBe("eu-central-1");
   });
 
   it("x-sb-edge-region header bo'lsa uni aniqlaydi", async () => {

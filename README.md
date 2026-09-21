@@ -155,8 +155,8 @@ Telegram inline buttonlari bosilganda foydalanuvchiga 2–3 soniyalik kechikish 
 3. **Request-Scoped Cache**:
    - Bitta Telegram harakati davomida `sessionUser` va `managedClubs` qayta-qayta DB ga so'rov yubormaydi.
 
-4. **Regional Invocation (`ap-southeast-2`)**:
-   - Supabase Edge Functions webhook URL `?forceFunctionRegion=ap-southeast-2` parametri bilan database regioniga (Sidney) yaqin joylashgan isolate'da ishlaydi.
+4. **Regional Invocation (`eu-central-1`)**:
+   - Supabase Edge Functions webhook URL `?forceFunctionRegion=eu-central-1` parametri bilan database regioniga (Frankfurt) yaqin joylashgan isolate'da ishlaydi.
 
 5. **Edge Function Warmup Cron (`GET /?warmup=1`)**:
    - Supabase `pg_cron` har 10 daqiqada `GET /?warmup=1` chaqirib, Deno isolate'ni issiq (warm) holatda ushlab turadi.
@@ -178,7 +178,7 @@ Har bir update uchun Supabase Logs bo'limida quyidagi structured JSON log yozila
 - `db_ms`: Database va RPC querylarining jami vaqti
 - `telegram_api_ms`: Telegram API (sendMessage / editMessageText) vaqti
 - `total_ms`: update'ni to'liq yakunlash vaqti
-- `SB_REGION`: Edge Function ishlagan mintaqa (masalan `ap-southeast-2`)
+- `SB_REGION`: Edge Function ishlagan mintaqa (masalan `eu-central-1`)
 
 ---
 

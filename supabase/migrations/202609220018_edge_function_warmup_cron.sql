@@ -31,7 +31,7 @@ select cron.schedule(
   '*/10 * * * *',
   $$
   select net.http_get(
-    url := 'https://ogwosvgwtxzemrhaiyfj.supabase.co/functions/v1/telegram-webhook?warmup=1&forceFunctionRegion=ap-southeast-2',
+    url := 'https://fcwonehtpuyzdyuxcvre.supabase.co/functions/v1/telegram-webhook?warmup=1&forceFunctionRegion=eu-central-1',
     headers := jsonb_build_object('User-Agent', 'Supabase-Warmup-Cron/1.0')
   );
   $$

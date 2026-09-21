@@ -19,7 +19,7 @@ describe("resolveWebhookUrl", () => {
   });
 
   it("forceRegion ko'rsatilganda forceFunctionRegion query parametri qo'shiladi", () => {
-    const url = resolveWebhookUrl("https://xyzcompany.supabase.co", undefined, "ap-southeast-2");
-    expect(url).toBe("https://xyzcompany.supabase.co/functions/v1/telegram-webhook?forceFunctionRegion=ap-southeast-2");
+    const url = resolveWebhookUrl("https://xyzcompany.supabase.co", undefined, "eu-central-1");
+    expect(url).toBe("https://xyzcompany.supabase.co/functions/v1/telegram-webhook?forceFunctionRegion=eu-central-1");
   });
 });
