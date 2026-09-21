@@ -280,3 +280,35 @@ describe("handleTelegramWebhook", () => {
   });
 });
 
+describe("getSbRegion", () => {
+  it("forceFunctionRegion query parametri bo'lsa uni aniqlaydi", async () => {
+    const { getSbRegion } = await import("../src/webhook/telegram-handler.js");
+    const req = new Request("https://example.supabase.co/functions/v1/telegram-webhook?forceFunctionRegion=ap-southeast-2");
+    expect(getSbRegion(req)).toBe("ap-southeast-2");
+  });
+
+  it("x-sb-edge-region header bo'lsa uni aniqlaydi", async () => {
+    const { getSbRegion } = await import("../src/webhook/telegram-handler.js");
+    const req = new Request("https://example.supabase.co/functions/v1/telegram-webhook", {
+      headers: { "x-sb-edge-region": "eu-central-1" },
+    });
+    expect(getSbRegion(req)).toBe("eu-central-1");
+  });
+});
+
+describe("categorizeDurations", () => {
+  it("bosqichlarni DB/RPC va Telegram API turlariga to'g'ri ajratadi", async () => {
+    const { categorizeDurations } = await import("../src/webhook/telegram-handler.js");
+    const stages = {
+      idempotency_claim: 25.5,
+      user_start_state_rpc: 45.2,
+      "telegram_api:sendMessage": 120.3,
+      bot_init: 0.1,
+    };
+    const result = categorizeDurations(stages);
+    expect(result.databaseRpcDurationMs).toBe(70.7);
+    expect(result.telegramApiDurationMs).toBe(120.3);
+  });
+});
+
+

@@ -181,7 +181,6 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
       const profiler = bot.__currentProfiler;
       if (profiler) {
         profiler.record(`telegram_api:${method}`, elapsed);
-        profiler.record("telegram_api", elapsed);
       }
     }
   });
@@ -211,6 +210,7 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
     }
   };
   bot.use(async (context, next) => {
+    context.profiler = bot.__currentProfiler;
     if (!context.from) return next();
     const user = await getContextUser(context);
     if (user.is_blocked && !isAdmin(context.from.id)) {
@@ -1793,6 +1793,41 @@ async function ensureBotInitialized(bot) {
   }
   await promise;
 }
+function getSbRegion(req) {
+  if (typeof Deno !== "undefined" && typeof Deno.env?.get === "function") {
+    const denoRegion = Deno.env.get("SB_REGION");
+    if (denoRegion) return denoRegion;
+  }
+  if (typeof process !== "undefined" && process.env?.SB_REGION) {
+    return process.env.SB_REGION;
+  }
+  if (req) {
+    const headerRegion = req.headers.get("x-sb-edge-region") || req.headers.get("x-region");
+    if (headerRegion) return headerRegion;
+    try {
+      const url = new URL(req.url);
+      const forced = url.searchParams.get("forceFunctionRegion");
+      if (forced) return forced;
+    } catch {
+    }
+  }
+  return "unknown";
+}
+function categorizeDurations(stages) {
+  let databaseRpcDurationMs = 0;
+  let telegramApiDurationMs = 0;
+  for (const [stage, duration] of Object.entries(stages)) {
+    if (stage.startsWith("telegram_api")) {
+      telegramApiDurationMs += duration;
+    } else if (stage.startsWith("idempotency") || stage.includes("rpc") || stage.includes("user_") || stage.includes("manager_") || stage.includes("league_") || stage.includes("db") || stage.includes("query") || stage.includes("fixture") || stage.includes("squad") || stage.includes("tactics")) {
+      databaseRpcDurationMs += duration;
+    }
+  }
+  return {
+    databaseRpcDurationMs: Number(databaseRpcDurationMs.toFixed(2)),
+    telegramApiDurationMs: Number(telegramApiDurationMs.toFixed(2))
+  };
+}
 async function handleTelegramWebhook(req, deps) {
   const profiler = new RequestProfiler();
   deps.bot.__currentProfiler = profiler;
@@ -1847,29 +1882,39 @@ async function handleTelegramWebhook(req, deps) {
       void completePromise;
     }
     const metrics = profiler.getMetrics();
+    const sbRegion = getSbRegion(req);
+    const { databaseRpcDurationMs, telegramApiDurationMs } = categorizeDurations(metrics.stages);
     deps.logger.info(
       {
         event: "telegram_update_profiled",
-        updateId: update.update_id,
-        totalDurationMs: metrics.totalDurationMs,
+        update_id: update.update_id,
+        SB_REGION: sbRegion,
+        total_duration_ms: metrics.totalDurationMs,
+        database_rpc_duration_ms: databaseRpcDurationMs,
+        telegram_api_duration_ms: telegramApiDurationMs,
         stages: metrics.stages
       },
-      `Telegram update processed in ${metrics.totalDurationMs}ms`
+      `[${sbRegion}] Telegram update ${update.update_id} processed in ${metrics.totalDurationMs}ms (DB/RPC: ${databaseRpcDurationMs}ms, Telegram API: ${telegramApiDurationMs}ms)`
     );
     return Response.json({ ok: true }, { status: 200 });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await markTelegramUpdateFailed(deps.database, update.update_id, message);
     const metrics = profiler.getMetrics();
+    const sbRegion = getSbRegion(req);
+    const { databaseRpcDurationMs, telegramApiDurationMs } = categorizeDurations(metrics.stages);
     deps.logger.error(
       {
         event: "telegram_update_processing_failed",
-        updateId: update.update_id,
-        totalDurationMs: metrics.totalDurationMs,
+        update_id: update.update_id,
+        SB_REGION: sbRegion,
+        total_duration_ms: metrics.totalDurationMs,
+        database_rpc_duration_ms: databaseRpcDurationMs,
+        telegram_api_duration_ms: telegramApiDurationMs,
         stages: metrics.stages,
         err: error
       },
-      "Telegram update processing failed"
+      `[${sbRegion}] Telegram update processing failed: ${message}`
     );
     return Response.json({ ok: false, error: message }, { status: 200 });
   }

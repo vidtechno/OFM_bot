@@ -106,8 +106,69 @@ export async function ensureBotInitialized(bot: Bot<Context>): Promise<void> {
   await promise;
 }
 
-// Declare EdgeRuntime global for waitUntil support in Supabase Functions
+// Declare Deno and EdgeRuntime globals for Supabase Functions
+declare const Deno: {
+  env: {
+    get(key: string): string | undefined;
+  };
+} | undefined;
+
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined;
+
+export function getSbRegion(req?: Request): string {
+  if (typeof Deno !== "undefined" && typeof Deno.env?.get === "function") {
+    const denoRegion = Deno.env.get("SB_REGION");
+    if (denoRegion) return denoRegion;
+  }
+  if (typeof process !== "undefined" && process.env?.SB_REGION) {
+    return process.env.SB_REGION;
+  }
+  if (req) {
+    const headerRegion = req.headers.get("x-sb-edge-region") || req.headers.get("x-region");
+    if (headerRegion) return headerRegion;
+
+    try {
+      const url = new URL(req.url);
+      const forced = url.searchParams.get("forceFunctionRegion");
+      if (forced) return forced;
+    } catch {
+      // ignore
+    }
+  }
+  return "unknown";
+}
+
+export function categorizeDurations(stages: Record<string, number>): {
+  databaseRpcDurationMs: number;
+  telegramApiDurationMs: number;
+} {
+  let databaseRpcDurationMs = 0;
+  let telegramApiDurationMs = 0;
+
+  for (const [stage, duration] of Object.entries(stages)) {
+    if (stage.startsWith("telegram_api")) {
+      telegramApiDurationMs += duration;
+    } else if (
+      stage.startsWith("idempotency") ||
+      stage.includes("rpc") ||
+      stage.includes("user_") ||
+      stage.includes("manager_") ||
+      stage.includes("league_") ||
+      stage.includes("db") ||
+      stage.includes("query") ||
+      stage.includes("fixture") ||
+      stage.includes("squad") ||
+      stage.includes("tactics")
+    ) {
+      databaseRpcDurationMs += duration;
+    }
+  }
+
+  return {
+    databaseRpcDurationMs: Number(databaseRpcDurationMs.toFixed(2)),
+    telegramApiDurationMs: Number(telegramApiDurationMs.toFixed(2)),
+  };
+}
 
 export async function handleTelegramWebhook(req: Request, deps: WebhookDependencies): Promise<Response> {
   const profiler = new RequestProfiler();
@@ -181,14 +242,20 @@ export async function handleTelegramWebhook(req: Request, deps: WebhookDependenc
     }
 
     const metrics = profiler.getMetrics();
+    const sbRegion = getSbRegion(req);
+    const { databaseRpcDurationMs, telegramApiDurationMs } = categorizeDurations(metrics.stages);
+
     deps.logger.info(
       {
         event: "telegram_update_profiled",
-        updateId: update.update_id,
-        totalDurationMs: metrics.totalDurationMs,
+        update_id: update.update_id,
+        SB_REGION: sbRegion,
+        total_duration_ms: metrics.totalDurationMs,
+        database_rpc_duration_ms: databaseRpcDurationMs,
+        telegram_api_duration_ms: telegramApiDurationMs,
         stages: metrics.stages,
       },
-      `Telegram update processed in ${metrics.totalDurationMs}ms`
+      `[${sbRegion}] Telegram update ${update.update_id} processed in ${metrics.totalDurationMs}ms (DB/RPC: ${databaseRpcDurationMs}ms, Telegram API: ${telegramApiDurationMs}ms)`
     );
 
     return Response.json({ ok: true }, { status: 200 });
@@ -197,15 +264,21 @@ export async function handleTelegramWebhook(req: Request, deps: WebhookDependenc
     await markTelegramUpdateFailed(deps.database, update.update_id, message);
 
     const metrics = profiler.getMetrics();
+    const sbRegion = getSbRegion(req);
+    const { databaseRpcDurationMs, telegramApiDurationMs } = categorizeDurations(metrics.stages);
+
     deps.logger.error(
       {
         event: "telegram_update_processing_failed",
-        updateId: update.update_id,
-        totalDurationMs: metrics.totalDurationMs,
+        update_id: update.update_id,
+        SB_REGION: sbRegion,
+        total_duration_ms: metrics.totalDurationMs,
+        database_rpc_duration_ms: databaseRpcDurationMs,
+        telegram_api_duration_ms: telegramApiDurationMs,
         stages: metrics.stages,
         err: error,
       },
-      "Telegram update processing failed"
+      `[${sbRegion}] Telegram update processing failed: ${message}`
     );
 
     // Return 200 to acknowledge Telegram, avoiding retry storms for application-level issues

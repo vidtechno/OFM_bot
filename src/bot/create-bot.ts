@@ -83,7 +83,6 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
       const profiler: RequestProfiler | undefined = (bot as any).__currentProfiler;
       if (profiler) {
         profiler.record(`telegram_api:${method}`, elapsed);
-        profiler.record("telegram_api", elapsed);
       }
     }
   });
@@ -114,6 +113,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
   const sendUpdate=async(telegramId:number|null,text:string,keyboard:InlineKeyboard):Promise<void>=>{if(!telegramId)return;try{await bot.api.sendMessage(telegramId,text,{reply_markup:keyboard});}catch(error){logger.warn({event:"transfer_notification_failed",err:error},"Transfer notification failed");}};
 
   bot.use(async(context,next)=>{
+    (context as any).profiler = (bot as any).__currentProfiler;
     if(!context.from)return next();
     const user = await getContextUser(context);
     if(user.is_blocked&&!isAdmin(context.from.id)){

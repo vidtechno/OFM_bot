@@ -1,11 +1,19 @@
 import { loadConfig } from "../config/env.js";
 
-export function resolveWebhookUrl(supabaseUrl: string, explicitUrl?: string): string {
+export function resolveWebhookUrl(
+  supabaseUrl: string,
+  explicitUrl?: string,
+  forceRegion?: string
+): string {
   if (explicitUrl && explicitUrl.trim().length > 0) {
     return explicitUrl.trim();
   }
   const cleanUrl = supabaseUrl.replace(/\/+$/, "");
-  return `${cleanUrl}/functions/v1/telegram-webhook`;
+  const base = `${cleanUrl}/functions/v1/telegram-webhook`;
+  if (forceRegion && forceRegion.trim().length > 0) {
+    return `${base}?forceFunctionRegion=${encodeURIComponent(forceRegion.trim())}`;
+  }
+  return base;
 }
 
 export interface WebhookInfoResult {
@@ -72,7 +80,9 @@ async function main(): Promise<void> {
   }
 
   const config = loadConfig();
-  const webhookUrl = resolveWebhookUrl(config.SUPABASE_URL, config.TELEGRAM_WEBHOOK_URL);
+  const regionArg = process.argv.find((arg) => arg.startsWith("--region="))?.split("=")[1];
+  const targetRegion = regionArg ?? "ap-southeast-2";
+  const webhookUrl = resolveWebhookUrl(config.SUPABASE_URL, config.TELEGRAM_WEBHOOK_URL, targetRegion);
   const dropPending = process.argv.includes("--drop-pending");
 
   if (command === "set") {
