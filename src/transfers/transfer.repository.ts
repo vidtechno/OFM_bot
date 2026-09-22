@@ -11,6 +11,9 @@ export interface MarketPlayer {
   askingPrice: number;
   availableUntil: string;
   sellerName?: string;
+  sellerClubId?: string | null;
+  clubPlayerId?: string | null;
+  isOwnListing?: boolean;
 }
 
 export interface LeagueTransferClub {
@@ -35,6 +38,9 @@ export interface TransferTarget {
   marketValue: number;
   age?: number;
   nationality?: string;
+  isStarting?: boolean;
+  isListed?: boolean;
+  listingId?: string;
 }
 
 export interface IncomingOffer {
@@ -129,15 +135,87 @@ export class TransferRepository {
     pageSize = 8,
     positionGroup = "ALL"
   ): Promise<MarketPlayer[]> {
-    await this.ownerLeague(userId, clubId);
+    const owner = await this.ownerLeague(userId, clubId);
+
+    // Fetch player_ids already in this league instance so they are not offered again
+    const { data: existingCp } = await this.database
+      .from("club_players")
+      .select("player_id, league_clubs!inner(league_instance_id)")
+      .eq("league_clubs.league_instance_id", owner.league_instance_id);
+
+    const existingPlayerSet = new Set(
+      (existingCp ?? [])
+        .map((cp: any) => cp.player_id)
+        .filter(Boolean)
+    );
 
     let query = this.database
       .from("global_market_listings")
       .select(
-        "id, asking_price, available_until, players!inner(short_name, age, primary_position, player_attributes!inner(overall)), clubs:seller_club_id(name)"
+        "id, asking_price, available_until, seller_name, player_id, players!inner(short_name, age, primary_position, player_attributes!inner(overall))"
       )
       .eq("status", "ACTIVE")
+      .is("club_player_id", null)
+      .gt("available_until", new Date().toISOString())
       .order("asking_price", { ascending: false });
+
+    if (positionGroup !== "ALL") {
+      const posMap: Record<string, string[]> = {
+        GK: ["GK"],
+        DEF: ["CB", "LB", "RB", "RWB", "LWB"],
+        MID: ["CM", "CDM", "CAM", "LM", "RM"],
+        ATT: ["ST", "CF", "RW", "LW"],
+      };
+      const allowed = posMap[positionGroup];
+      if (allowed) {
+        query = query.in("players.primary_position", allowed);
+      }
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const filtered = (data ?? []).filter((row: any) => !existingPlayerSet.has(row.player_id));
+    const from = page * pageSize;
+    const paged = filtered.slice(from, from + pageSize);
+
+    return paged.map((row: any) => {
+      const player = one<any>(row.players);
+      return {
+        listingId: row.id,
+        name: player.short_name,
+        age: player.age,
+        position: player.primary_position,
+        overall: one<any>(player.player_attributes)?.overall ?? 75,
+        askingPrice: Number(row.asking_price),
+        availableUntil: row.available_until,
+        sellerName: row.seller_name ?? "Global Market",
+      };
+    });
+  }
+
+  /**
+   * Fetches In-League Transfer Market listings (players listed for sale by clubs in the same league).
+   */
+  async leagueMarket(
+    userId: string,
+    clubId: string,
+    page = 0,
+    pageSize = 8,
+    positionGroup = "ALL"
+  ): Promise<MarketPlayer[]> {
+    const owner = await this.ownerLeague(userId, clubId);
+
+    let query = this.database
+      .from("global_market_listings")
+      .select(
+        "id, asking_price, available_until, seller_name, seller_club_id, club_player_id, players!inner(short_name, age, primary_position, player_attributes!inner(overall)), seller_club:league_clubs!seller_club_id!inner(league_instance_id)"
+      )
+      .eq("status", "ACTIVE")
+      .not("club_player_id", "is", null)
+      .eq("seller_club.league_instance_id", owner.league_instance_id)
+      .gt("available_until", new Date().toISOString())
+      .order("created_at", { ascending: false });
 
     if (positionGroup !== "ALL") {
       const posMap: Record<string, string[]> = {
@@ -158,29 +236,31 @@ export class TransferRepository {
 
     return (data ?? []).map((row: any) => {
       const player = one<any>(row.players);
-      const sellerClub = row.clubs ? one<any>(row.clubs).name : undefined;
       return {
         listingId: row.id,
         name: player.short_name,
         age: player.age,
         position: player.primary_position,
-        overall: one<any>(player.player_attributes).overall,
+        overall: one<any>(player.player_attributes)?.overall ?? 75,
         askingPrice: Number(row.asking_price),
         availableUntil: row.available_until,
-        sellerName: sellerClub,
+        sellerName: row.seller_name ?? "Liga klubi",
+        sellerClubId: row.seller_club_id,
+        clubPlayerId: row.club_player_id,
+        isOwnListing: row.seller_club_id === clubId,
       };
     });
   }
 
   /**
-   * Fetches full profile for a single market listing.
+   * Fetches full profile for a single market listing (either global or in-league).
    */
   async listing(userId: string, clubId: string, listingId: string): Promise<MarketPlayer | null> {
     await this.ownerLeague(userId, clubId);
     const { data, error } = await this.database
       .from("global_market_listings")
       .select(
-        "id, asking_price, available_until, players!inner(short_name, age, primary_position, player_attributes!inner(overall)), clubs:seller_club_id(name)"
+        "id, asking_price, available_until, seller_name, seller_club_id, club_player_id, players!inner(short_name, age, primary_position, player_attributes!inner(overall))"
       )
       .eq("id", listingId)
       .eq("status", "ACTIVE")
@@ -188,37 +268,37 @@ export class TransferRepository {
 
     if (error || !data) return null;
     const player = one<any>(data.players);
-    const sellerClub = data.clubs ? one<any>(data.clubs).name : undefined;
     return {
       listingId: data.id,
       name: player.short_name,
       age: player.age,
       position: player.primary_position,
-      overall: one<any>(player.player_attributes).overall,
+      overall: one<any>(player.player_attributes)?.overall ?? 75,
       askingPrice: Number(data.asking_price),
       availableUntil: data.available_until,
-      sellerName: sellerClub,
+      sellerName: data.seller_name ?? "Global Market",
+      sellerClubId: data.seller_club_id,
+      clubPlayerId: data.club_player_id,
+      isOwnListing: data.seller_club_id === clubId,
     };
   }
 
   /**
-   * Purchases an external star from the Global Market atomically via RPC.
+   * Purchases a player listing (global star or in-league player) atomically via RPC.
    */
   async buy(
     userId: string,
     buyerClubId: string,
     listingId: string
   ): Promise<{ status: "ACCEPTED" | "REJECTED" | "COUNTERED"; counterAmount?: number }> {
-    const { data, error } = await this.database.rpc("buy_global_player", {
+    const { error } = await this.database.rpc("buy_global_player", {
       p_user_id: userId,
       p_buyer_club_id: buyerClubId,
       p_listing_id: listingId,
     });
 
-    if (error) throw error;
-    const result = data?.[0];
-    if (!result?.success) {
-      throw new Error(result?.error_code ?? "TRANSFER_FAILED");
+    if (error) {
+      throw new Error(error.message ?? "TRANSFER_FAILED");
     }
 
     return { status: "ACCEPTED" };
@@ -226,17 +306,31 @@ export class TransferRepository {
 
   /**
    * Lists players owned by the club that can be put up for sale.
+   * Includes starting XI flag and active listing information.
    */
-  async saleCandidates(userId: string, clubId: string): Promise<TransferTarget[]> {
+  async saleCandidates(
+    userId: string,
+    clubId: string
+  ): Promise<(TransferTarget & { isStarting: boolean; isListed: boolean; listingId?: string })[]> {
     await this.ownerLeague(userId, clubId);
-    const { data, error } = await this.database
-      .from("club_players")
-      .select(
-        "id, resale_locked_until, is_starting, players!inner(short_name, primary_position, market_value, age, nationality, player_attributes!inner(overall)), league_clubs!inner(league_instance_id, clubs!inner(name))"
-      )
-      .eq("league_club_id", clubId);
+    const [{ data, error }, { data: activeListings, error: listingsError }] = await Promise.all([
+      this.database
+        .from("club_players")
+        .select(
+          "id, resale_locked_until, is_starting, players!inner(short_name, primary_position, market_value, age, nationality, player_attributes!inner(overall)), league_clubs!inner(league_instance_id, clubs!inner(name))"
+        )
+        .eq("league_club_id", clubId),
+      this.database
+        .from("global_market_listings")
+        .select("id, club_player_id")
+        .eq("seller_club_id", clubId)
+        .eq("status", "ACTIVE"),
+    ]);
 
     if (error) throw error;
+    if (listingsError) throw listingsError;
+
+    const listedMap = new Map((activeListings ?? []).map((l: any) => [l.club_player_id, l.id]));
     const now = new Date();
 
     return (data ?? [])
@@ -245,6 +339,7 @@ export class TransferRepository {
         const player = one<any>(row.players);
         const leagueClub = one<any>(row.league_clubs);
         const club = one<any>(leagueClub.clubs);
+        const listingId = listedMap.get(row.id);
         return {
           clubPlayerId: row.id,
           name: player.short_name,
@@ -252,10 +347,13 @@ export class TransferRepository {
           targetClubId: clubId,
           leagueInstanceId: leagueClub.league_instance_id,
           position: player.primary_position,
-          overall: one<any>(player.player_attributes).overall,
+          overall: one<any>(player.player_attributes)?.overall ?? 75,
           marketValue: Number(player.market_value),
           age: player.age,
           nationality: player.nationality,
+          isStarting: Boolean(row.is_starting),
+          isListed: Boolean(listingId),
+          listingId: listingId ?? undefined,
         };
       })
       .sort((a, b) => b.overall - a.overall);
@@ -366,7 +464,8 @@ export class TransferRepository {
 
   async listForSale(userId: string, clubId: string, clubPlayerId: string, askingPrice: number): Promise<void> {
     const candidates = await this.saleCandidates(userId, clubId);
-    if (!candidates.some((player) => player.clubPlayerId === clubPlayerId)) {
+    const candidate = candidates.find((player) => player.clubPlayerId === clubPlayerId);
+    if (!candidate) {
       throw new Error("PLAYER_NOT_AVAILABLE");
     }
     const { count, error: countError } = await this.database
@@ -377,11 +476,50 @@ export class TransferRepository {
     if (countError) throw countError;
     if ((count ?? 0) <= 18) throw new Error("SELLER_MIN_SQUAD");
 
+    const { data: cp, error: cpError } = await this.database
+      .from("club_players")
+      .select("player_id, league_clubs!inner(clubs!inner(name))")
+      .eq("id", clubPlayerId)
+      .single();
+
+    if (cpError || !cp) throw new Error("PLAYER_NOT_FOUND");
+    const sellerClubName = one<any>(cp.league_clubs)?.clubs?.name ?? "Klub";
+
+    const availableUntil = new Date(Date.now() + 48 * 3600 * 1000).toISOString();
     const { error } = await this.database.from("global_market_listings").insert({
       club_player_id: clubPlayerId,
+      player_id: cp.player_id,
       seller_club_id: clubId,
+      seller_name: sellerClubName,
       asking_price: askingPrice,
+      available_until: availableUntil,
+      status: "ACTIVE",
     });
+    if (error) throw error;
+  }
+
+  /**
+   * Delists an active player listing owned by the club.
+   */
+  async delist(userId: string, clubId: string, listingId: string): Promise<void> {
+    await this.ownerLeague(userId, clubId);
+    const { data: listing, error: findError } = await this.database
+      .from("global_market_listings")
+      .select("id, seller_club_id, status")
+      .eq("id", listingId)
+      .eq("seller_club_id", clubId)
+      .eq("status", "ACTIVE")
+      .maybeSingle();
+
+    if (findError || !listing) {
+      throw new Error("LISTING_NOT_FOUND");
+    }
+
+    const { error } = await this.database
+      .from("global_market_listings")
+      .update({ status: "CANCELLED" })
+      .eq("id", listingId);
+
     if (error) throw error;
   }
 

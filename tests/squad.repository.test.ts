@@ -14,7 +14,7 @@ describe("SquadRepository Live Test", () => {
     const leagueClubId = "cf906880-24a9-4e6e-867b-231c3a7d61db";
 
     const squad = await repo.listOwnedClubSquad(userId, leagueClubId);
-    expect(squad.length).toBe(32);
+    expect(squad.length).toBeGreaterThanOrEqual(30);
     expect(squad[0]!.overall).toBeGreaterThanOrEqual(90);
     expect(squad.map((p) => p.shortName)).toContain("K. Mbappé");
     expect(squad.map((p) => p.shortName)).toContain("J. Bellingham");

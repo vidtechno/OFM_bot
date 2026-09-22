@@ -15,7 +15,11 @@ export class MatchRepository {
 
   private async team(clubId: string): Promise<MatchTeamInput> {
     const [{ data: tactic, error: tacticError }, { data: lineup, error: lineupError }] = await Promise.all([
-      this.database.from("tactics").select("mentality,pressing,tempo").eq("league_club_id", clubId).single(),
+      this.database
+        .from("tactics")
+        .select("mentality,pressing,tempo,defensive_line,width,passing_style,attack_focus,tackling")
+        .eq("league_club_id", clubId)
+        .single(),
       this.database.from("lineups").select("lineup_players(effective_rating)").eq("league_club_id", clubId).single(),
     ]);
     if (tacticError) throw tacticError;
@@ -24,9 +28,20 @@ export class MatchRepository {
     if (ratings.length < 11) {
       const { data, error } = await this.database.from("club_players").select("players!inner(player_attributes!inner(overall))").eq("league_club_id", clubId);
       if (error) throw error;
-      ratings = (data ?? []).map((row: any) => Number(first<any>(first<any>(row.players).player_attributes).overall)).sort((a: number,b: number)=>b-a).slice(0,11);
+      ratings = (data ?? []).map((row: any) => Number(first<any>(first<any>(row.players).player_attributes).overall)).sort((a: number, b: number) => b - a).slice(0, 11);
     }
-    return { clubId, strength: ratings.reduce((sum: number, rating: number) => sum + rating, 0) / Math.max(1, ratings.length), mentality: tactic.mentality, pressing: tactic.pressing, tempo: tactic.tempo };
+    return {
+      clubId,
+      strength: ratings.reduce((sum: number, rating: number) => sum + rating, 0) / Math.max(1, ratings.length),
+      mentality: tactic.mentality,
+      pressing: tactic.pressing,
+      tempo: tactic.tempo,
+      defensiveLine: tactic.defensive_line,
+      width: tactic.width,
+      passingStyle: tactic.passing_style,
+      attackFocus: tactic.attack_focus,
+      tackling: tactic.tackling,
+    };
   }
 
   async due(limit = 20): Promise<DueMatch[]> {
@@ -36,11 +51,93 @@ export class MatchRepository {
   }
 
   async complete(fixtureId: string, simulation: MatchSimulation): Promise<string> {
-    const { data, error } = await this.database.rpc("complete_match", { p_fixture_id: fixtureId, p_home_goals: simulation.homeGoals, p_away_goals: simulation.awayGoals, p_stats: simulation.stats, p_events: simulation.events, p_engine_version: "v1" });
-    if (error) throw error;const matchId=data as string;await this.recordPlayerStats(matchId);return matchId;
+    const { data, error } = await this.database.rpc("complete_match", {
+      p_fixture_id: fixtureId,
+      p_home_goals: simulation.homeGoals,
+      p_away_goals: simulation.awayGoals,
+      p_stats: simulation.stats,
+      p_events: simulation.events,
+      p_engine_version: "v2",
+    });
+    if (error) throw error;
+    const matchId = data as string;
+    await this.recordPlayerStats(matchId);
+    await this.checkSeasonCompletion(matchId);
+    return matchId;
   }
 
-  private async recordPlayerStats(matchId:string):Promise<void>{
+  private async checkSeasonCompletion(matchId: string): Promise<void> {
+    const { data: match } = await this.database
+      .from("matches")
+      .select("league_instance_id")
+      .eq("id", matchId)
+      .maybeSingle();
+
+    if (!match?.league_instance_id) return;
+    const instanceId = match.league_instance_id;
+
+    // Check if any fixtures are left scheduled
+    const { count, error: countErr } = await this.database
+      .from("fixtures")
+      .select("id", { count: "exact", head: true })
+      .eq("league_instance_id", instanceId)
+      .eq("status", "SCHEDULED");
+
+    if (countErr || (count ?? 0) > 0) return;
+
+    // All fixtures played! Mark league completed
+    await this.database
+      .from("league_instances")
+      .update({ status: "COMPLETED" })
+      .eq("id", instanceId)
+      .neq("status", "COMPLETED");
+
+    // Crown champion and update manager profiles
+    const { data: table } = await this.database
+      .from("league_clubs")
+      .select("id, manager_user_id, points, goals_for, goals_against")
+      .eq("league_instance_id", instanceId);
+
+    if (!table || !table.length) return;
+
+    const ordered = table.sort(
+      (a: any, b: any) =>
+        b.points - a.points ||
+        (b.goals_for - b.goals_against) - (a.goals_for - a.goals_against) ||
+        b.goals_for - a.goals_for
+    );
+
+    const champion = ordered[0];
+    if (champion?.manager_user_id) {
+      try {
+        const { error } = await this.database.rpc("award_championship", {
+          p_user_id: champion.manager_user_id,
+          p_league_instance_id: instanceId,
+        });
+        if (error) throw error;
+      } catch {
+        // Fallback update direct
+        const { data: prof } = await this.database
+          .from("manager_profiles")
+          .select("titles, seasons, manager_rating")
+          .eq("user_id", champion.manager_user_id)
+          .maybeSingle();
+
+        if (prof) {
+          await this.database
+            .from("manager_profiles")
+            .update({
+              titles: (prof.titles ?? 0) + 1,
+              seasons: (prof.seasons ?? 0) + 1,
+              manager_rating: (prof.manager_rating ?? 1500) + 100,
+            })
+            .eq("user_id", champion.manager_user_id);
+        }
+      }
+    }
+  }
+
+  private async recordPlayerStats(matchId: string): Promise<void> {
     const {data:match,error:matchError}=await this.database.from("matches").select("home_club_id,away_club_id,home_goals,away_goals").eq("id",matchId).single();if(matchError)throw matchError;
     const assign=async(clubId:string,goals:number)=>{if(!goals)return;const[{data,error},{data:events,error:eventError}]=await Promise.all([this.database.from("club_players").select("players!inner(id,primary_position,player_attributes!inner(overall))").eq("league_club_id",clubId),this.database.from("match_events").select("id").eq("match_id",matchId).eq("club_id",clubId).eq("event_type","GOAL").order("minute")]);if(error)throw error;if(eventError)throw eventError;const players=(data??[]).map((row:any)=>{const player=first<any>(row.players);return{id:player.id,position:player.primary_position,overall:Number(first<any>(player.player_attributes).overall)}}).sort((a,b)=>{const weight=(p:string)=>p==="ST"?4:p==="LW"||p==="RW"||p==="CAM"?3:p==="CM"||p==="LM"||p==="RM"?2:1;return weight(b.position)*100+b.overall-(weight(a.position)*100+a.overall);});if(!players.length)return;const rows=new Map<string,{match_id:string;player_id:string;club_id:string;minutes:number;goals:number;assists:number}>();for(let index=0;index<goals;index+=1){const scorer=players[index%Math.min(3,players.length)]!,assistant=players.find(player=>player.id!==scorer.id&&["LW","RW","CAM","CM","LM","RM"].includes(player.position))??players[(index+1)%players.length]!;const scorerRow=rows.get(scorer.id)??{match_id:matchId,player_id:scorer.id,club_id:clubId,minutes:90,goals:0,assists:0};scorerRow.goals++;rows.set(scorer.id,scorerRow);if(assistant.id!==scorer.id){const assistantRow=rows.get(assistant.id)??{match_id:matchId,player_id:assistant.id,club_id:clubId,minutes:90,goals:0,assists:0};assistantRow.assists++;rows.set(assistant.id,assistantRow);}const event=events?.[index];if(event){const{error:updateError}=await this.database.from("match_events").update({player_id:scorer.id,metadata:{assist_player_id:assistant.id}}).eq("id",event.id);if(updateError)throw updateError;}}const{error:insertError}=await this.database.from("player_match_stats").upsert([...rows.values()],{onConflict:"match_id,player_id"});if(insertError)throw insertError;};await Promise.all([assign(match.home_club_id,match.home_goals),assign(match.away_club_id,match.away_goals)]);
   }

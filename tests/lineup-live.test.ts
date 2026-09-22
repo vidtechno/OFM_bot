@@ -14,6 +14,8 @@ describe("Tactics & Lineup Live Test", () => {
     const userId = "18440ffe-693d-4845-a14f-ee4aed6ba50e";
     const clubId = "cf906880-24a9-4e6e-867b-231c3a7d61db";
 
+    const tactic = await tactics.get(userId, clubId);
+    await tactics.autoSave(userId, clubId, tactic.formationCode);
     const lineup = await tactics.lineup(userId, clubId);
     expect(lineup.players.length).toBe(11);
     expect(new Set(lineup.players.map((p) => p.clubPlayerId)).size).toBe(11);

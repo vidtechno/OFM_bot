@@ -62,6 +62,19 @@ export function formatMarket(players: MarketPlayer[]): string {
     : "🌍 GLOBAL TRANSFER MARKET\n\nHozir faol listing yo‘q.";
 }
 
+export function formatLeagueMarket(players: MarketPlayer[]): string {
+  return players.length
+    ? [
+        "🛒 LIGA TRANSFER BOZORI",
+        "",
+        ...players.map(
+          (p, i) =>
+            `${i + 1}. ${p.name} (${p.sellerName ?? "Klub"}) — ${p.position} — ⭐${p.overall} — ${transferMoney(p.askingPrice)}${p.isOwnListing ? " 🏷 [Sizniki]" : ""}`
+        ),
+      ].join("\n")
+    : "🛒 LIGA TRANSFER BOZORI\n\nHozirda ushbu ligada sotuvga qo‘yilgan futbolchilar yo‘q.\nKlubingiz futbolchisini sotuvga qo‘yish uchun «📤 Futbolchi sotish» bo‘limidan foydalaning.";
+}
+
 export function formatListing(p: MarketPlayer): string {
   return [
     "🌍 GLOBAL TRANSFER",
@@ -72,6 +85,23 @@ export function formatListing(p: MarketPlayer): string {
     `💰 Narxi: ${transferMoney(p.askingPrice)}`,
     "",
     "Xarid darhol amalga oshadi va futbolchi klubingiz tarkibiga qo‘shiladi.",
+  ].join("\n");
+}
+
+export function formatLeagueListing(p: MarketPlayer): string {
+  return [
+    "🛒 LIGA TRANSFERI",
+    "",
+    `⚽ ${p.name}`,
+    `🏟 Sotuvchi klub: ${p.sellerName ?? "Liga klubi"}`,
+    `📍 Amplua: ${p.position}`,
+    `⭐ Mahorat: ⭐${p.overall}`,
+    `🎂 Yoshi: ${p.age} yosh`,
+    `💰 Narxi: ${transferMoney(p.askingPrice)}`,
+    "",
+    p.isOwnListing
+      ? "ℹ️ Bu sizning sotuvga qo‘ygan futbolchingiz."
+      : "Xarid amalga oshgach, mablag‘ sotuvchi klubga o‘tkaziladi va futbolchi tarkibingizga qo‘shiladi.",
   ].join("\n");
 }
 

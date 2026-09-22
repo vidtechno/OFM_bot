@@ -137,7 +137,72 @@ export class AiTransferEngine {
     const outgoingOffers: AiOutgoingOffer[] = [];
     let aiAiTransfers = 0;
 
-    // 1. Fetch active AI clubs
+    // 0. Proactive AI listings on the In-League Transfer Market
+    const { data: listingAiClubs } = await this.database
+      .from("league_clubs")
+      .select("id, league_instance_id, clubs!inner(name)")
+      .eq("manager_type", "AI")
+      .limit(8);
+
+    for (const aiClub of listingAiClubs ?? []) {
+      const { data: squad } = await this.database
+        .from("club_players")
+        .select("id, player_id, is_starting, resale_locked_until, players!inner(short_name, market_value, primary_position, player_attributes!inner(overall))")
+        .eq("league_club_id", aiClub.id);
+
+      if (!squad || squad.length <= 18) continue;
+
+      const candidates = squad.filter(
+        (cp) => !cp.is_starting && (!cp.resale_locked_until || new Date(cp.resale_locked_until) <= new Date())
+      );
+      if (!candidates.length) continue;
+
+      const candidateIds = candidates.map((c) => c.id);
+      const { data: existingListings } = await this.database
+        .from("global_market_listings")
+        .select("club_player_id")
+        .in("club_player_id", candidateIds)
+        .eq("status", "ACTIVE");
+
+      const alreadyListed = new Set((existingListings ?? []).map((l: any) => l.club_player_id));
+      const unlisted = candidates.filter((c) => !alreadyListed.has(c.id));
+
+      if (unlisted.length > 0) {
+        const toList = unlisted[0]!;
+        const player = toList.players as any;
+        const askingPrice = Math.round((Number(player.market_value) * 1.15) / 100_000) * 100_000;
+        const availableUntil = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+        const sellerClubName = (aiClub.clubs as any)?.name ?? "AI Club";
+
+        const { data: insertedListing } = await this.database.from("global_market_listings").insert({
+          club_player_id: toList.id,
+          player_id: toList.player_id,
+          seller_club_id: aiClub.id,
+          seller_name: sellerClubName,
+          asking_price: askingPrice,
+          available_until: availableUntil,
+          status: "ACTIVE",
+        }).select("id").maybeSingle();
+
+        if (insertedListing) {
+          await this.database.from("ai_decisions").insert({
+            league_club_id: aiClub.id,
+            action: "AI_SELL",
+            model: "gpt-4o-mini",
+            details: {
+              type: "MARKET_LISTING",
+              listingId: insertedListing.id,
+              playerName: player.short_name,
+              position: player.primary_position,
+              overall: player.player_attributes?.[0]?.overall ?? player.player_attributes?.overall ?? 75,
+              askingPrice,
+            },
+          });
+        }
+      }
+    }
+
+    // 1. Fetch active AI clubs for buyer activity
     const { data: aiClubs } = await this.database
       .from("league_clubs")
       .select("id, league_instance_id, transfer_budget, cash_balance, clubs!inner(name)")

@@ -12,6 +12,8 @@ import { simulateMatch } from "./matches/match-engine.js";
 import { TransferRepository } from "./transfers/transfer.repository.js";
 import { ProgressionRepository } from "./progression/progression.repository.js";
 import { AdminRepository } from "./admin/admin.repository.js";
+import { AiTransferEngine } from "./ai/ai-transfer-engine.js";
+import { OpenAiStrategyService } from "./ai/openai-strategy.service.js";
 import { InlineKeyboard } from "grammy";
 import { formatMatchReport } from "./matches/presentation.js";
 
@@ -27,6 +29,11 @@ async function main(): Promise<void> {
   const leagues = new LeagueRepository(database);
   const matchRepository = new MatchRepository(database);
   const transferRepository = new TransferRepository(database);
+  const aiTransferEngine = new AiTransferEngine(
+    database,
+    new OpenAiStrategyService(database, logger, { apiKey: config.OPENAI_API_KEY }),
+    logger
+  );
   const bot = createBot({
     token: config.TELEGRAM_BOT_TOKEN,
     users: new UserRepository(database),
@@ -78,7 +85,39 @@ async function main(): Promise<void> {
   const matchTimer = setInterval(() => void processMatches(), 60_000);
   matchTimer.unref();
   void processMatches();
-  const maintainTransfers=async():Promise<void>=>{try{await transferRepository.maintain();}catch(error:unknown){logger.error({event:"transfer_maintenance_failed",err:error},"Transfer maintenance failed");}};
+  const maintainTransfers = async (): Promise<void> => {
+    try {
+      await transferRepository.maintain();
+      const { outgoingOffers, aiAiTransfers } = await aiTransferEngine.runAiTransferCycle();
+      if (outgoingOffers.length || aiAiTransfers) {
+        logger.info(
+          { event: "ai_transfer_cycle_completed", outgoingOffers: outgoingOffers.length, aiAiTransfers },
+          "AI transfer cycle executed"
+        );
+      }
+      for (const offer of outgoingOffers) {
+        if (offer.sellerTelegramId) {
+          try {
+            await bot.api.sendMessage(
+              offer.sellerTelegramId,
+              `📩 YANGI TRANSFER TAKLIFI (AI KLUB)\n\n⚽ ${offer.playerName}\n🏟 Xaridor: ${offer.buyerClubName}\n💰 Taklif: €${(offer.amount / 1_000_000).toFixed(1)}M\n\nTaklifni ko‘rib chiqish uchun klubingiz transfer bo‘limiga kiring.`,
+              {
+                reply_markup: new InlineKeyboard()
+                  .text("✅ Qabul qilish", `ia:${offer.offerId}`)
+                  .text("❌ Rad etish", `ir:${offer.offerId}`)
+                  .row()
+                  .text("💬 Qarshi taklif", `ic:${offer.offerId}`),
+              }
+            );
+          } catch (err: unknown) {
+            logger.warn({ event: "ai_offer_notification_failed", offerId: offer.offerId, err }, "Could not notify seller");
+          }
+        }
+      }
+    } catch (error: unknown) {
+      logger.error({ event: "transfer_maintenance_failed", err: error }, "Transfer maintenance failed");
+    }
+  };
   const transferTimer=setInterval(()=>void maintainTransfers(),15*60_000);transferTimer.unref();void maintainTransfers();
   let globalLeagueSchedulerReady=true;
   const maintainGlobalLeagues=async():Promise<void>=>{if(!globalLeagueSchedulerReady)return;try{const created=await leagues.releaseScheduledGlobalLeagues();if(created)logger.info({event:"global_leagues_released",count:created},"Scheduled global leagues released");}catch(error:unknown){if((error as {code?:string}).code==="PGRST202"){globalLeagueSchedulerReady=false;logger.warn({event:"global_league_scheduler_waiting_for_migration"},"Global league scheduler is waiting for its database migration");return;}logger.error({event:"global_league_release_failed",err:error},"Scheduled global league release failed");}};
