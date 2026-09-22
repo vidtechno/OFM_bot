@@ -1,90 +1,78 @@
-# OFM Bot: Production Audit & Implementation Walkthrough
+# OFM Bot: Production Audit & Overhaul Walkthrough
 
 ## Executive Summary
-This production audit and implementation covers all 11 core areas requested for the OFM Telegram bot running against the live Frankfurt Supabase project (`fcwonehtpuyzdyuxcvre`, `eu-central-1`).
+This production update covers the complete overhaul of **Liga Lifecycle**, **Transfer System**, **Negotiation State Machine**, **Ghost Budget Bug Fix**, **Carlos Espí Visibility Bug Fix**, and **AI Schedulers** on the live Frankfurt Supabase project (`fcwonehtpuyzdyuxcvre`, `eu-central-1`).
 
 ---
 
-## 1. Transfer Market (In-League & Scoped Global)
-- **In-League Market (`lm:`)**:
-  - Implemented `leagueMarket(...)` and `leagueListing(...)` in [src/transfers/transfer.repository.ts](file:///Users/abdulaziz/Desktop/OFM%20%20bot/src/transfers/transfer.repository.ts).
-  - Position filters: `ALL`, `GK`, `DEF`, `MID`, `ATT`.
-  - Pagination (`lm:${page}:${group}`) with 8 players per page.
-  - Quick buy (`lc:${listingId}`) and delist (`ld:${listingId}`) actions.
-- **Global Market Scoping**:
-  - Fixed column `42703 (league_clubs_1.name does not exist)` error in `market()` and `listing()`.
-  - Added in-memory filtering against `existingPlayerSet` to prevent Undici HTTP header overflow errors from large `not.in` query strings.
-  - External players list exclusively stars not currently signed to any club in the user's league instance.
-- **Player Selling Flow**:
-  - Added Starting XI warning alert dialog (`[✅ Ha, sotuvga qo‘yish]` / `[❌ Bekor qilish]`).
-  - Added 3 preset percentage buttons (`+10%`, `+20%`, `+30%`) plus `[⌨️ Boshqa narx yozish]`.
-  - Added `[❌ Sotuvdan olish]` for active listings.
+## 1. League Lifecycle & Automated Lobbies
+- **Removal of Private League / Code Joining**:
+  - Removed "🔒 Private liga yaratish" (`pv`) and "🔑 Kod bilan qo‘shilish" (`pj`) from public bot menus.
+  - Users only join bot-created public leagues.
+- **Automated Open Lobbies**:
+  - 12-hour registration lobbies created automatically at **07:00** and **19:00** for Premier League and LaLiga.
+  - Automatically ensures at least 1 `OPEN` lobby with available clubs (<20 claimed) is always open for each competition via `ensure_open_lobby_available()` RPC.
+  - If a lobby fills to 20/20 human managers, registration closes immediately and a new open lobby is triggered.
+  - Verified live on Frankfurt DB:
+    - `LaLiga #2 (OPEN)`: closes at `2026-09-22T18:53:23.553651+00:00`.
+    - `Premier League #2 (OPEN)`: closes at `2026-09-22T18:53:23.553651+00:00`.
+- **Pre-Season Transfer Lock**:
+  - While a league has status `OPEN`, all transfer actions (Transfer Market purchases, offers via Ligadan izlash, Global Market, selling candidates) are strictly locked with notice:
+    `⏳ DIQQAT: Liga hali boshlanmagan (Pre-season). Barcha transferlar liga startidan keyin ochiladi.`
+  - Lineups, tactics, and squad browsing remain fully operational during pre-season.
 
 ---
 
-## 2. AI Transfer Engine (`gpt-4o-mini`)
-- **Proactive AI Listings**:
-  - AI clubs list surplus players (>25 squad size or backup depth).
-  - Listed 2 real surplus players with asking prices.
-- **AI Buying Cycles**:
-  - AI clubs evaluate squad gaps and make proactive offers to human managers.
-  - Verified live: AI made offers for `Carlos Espí` (€60.3M to Real Madrid) and `A. Sørloth` (€32.5M to Atlético Madrid).
-- **AI-to-AI Trades**:
-  - Automatic settlement of inter-AI club transfers during 6-hour cycles.
-  - Verified live: 1 AI-to-AI transfer completed and recorded.
-- **AI Decisions Tracking**:
-  - Recorded in `ai_decisions` table with model `gpt-4o-mini` and full action payload.
-- **Graceful Fallback**:
-  - Deterministic evaluation fallback if OpenAI API is unreachable or rate-limited.
+## 2. Transfer System & Bug Fixes
+- **Root Cause & Fix for "Futbolchi sotish"**:
+  - **Root Cause**: `saleCandidates` selected `is_starting`, which does not exist on the `club_players` table. PostgREST returned error `column club_players.is_starting does not exist`, causing the callback to fail.
+  - **Fix**: Query `lineup_players` join `lineups` to check actual starting XI membership dynamically.
+  - **Verification**: Real Madrid's 32 players queried successfully; exactly 11 players identified as starting XI (`K. Mbappé`, `T. Courtois`, `J. Bellingham`, etc.).
+- **Starting XI Selling Confirmation**:
+  - If player is in Starting XI: displays warning dialog `⚠️ Bu futbolchi Starting XI tarkibida.` with `[✅ Baribir sotuvga qo‘yish]` and `[❌ Bekor qilish]`.
+  - Preset options: `+10%`, `+20%`, `+30%`, `[⌨️ Boshqa narx]`.
+  - Delist option: `[❌ Sotuvdan olish]` for active listings.
+- **Root Cause & Fix for Carlos Espí Visibility Bug**:
+  - **Root Cause**: In `clubTargets` (Ligadan izlash), a filter excluded any player with `resale_locked_until > now()`. When Carlos Espí was purchased, a 48-hour resale lock was applied, which caused him to be completely filtered out of Athletic Club's squad view.
+  - **Fix**: Removed the exclusion filter in `clubTargets`. All squad players remain visible, with `isResaleLocked: true` indicating temporary resale protection.
+  - **Verification**: Athletic Club squad returned 33 players, including `Carlos Espí` (⭐77, €48.2M, `isResaleLocked: true`).
+- **Root Cause & Fix for Ghost Reserved Budget (Yamal Bug)**:
+  - **Root Cause**: In `create_transfer_offer` and `respond_transfer_offer`, when an offer transitioned to `COUNTERED`, the buyer's previously held reservation in `reserved_transfer_budget` was never released.
+  - **Fix**: In migration `202609220025_league_lifecycle_and_transfer_lock.sql`, when status becomes `COUNTERED`, the old reservation is released immediately (`reserved_transfer_budget = greatest(0, reserved_transfer_budget - amount)`). When the user accepts the counter, the counter amount is verified and reserved atomically.
+  - **Verification**: Cleaned up legacy ghost reservations on live DB; all clubs with `reserved_transfer_budget > 0` now have an exact 1:1 match with active pending offers.
 
 ---
 
-## 3. Database Migrations & Idempotency
-- [supabase/migrations/202609220023_player_id_unique_constraint.sql](file:///Users/abdulaziz/Desktop/OFM%20%20bot/supabase/migrations/202609220023_player_id_unique_constraint.sql):
-  - Made idempotent using `do $$ if not exists ... end if; $$;`.
-- [supabase/migrations/202609220024_scoped_global_and_league_market.sql](file:///Users/abdulaziz/Desktop/OFM%20%20bot/supabase/migrations/202609220024_scoped_global_and_league_market.sql):
-  - Created and applied to Frankfurt DB via `npx supabase db push`.
-  - Scoped `buy_global_player` function to atomically handle both external stars and in-league club transfers with club balance updates and buyer squad assignment.
+## 3. Transfer Hub UI
+- Accessible exclusively via `Klubim` -> `Transfer`.
+- Persistent reply keyboard contains only `⚽ Klubim`, `🏆 Ligalar`, `👤 Profil`, `🛠 Admin panel`.
+- Transfer Hub displays:
+  ```
+  🔁 REAL MADRID — TRANSFER
+
+  💰 Transfer budjeti: €150.0M
+  🔒 Band qilingan: €0.0M
+  ✅ Mavjud: €150.0M
+  🏦 G‘azna: €120.0M
+  ```
+- Buttons layout:
+  - Row 1: `[🛒 Transfer bozori]` `[🔎 Ligadan izlash]`
+  - Row 2: `[🌍 Global Transfer]` `[📤 Futbolchi sotish]`
+  - Row 3: `[📥 Takliflar]` `[📜 Transfer tarixi]`
+  - Row 4: `[↩️ Klubga qaytish]`
 
 ---
 
-## 4. Tactics UX & Instant Feedback
-- **Visual Selected Indicators**:
-  - Added `[✅]` indicator to current selections across Mentality, Pressing, Tempo, Line, Width, Passing, Attack Focus, Tackling, and Formations picker.
-- **Instant Callback Feedback**:
-  - All tactic change callbacks (`cy:`, `nu:`) immediately execute `answerCallbackQuery({ text: "✅ O'zgartirildi" })` to dismiss Telegram loading spinners in <200ms.
+## 4. AI Transfer Engine (`gpt-4o-mini`)
+- **Restricted to ACTIVE Leagues**: AI transfer activity (listings, buying, trades) only executes on leagues where `league_instances.status = 'ACTIVE'`.
+- **Early Season Star Protection**: AI clubs never list 85+ OVR stars or starting XI players during rounds 1-2.
+- **Fixed Query**: Removed non-existent `is_starting` column reference from `ai-transfer-engine.ts`.
 
 ---
 
-## 5. Match Engine Overhaul & Balance Verification
-- **Tactical Matchup Counters**:
-  - High line punished by direct passing and high-pace attackers.
-  - High press counters short passing, but tires squad faster.
-  - Narrow width vulnerable to wing attacks.
-  - High tackling increases fouls, yellow/red cards, and penalty kicks.
-- **5,000 Matches Simulation Test**:
-  - [tests/match-engine-balance.test.ts](file:///Users/abdulaziz/Desktop/OFM%20%20bot/tests/match-engine-balance.test.ts):
-    - Average goals per match: **2.72** (within target 2.2 - 3.2).
-    - Blowouts (>6 goals): **0.00%** (target < 0.5%).
-    - Underdog upsets: **17.20%** (target 10% - 25%).
-    - Penalties: **9.8%** of matches.
-    - Red cards: **4.1%** of matches.
-
----
-
-## 6. Season Completion & Manager Honours
-- **38 Rounds Completion Logic**:
-  - Added `checkSeasonCompletion()` in [src/matches/match.repository.ts](file:///Users/abdulaziz/Desktop/OFM%20%20bot/src/matches/match.repository.ts).
-  - Automatically transitions league status to `COMPLETED`.
-  - Crowns top team as champion.
-  - Inserts honour record into `manager_honours` table.
-  - Awards +100 rating boost to the champion manager.
-
----
-
-## 7. Verification & Deployment Status
-- **Test Suite**: 26 test files, 76/76 tests passing (`npm run check`).
-- **Edge Function Build**: `npm run build:webhook` created bundle (158.6kb).
-- **Edge Function Deploy**: Deployed to Supabase Frankfurt project `fcwonehtpuyzdyuxcvre` via `npx supabase functions deploy telegram-webhook --no-verify-jwt`.
-- **Webhook Status**: Verified active with `npm run webhook:info` (0 pending updates, 0 errors).
-- **Git Repository**: Clean, all migrations and tests in place.
+## 5. Deployment & Verification Summary
+- **Migration**: `supabase/migrations/202609220025_league_lifecycle_and_transfer_lock.sql` applied cleanly to Frankfurt Supabase.
+- **Edge Function**: Bundle compiled (165.5kb) and deployed to `fcwonehtpuyzdyuxcvre` via `npx supabase functions deploy telegram-webhook --no-verify-jwt`.
+- **Webhook Status**: `FAOL (Active)` with 0 pending updates.
+- **Automated Tests**: 27 test files, 78/78 tests passing (`npm run check`).
+- **Git Commit**: `bbbf4b5` pushed to `origin main`.
