@@ -14,7 +14,15 @@ import type { SquadPlayer } from "../squads/squad.repository.js";
 import type { FixtureRepository } from "../fixtures/fixture.repository.js";
 import { formatFixtureLine, formatUpcomingFixtures } from "../fixtures/presentation.js";
 import type { MatchRepository } from "../matches/match.repository.js";
-import { formatFinances, formatLeaders, formatResults, formatTable } from "../matches/presentation.js";
+import {
+  formatClubSeasonStats,
+  formatFinances,
+  formatLeaders,
+  formatMatchPreview,
+  formatPlayerSeasonStats,
+  formatResults,
+  formatTable,
+} from "../matches/presentation.js";
 import type { TransferRepository, MarketPlayer } from "../transfers/transfer.repository.js";
 import {
   formatClubPlayers,
@@ -28,7 +36,15 @@ import {
   transferMoney,
 } from "../transfers/presentation.js";
 import type { ProgressionRepository } from "../progression/progression.repository.js";
-import { formatLeaderboard, formatProfile, formatSponsors } from "../progression/presentation.js";
+import {
+  formatGlobalLeaderboard,
+  formatHonours,
+  formatLeaderboard,
+  formatProfile,
+  formatSponsors,
+} from "../progression/presentation.js";
+import type { SetPieceRole } from "../tactics/tactics.repository.js";
+import { NewsService } from "../leagues/news.service.js";
 import type { AdminRepository } from "../admin/admin.repository.js";
 import { formatAdminSponsors, formatAdminStats, formatAdminUsers } from "../admin/presentation.js";
 import { createMainKeyboard, MAIN_MENU } from "./keyboards.js";
@@ -46,6 +62,7 @@ interface BotDependencies {
   admin: AdminRepository;
   adminTelegramIds: number[];
   logger: Logger;
+  news?: NewsService;
 }
 
 const PAGE_SIZE = 10;
@@ -145,11 +162,14 @@ function dashboardKeyboard(leagueClubId: string): InlineKeyboard {
     .text("👥 Jamoa", `sq:${leagueClubId}`).text("🔥 Asosiy XI", `xi:${leagueClubId}`).row()
     .text("🧠 Taktika", `tc:${leagueClubId}`).text("🔁 Transfer", `tr:${leagueClubId}`).row()
     .text("📅 O‘yinlar", `mt:${leagueClubId}`).text("📊 Liga", `tb:${leagueClubId}`).row()
+    .text("📊 Statistika", `cst:${leagueClubId}`).text("⚔️ Match preview", `mpv:${leagueClubId}`).row()
+    .text("📰 Liga yangiliklari", `lnw:${leagueClubId}:0`).row()
     .text("🚪 Ligadan chiqish", `lx:${leagueClubId}`).row();
 }
 
-export function createBot({ token, users, leagues, squads, tactics, fixtures, matches, transfers, progression, admin, adminTelegramIds, logger }: BotDependencies): Bot {
+export function createBot({ token, users, leagues, squads, tactics, fixtures, matches, transfers, progression, admin, adminTelegramIds, logger, news }: BotDependencies): Bot {
   const bot = new Bot(token);
+  const newsService = news ?? new NewsService((leagues as any).database);
   const isAdmin=(telegramId:number)=>adminTelegramIds.includes(telegramId);
 
   // Time all outgoing Telegram API calls for instrumentation
@@ -368,6 +388,11 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
 
   bot.hears(MAIN_MENU.leagues, showCompetitions);
 
+  const profileKeyboard = (): InlineKeyboard =>
+    new InlineKeyboard()
+      .text("🌍 Global reyting", "lb:0")
+      .text("🏆 Sovrinlar", "pf:h");
+
   bot.hears(MAIN_MENU.profile, async (context) => {
     if (!context.from) return;
     const user = await getContextUser(context);
@@ -379,18 +404,36 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
       getContextManagedClubs(context, user.id),
     ]);
     await context.reply(formatProfile(profile, clubs), {
-      reply_markup: new InlineKeyboard().text("🏅 Global reyting", "lb:0"),
+      reply_markup: profileKeyboard(),
       parse_mode: "HTML",
     });
   });
 
   bot.callbackQuery("lb:0", async (context) => {
     await context.answerCallbackQuery();
+    if (!context.from) return;
+    const user = await getContextUser(context);
     const profiler: RequestProfiler | undefined = (context as any).profiler;
-    const leaders = profiler
-      ? await profiler.time("manager_profile", () => progression.leaderboard())
-      : await progression.leaderboard();
-    await editOrReply(context, formatLeaderboard(leaders), new InlineKeyboard().text("↩️ Orqaga", "pf:0"));
+    const { entries, userRank, userXp } = profiler
+      ? await profiler.time("manager_profile", () => progression.globalLeaderboard(10, user.id))
+      : await progression.globalLeaderboard(10, user.id);
+    await editOrReply(
+      context,
+      formatGlobalLeaderboard(entries, userRank, userXp),
+      new InlineKeyboard().text("↩️ Orqaga", "pf:0")
+    );
+  });
+
+  bot.callbackQuery("pf:h", async (context) => {
+    await context.answerCallbackQuery();
+    if (!context.from) return;
+    const user = await getContextUser(context);
+    const honours = await progression.listHonours(user.id);
+    await editOrReply(
+      context,
+      formatHonours(honours),
+      new InlineKeyboard().text("↩️ Orqaga", "pf:0")
+    );
   });
 
   bot.callbackQuery("pf:0", async (context) => {
@@ -398,10 +441,13 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     await context.answerCallbackQuery();
     const user = await getContextUser(context);
     const profiler: RequestProfiler | undefined = (context as any).profiler;
-    const profile = profiler
-      ? await profiler.time("manager_profile", () => progression.profile(user.id))
-      : await progression.profile(user.id);
-    await editOrReply(context, formatProfile(profile), new InlineKeyboard().text("🏅 Global reyting", "lb:0"));
+    const [profile, clubs] = await Promise.all([
+      profiler
+        ? profiler.time("manager_profile", () => progression.profile(user.id))
+        : progression.profile(user.id),
+      getContextManagedClubs(context, user.id),
+    ]);
+    await editOrReply(context, formatProfile(profile, clubs), profileKeyboard());
   });
 
   bot.callbackQuery("refresh:leagues", async (context) => {
@@ -870,7 +916,9 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
       .row()
       .text("↩️ Orqaga", player.targetClubId ? `tk:${player.targetClubId}:0` : "home:club");
 
-    await editOrReply(context, formatPlayerProfile(player), kb);
+    const stats = await matches.playerSeasonStats(player.clubPlayerId);
+    const profileText = formatPlayerProfile(player) + (stats.games > 0 ? `\n\n${formatPlayerSeasonStats(stats)}` : "");
+    await editOrReply(context, profileText, kb);
   });
 
   bot.callbackQuery(/^of:([0-9a-f-]{36}):(\d+)$/, async (context) => {
@@ -1542,7 +1590,67 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
       new InlineKeyboard()
         .text("💰 Homiylar", `sp:${club}`)
         .row()
-        .text("↩️ Orqaga", `db:${club}`)
+    );
+  });
+
+  bot.callbackQuery(/^cst:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const clubId = context.match[1]!;
+    const user = await getContextUser(context);
+    const stats = await matches.clubSeasonStats(user.id, clubId);
+    await editOrReply(
+      context,
+      formatClubSeasonStats(stats),
+      new InlineKeyboard().text("↩️ Orqaga", `db:${clubId}`)
+    );
+  });
+
+  bot.callbackQuery(/^mpv:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const clubId = context.match[1]!;
+    const user = await getContextUser(context);
+    const [next] = await fixtures.listUpcoming(user.id, clubId, 1, true);
+    if (!next) {
+      await editOrReply(
+        context,
+        "⚔️ <b>MATCH PREVIEW</b>\n\n<i>Hozircha rejalashtirilgan o‘yin yo‘q.</i>",
+        new InlineKeyboard().text("↩️ Orqaga", `db:${clubId}`)
+      );
+      return;
+    }
+    const preview = await matches.matchPreview(next.id);
+    await editOrReply(
+      context,
+      formatMatchPreview(preview),
+      new InlineKeyboard().text("↩️ Orqaga", `db:${clubId}`)
+    );
+  });
+
+  bot.callbackQuery(/^lnw:([0-9a-f-]{36}):(\d+)$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const clubId = context.match[1]!;
+    const page = Math.max(0, Number(context.match[2]) || 0);
+    const user = await getContextUser(context);
+    const clubs = await getContextManagedClubs(context, user.id);
+    const club = clubs.find((c) => c.leagueClubId === clubId);
+    if (!club || !club.leagueId) return;
+
+    const newsData = await newsService.listNews(club.leagueId, page + 1, 5);
+    const kb = new InlineKeyboard();
+    if (newsData.totalPages > 1) {
+      if (page > 0) kb.text("⬅️ Oldingi", `lnw:${clubId}:${page - 1}`);
+      kb.text(`📄 ${page + 1}/${newsData.totalPages}`, "noop");
+      if (page + 1 < newsData.totalPages) kb.text("Keyingi ➡️", `lnw:${clubId}:${page + 1}`);
+      kb.row();
+    }
+    kb.text("↩️ Orqaga", `db:${clubId}`);
+    await editOrReply(
+      context,
+      newsService.formatNewsFeed(newsData.items, page + 1, newsData.totalPages, club.leagueName ?? club.competitionName),
+      kb
     );
   });
 
@@ -1629,6 +1737,31 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     if (!context.from) return; await context.answerCallbackQuery({text:"Boshlang‘ich tarkib moslanmoqda…"});
     const user=await getContextUser(context);await tactics.autoSave(user.id,context.match[1]!,context.match[2]!);await showTactics(context,user.id,context.match[1]!);
   });
+  const showSetPiecesMenu = async (context: Context, userId: string, clubId: string): Promise<void> => {
+    const setPieces = await tactics.getSetPieces(userId, clubId);
+    const text = [
+      "👑 <b>SARDOR VA STANDARTLAR</b>",
+      "",
+      `👑 Sardor: <b>${escapeHtml(setPieces.captain?.name ?? "Tanlanmagan")}</b>`,
+      `🎯 Penalti: <b>${escapeHtml(setPieces.penaltyTaker?.name ?? "Tanlanmagan")}</b>`,
+      `⚽ Jarima zarbasi: <b>${escapeHtml(setPieces.freeKickTaker?.name ?? "Tanlanmagan")}</b>`,
+      `🚩 Burchak to‘pi: <b>${escapeHtml(setPieces.cornerTaker?.name ?? "Tanlanmagan")}</b>`,
+      "",
+      "<i>Kerakli rolni tanlang va futbolchini belgilang:</i>",
+    ].join("\n");
+
+    const kb = new InlineKeyboard()
+      .text("👑 Sardor", `spr:captain:${clubId}`)
+      .text("🎯 Penalti", `spr:penalty:${clubId}`)
+      .row()
+      .text("⚽ Jarima", `spr:free_kick:${clubId}`)
+      .text("🚩 Burchak", `spr:corner:${clubId}`)
+      .row()
+      .text("← Asosiy XI", `xi:${clubId}`);
+
+    await editOrReply(context, text, kb);
+  };
+
   const showStartingXi = async (context: Context, clubId: string, alertText?: string): Promise<void> => {
     const user = await getContextUser(context);
     const clubs = await getContextManagedClubs(context, user.id);
@@ -1640,11 +1773,12 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
       .text("🔄 O‘yinchini almashtirish", `xsl:${clubId}`)
       .text("🤖 Avtomatik tanlash", `xa:${clubId}`)
       .row()
+      .text("👑 Sardor & standartlar", `spm:${clubId}`)
       .text("🧩 Formation", `fm:${clubId}`)
       .row()
       .text("↩️ Orqaga", `db:${clubId}`);
 
-    const text = formatStartingXi(clubName, lineup.formation, lineup.players) + (alertText ? `\n\n${alertText}` : "");
+    const text = formatStartingXi(clubName, lineup.formation, lineup.players, lineup.setPieces) + (alertText ? `\n\n${alertText}` : "");
     await editOrReply(context, text, keyboard);
   };
 
@@ -1652,6 +1786,89 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     if (!context.from) return;
     await context.answerCallbackQuery();
     await showStartingXi(context, context.match[1]!);
+  });
+
+  bot.callbackQuery(/^spm:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    await showSetPiecesMenu(context, user.id, context.match[1]!);
+  });
+
+  bot.callbackQuery(/^spr:(captain|penalty|free_kick|corner):([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const role = context.match[1] as SetPieceRole;
+    const clubId = context.match[2]!;
+
+    const codeToRole: Record<SetPieceRole, string> = {
+      captain: "c",
+      penalty: "p",
+      free_kick: "f",
+      corner: "k",
+    };
+    const rCode = codeToRole[role];
+
+    const titleMap: Record<SetPieceRole, string> = {
+      captain: "👑 <b>SARDORNI TANLANG</b>\n\n<i>Eslatma: Sardor faqat asosiy tarkib (XI) o‘yinchilari orasidan tanlanadi.</i>",
+      penalty: "🎯 <b>PENALTI TEPURVCHISINI TANLANG:</b>",
+      free_kick: "⚽ <b>JARIMA ZARBASI TEPURVCHISINI TANLANG:</b>",
+      corner: "🚩 <b>BURCHAK TO‘PI TEPURVCHISINI TANLANG:</b>",
+    };
+
+    const kb = new InlineKeyboard();
+
+    if (role === "captain") {
+      const lineup = await tactics.lineup(user.id, clubId);
+      let count = 0;
+      for (const p of lineup.players) {
+        kb.text(`${p.shortName} (${p.slotKey})`, `spa:${rCode}:${p.clubPlayerId}`);
+        count++;
+        if (count % 2 === 0) kb.row();
+      }
+      if (count % 2 !== 0) kb.row();
+    } else {
+      const squad = await squads.listOwnedClubSquad(user.id, clubId);
+      const sorted = [...squad].sort((a, b) => b.overall - a.overall).slice(0, 12);
+      let count = 0;
+      for (const p of sorted) {
+        kb.text(`${p.shortName} · ⭐${p.overall}`, `spa:${rCode}:${p.clubPlayerId}`);
+        count++;
+        if (count % 2 === 0) kb.row();
+      }
+      if (count % 2 !== 0) kb.row();
+    }
+
+    kb.text("← Orqaga", `spm:${clubId}`);
+    await editOrReply(context, titleMap[role], kb);
+  });
+
+  bot.callbackQuery(/^spa:([cpfk]):([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    const user = await getContextUser(context);
+    const code = context.match[1]!;
+    const clubPlayerId = context.match[2]!;
+
+    const codeToRole: Record<string, SetPieceRole> = {
+      c: "captain",
+      p: "penalty",
+      f: "free_kick",
+      k: "corner",
+    };
+    const role = codeToRole[code];
+    if (!role) return;
+
+    try {
+      const clubId = await tactics.assignSetPieceByPlayerId(user.id, role, clubPlayerId);
+      await context.answerCallbackQuery({ text: "✅ Muvaffaqiyatli saqlandi!" });
+      await showSetPiecesMenu(context, user.id, clubId);
+    } catch (err: any) {
+      const msg = err.message === "CAPTAIN_MUST_BE_IN_STARTING_XI"
+        ? "⚠️ Sardor asosiy tarkibda (XI) bo‘lishi shart!"
+        : "⚠️ Xatolik yuz berdi.";
+      await context.answerCallbackQuery({ text: msg, show_alert: true });
+    }
   });
 
   bot.callbackQuery(/^xsl:([0-9a-f-]{36})$/, async (context) => {

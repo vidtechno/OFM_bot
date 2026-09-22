@@ -21,7 +21,7 @@ describe("league presentation", () => {
     expect(result).toContain("🏆 <i>Premier League #0001</i>");
     expect(result).toContain("📍 <b>4-o‘rin</b>");
     expect(result).toContain("💰 Transfer budjeti: <b>€84.5M</b>");
-    expect(result).toContain("🏦 G‘azna: <b>€84.5M</b>");
+    expect(result).not.toContain("G‘azna");
     expect(result).toContain("⏭ <b>Keyingi o‘yin</b>");
   });
 

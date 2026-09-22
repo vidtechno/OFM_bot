@@ -1,4 +1,4 @@
-import type { LineupEntry, Tactic } from "./tactics.repository.js";
+import type { LineupEntry, SetPieceAssignments, Tactic } from "./tactics.repository.js";
 import { escapeHtml } from "../lib/html.js";
 
 const terms: Record<string, string> = {
@@ -54,7 +54,7 @@ export const formatTactics = (t: Tactic) =>
     `🛡 Kurashuvchanlik: <b>${escapeHtml(footballTerm(t.tackling))}</b>`,
   ].join("\n");
 
-export const formatLineup = (formation: string, players: LineupEntry[]) => {
+export const formatLineup = (formation: string, players: LineupEntry[], setPieces?: SetPieceAssignments) => {
   const avgStrength = (players.reduce((sum, p) => sum + p.effectiveRating, 0) / Math.max(players.length, 1)).toFixed(1);
   const lines: string[] = [
     "🔥 <b>ASOSIY XI</b>",
@@ -66,10 +66,27 @@ export const formatLineup = (formation: string, players: LineupEntry[]) => {
     lines.push(slotLabel, `${escapeHtml(p.shortName)} — ⭐<b>${p.overall}</b>`, "");
   }
   lines.push(`⭐ Jamoa kuchi: <b>${avgStrength}</b>`);
+
+  if (setPieces) {
+    lines.push(
+      "",
+      "🎯 <b>STANDARTLAR VA KAPITAN</b>",
+      `👑 Kapitan: <b>${escapeHtml(setPieces.captain?.name ?? "Tanlanmagan")}</b>`,
+      `⚽ Penalti: <b>${escapeHtml(setPieces.penaltyTaker?.name ?? "Tanlanmagan")}</b>`,
+      `🎯 Jarima zarbasi: <b>${escapeHtml(setPieces.freeKickTaker?.name ?? "Tanlanmagan")}</b>`,
+      `🚩 Burchak: <b>${escapeHtml(setPieces.cornerTaker?.name ?? "Tanlanmagan")}</b>`
+    );
+  }
+
   return lines.join("\n").trim();
 };
 
-export function formatStartingXi(clubName: string, formation: string, players: LineupEntry[]): string {
+export function formatStartingXi(
+  clubName: string,
+  formation: string,
+  players: LineupEntry[],
+  setPieces?: SetPieceAssignments
+): string {
   const avgStrength = (players.reduce((sum, p) => sum + p.effectiveRating, 0) / Math.max(players.length, 1)).toFixed(1);
   const lines: string[] = [
     `🔥 <b>${escapeHtml(clubName.toUpperCase())} — ASOSIY XI</b>`,
@@ -87,5 +104,17 @@ export function formatStartingXi(clubName: string, formation: string, players: L
   }
 
   lines.push(`⭐ Jamoa kuchi: <b>${avgStrength}</b>`);
+
+  if (setPieces) {
+    lines.push(
+      "",
+      "🎯 <b>STANDARTLAR VA KAPITAN</b>",
+      `👑 Kapitan: <b>${escapeHtml(setPieces.captain?.name ?? "Tanlanmagan")}</b>`,
+      `⚽ Penalti: <b>${escapeHtml(setPieces.penaltyTaker?.name ?? "Tanlanmagan")}</b>`,
+      `🎯 Jarima zarbasi: <b>${escapeHtml(setPieces.freeKickTaker?.name ?? "Tanlanmagan")}</b>`,
+      `🚩 Burchak: <b>${escapeHtml(setPieces.cornerTaker?.name ?? "Tanlanmagan")}</b>`
+    );
+  }
+
   return lines.join("\n").trim();
 }

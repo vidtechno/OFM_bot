@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { MatchSimulation, MatchTeamInput } from "./match-engine.js";
+import type { ClubSeasonStats, MatchPreviewData, PlayerSeasonStats } from "./presentation.js";
 
 export interface DueMatch { fixtureId: string; home: MatchTeamInput; away: MatchTeamInput; }
 export interface MatchResult { id: string; round: number; playedAt: string; homeClub: string; awayClub: string; homeGoals: number; awayGoals: number; }
@@ -95,7 +96,7 @@ export class MatchRepository {
     // Crown champion and update manager profiles
     const { data: table } = await this.database
       .from("league_clubs")
-      .select("id, manager_user_id, points, goals_for, goals_against")
+      .select("id, manager_user_id, points, goals_for, goals_against, league_instances!inner(instance_number, competitions!inner(code, name))")
       .eq("league_instance_id", instanceId);
 
     if (!table || !table.length) return;
@@ -116,7 +117,6 @@ export class MatchRepository {
         });
         if (error) throw error;
       } catch {
-        // Fallback update direct
         const { data: prof } = await this.database
           .from("manager_profiles")
           .select("titles, seasons, manager_rating")
@@ -135,11 +135,175 @@ export class MatchRepository {
         }
       }
     }
+
+    // Record Honours in manager_honours
+    const firstInstance = (ordered[0] as any)?.league_instances;
+    const comp = first<any>(firstInstance?.competitions);
+    const compCode = comp?.code ?? "ELITE";
+    const compName = comp?.name ?? "OFM Elite League";
+    const instanceNum = firstInstance?.instance_number ?? 1;
+
+    for (let i = 0; i < Math.min(3, ordered.length); i++) {
+      const club = ordered[i];
+      if (club?.manager_user_id) {
+        const type = i === 0 ? "CHAMPION" : i === 1 ? "RUNNER_UP" : "THIRD_PLACE";
+        const title = i === 0 ? `${compName} #${String(instanceNum).padStart(4, "0")} — Chempion`
+                    : i === 1 ? `${compName} #${String(instanceNum).padStart(4, "0")} — 2-o‘rin`
+                    : `${compName} #${String(instanceNum).padStart(4, "0")} — 3-o‘rin`;
+        await this.database
+          .from("manager_honours")
+          .upsert({
+            manager_user_id: club.manager_user_id,
+            league_instance_id: instanceId,
+            competition_code: compCode,
+            season: 1,
+            honour_type: type,
+            title,
+          }, { onConflict: "manager_user_id,league_instance_id,honour_type", ignoreDuplicates: true });
+      }
+    }
+
+    // Best Attack Honour
+    const bestAttackClub = [...table].sort((a: any, b: any) => b.goals_for - a.goals_for)[0];
+    if (bestAttackClub?.manager_user_id) {
+      await this.database
+        .from("manager_honours")
+        .upsert({
+          manager_user_id: bestAttackClub.manager_user_id,
+          league_instance_id: instanceId,
+          competition_code: compCode,
+          season: 1,
+          honour_type: "BEST_ATTACK",
+          title: `${compName} #${String(instanceNum).padStart(4, "0")} — Eng yaxshi hujum`,
+        }, { onConflict: "manager_user_id,league_instance_id,honour_type", ignoreDuplicates: true });
+    }
+
+    // Best Defense Honour
+    const bestDefenseClub = [...table].sort((a: any, b: any) => a.goals_against - b.goals_against)[0];
+    if (bestDefenseClub?.manager_user_id) {
+      await this.database
+        .from("manager_honours")
+        .upsert({
+          manager_user_id: bestDefenseClub.manager_user_id,
+          league_instance_id: instanceId,
+          competition_code: compCode,
+          season: 1,
+          honour_type: "BEST_DEFENSE",
+          title: `${compName} #${String(instanceNum).padStart(4, "0")} — Eng yaxshi himoya`,
+        }, { onConflict: "manager_user_id,league_instance_id,honour_type", ignoreDuplicates: true });
+    }
   }
 
   private async recordPlayerStats(matchId: string): Promise<void> {
-    const {data:match,error:matchError}=await this.database.from("matches").select("home_club_id,away_club_id,home_goals,away_goals").eq("id",matchId).single();if(matchError)throw matchError;
-    const assign=async(clubId:string,goals:number)=>{if(!goals)return;const[{data,error},{data:events,error:eventError}]=await Promise.all([this.database.from("club_players").select("players!inner(id,primary_position,player_attributes!inner(overall))").eq("league_club_id",clubId),this.database.from("match_events").select("id").eq("match_id",matchId).eq("club_id",clubId).eq("event_type","GOAL").order("minute")]);if(error)throw error;if(eventError)throw eventError;const players=(data??[]).map((row:any)=>{const player=first<any>(row.players);return{id:player.id,position:player.primary_position,overall:Number(first<any>(player.player_attributes).overall)}}).sort((a,b)=>{const weight=(p:string)=>p==="ST"?4:p==="LW"||p==="RW"||p==="CAM"?3:p==="CM"||p==="LM"||p==="RM"?2:1;return weight(b.position)*100+b.overall-(weight(a.position)*100+a.overall);});if(!players.length)return;const rows=new Map<string,{match_id:string;player_id:string;club_id:string;minutes:number;goals:number;assists:number}>();for(let index=0;index<goals;index+=1){const scorer=players[index%Math.min(3,players.length)]!,assistant=players.find(player=>player.id!==scorer.id&&["LW","RW","CAM","CM","LM","RM"].includes(player.position))??players[(index+1)%players.length]!;const scorerRow=rows.get(scorer.id)??{match_id:matchId,player_id:scorer.id,club_id:clubId,minutes:90,goals:0,assists:0};scorerRow.goals++;rows.set(scorer.id,scorerRow);if(assistant.id!==scorer.id){const assistantRow=rows.get(assistant.id)??{match_id:matchId,player_id:assistant.id,club_id:clubId,minutes:90,goals:0,assists:0};assistantRow.assists++;rows.set(assistant.id,assistantRow);}const event=events?.[index];if(event){const{error:updateError}=await this.database.from("match_events").update({player_id:scorer.id,metadata:{assist_player_id:assistant.id}}).eq("id",event.id);if(updateError)throw updateError;}}const{error:insertError}=await this.database.from("player_match_stats").upsert([...rows.values()],{onConflict:"match_id,player_id"});if(insertError)throw insertError;};await Promise.all([assign(match.home_club_id,match.home_goals),assign(match.away_club_id,match.away_goals)]);
+    const { data: match, error: matchError } = await this.database
+      .from("matches")
+      .select("home_club_id, away_club_id, home_goals, away_goals")
+      .eq("id", matchId)
+      .single();
+    if (matchError) throw matchError;
+
+    const assign = async (clubId: string, goals: number) => {
+      if (!goals) return;
+      const [{ data, error }, { data: events, error: eventError }, { data: lineup }] = await Promise.all([
+        this.database
+          .from("club_players")
+          .select("id, player_id, players!inner(id, primary_position, player_attributes!inner(overall))")
+          .eq("league_club_id", clubId),
+        this.database
+          .from("match_events")
+          .select("id, is_penalty")
+          .eq("match_id", matchId)
+          .eq("club_id", clubId)
+          .eq("event_type", "GOAL")
+          .order("minute"),
+        this.database
+          .from("lineups")
+          .select("penalty_taker_player_id")
+          .eq("league_club_id", clubId)
+          .maybeSingle(),
+      ]);
+
+      if (error) throw error;
+      if (eventError) throw eventError;
+
+      const players = (data ?? []).map((row: any) => {
+        const player = first<any>(row.players);
+        return {
+          id: player.id,
+          clubPlayerId: row.id,
+          position: player.primary_position,
+          overall: Number(first<any>(player.player_attributes).overall),
+        };
+      }).sort((a, b) => {
+        const weight = (p: string) => p === "ST" ? 4 : p === "LW" || p === "RW" || p === "CAM" ? 3 : p === "CM" || p === "LM" || p === "RM" ? 2 : 1;
+        return weight(b.position) * 100 + b.overall - (weight(a.position) * 100 + a.overall);
+      });
+
+      if (!players.length) return;
+
+      const penaltyTaker = lineup?.penalty_taker_player_id
+        ? players.find(p => p.clubPlayerId === lineup.penalty_taker_player_id)
+        : null;
+
+      const rows = new Map<string, { match_id: string; player_id: string; club_id: string; minutes: number; goals: number; assists: number; rating: number }>();
+
+      for (let index = 0; index < goals; index += 1) {
+        const isPen = Boolean((events?.[index] as any)?.is_penalty);
+        const scorer = (isPen && penaltyTaker) ? penaltyTaker : players[index % Math.min(3, players.length)]!;
+        const assistant = players.find(
+          player => player.id !== scorer.id && ["LW", "RW", "CAM", "CM", "LM", "RM"].includes(player.position)
+        ) ?? players[(index + 1) % players.length]!;
+
+        const scorerRow = rows.get(scorer.id) ?? {
+          match_id: matchId,
+          player_id: scorer.id,
+          club_id: clubId,
+          minutes: 90,
+          goals: 0,
+          assists: 0,
+          rating: 6.5,
+        };
+        scorerRow.goals++;
+        rows.set(scorer.id, scorerRow);
+
+        if (assistant.id !== scorer.id && !isPen) {
+          const assistantRow = rows.get(assistant.id) ?? {
+            match_id: matchId,
+            player_id: assistant.id,
+            club_id: clubId,
+            minutes: 90,
+            goals: 0,
+            assists: 0,
+            rating: 6.5,
+          };
+          assistantRow.assists++;
+          rows.set(assistant.id, assistantRow);
+        }
+
+        const event = events?.[index];
+        if (event) {
+          await this.database
+            .from("match_events")
+            .update({
+              player_id: scorer.id,
+              metadata: { assist_player_id: !isPen && assistant.id !== scorer.id ? assistant.id : null },
+            })
+            .eq("id", event.id);
+        }
+      }
+
+      for (const row of rows.values()) {
+        row.rating = Math.min(10.0, Math.max(5.0, Number((6.5 + row.goals * 1.2 + row.assists * 0.7).toFixed(1))));
+      }
+
+      const { error: insertError } = await this.database
+        .from("player_match_stats")
+        .upsert([...rows.values()], { onConflict: "match_id,player_id" });
+
+      if (insertError) throw insertError;
+    };
+
+    await Promise.all([assign(match.home_club_id, match.home_goals), assign(match.away_club_id, match.away_goals)]);
   }
 
   async ownerReports(matchId:string):Promise<MatchOwnerReport[]>{
@@ -175,5 +339,259 @@ export class MatchRepository {
     const {data:club,error:clubError}=await this.database.from("league_clubs").select("cash_balance,transfer_budget,reserved_transfer_budget").eq("id",leagueClubId).eq("manager_user_id",userId).maybeSingle();if(clubError)throw clubError;if(!club)throw new Error("CLUB_NOT_OWNED");
     const {data,error}=await this.database.from("finance_transactions").select("kind,amount,description,created_at").eq("league_club_id",leagueClubId).order("created_at",{ascending:false}).limit(10);if(error)throw error;
     return {cashBalance:Number(club.cash_balance),transferBudget:Number(club.transfer_budget),reservedTransferBudget:Number(club.reserved_transfer_budget??0),transactions:(data??[]).map((row:any)=>({kind:row.kind,amount:Number(row.amount),description:row.description,createdAt:row.created_at}))};
+  }
+
+  async clubSeasonStats(userId: string, leagueClubId: string): Promise<ClubSeasonStats> {
+    const { data: club, error: clubErr } = await this.database
+      .from("league_clubs")
+      .select("id, league_instance_id, played, wins, draws, losses, goals_for, goals_against, clubs!inner(name)")
+      .eq("id", leagueClubId)
+      .eq("manager_user_id", userId)
+      .maybeSingle();
+
+    if (clubErr || !club) throw new Error("CLUB_NOT_OWNED");
+    const clubName = first<any>(club.clubs).name;
+
+    const { data: matches, error: mErr } = await this.database
+      .from("matches")
+      .select("home_club_id, away_club_id, home_goals, away_goals")
+      .or(`home_club_id.eq.${leagueClubId},away_club_id.eq.${leagueClubId}`);
+
+    if (mErr) throw mErr;
+
+    let homeWins = 0, homeDraws = 0, homeLosses = 0;
+    let awayWins = 0, awayDraws = 0, awayLosses = 0;
+
+    for (const m of matches || []) {
+      if (m.home_club_id === leagueClubId) {
+        if (m.home_goals > m.away_goals) homeWins++;
+        else if (m.home_goals === m.away_goals) homeDraws++;
+        else homeLosses++;
+      } else {
+        if (m.away_goals > m.home_goals) awayWins++;
+        else if (m.away_goals === m.home_goals) awayDraws++;
+        else awayLosses++;
+      }
+    }
+
+    const gf = Number(club.goals_for);
+    const ga = Number(club.goals_against);
+
+    return {
+      clubName,
+      games: Number(club.played),
+      wins: Number(club.wins),
+      draws: Number(club.draws),
+      losses: Number(club.losses),
+      goalsFor: gf,
+      goalsAgainst: ga,
+      goalDifference: gf - ga,
+      homeWins,
+      homeDraws,
+      homeLosses,
+      awayWins,
+      awayDraws,
+      awayLosses,
+    };
+  }
+
+  async playerSeasonStats(playerIdOrClubPlayerId: string, leagueClubId?: string): Promise<PlayerSeasonStats> {
+    let resolvedPlayerId = playerIdOrClubPlayerId;
+    let resolvedClubId = leagueClubId;
+    let playerName = "Futbolchi";
+
+    const { data: cp } = await this.database
+      .from("club_players")
+      .select("id, player_id, league_club_id, players(id, short_name, name)")
+      .eq("id", playerIdOrClubPlayerId)
+      .maybeSingle();
+
+    if (cp) {
+      resolvedPlayerId = cp.player_id;
+      if (!resolvedClubId) resolvedClubId = cp.league_club_id;
+      const p = first<any>(cp.players);
+      playerName = p?.short_name ?? p?.name ?? "Futbolchi";
+    } else {
+      const { data: p } = await this.database
+        .from("players")
+        .select("short_name, name")
+        .eq("id", playerIdOrClubPlayerId)
+        .maybeSingle();
+      playerName = p?.short_name ?? p?.name ?? "Futbolchi";
+    }
+
+    let query = this.database
+      .from("player_match_stats")
+      .select("minutes, rating, goals, assists, yellow_cards, red_cards")
+      .eq("player_id", resolvedPlayerId);
+
+    if (resolvedClubId) {
+      query = query.eq("club_id", resolvedClubId);
+    }
+
+    const { data: rows, error } = await query;
+
+    if (error) throw error;
+
+    let games = 0, goals = 0, assists = 0, yellowCards = 0, redCards = 0;
+    let ratingSum = 0, ratingCount = 0;
+
+    for (const r of rows || []) {
+      games++;
+      goals += Number(r.goals ?? 0);
+      assists += Number(r.assists ?? 0);
+      yellowCards += Number(r.yellow_cards ?? 0);
+      redCards += Number(r.red_cards ?? 0);
+      if (r.rating !== null && r.rating !== undefined) {
+        ratingSum += Number(r.rating);
+        ratingCount++;
+      }
+    }
+
+    const averageRating = ratingCount > 0 ? Number((ratingSum / ratingCount).toFixed(1)) : null;
+
+    return {
+      playerName,
+      games,
+      matchesPlayed: games,
+      goals,
+      assists,
+      yellowCards,
+      redCards,
+      averageRating,
+    };
+  }
+
+  async matchPreview(fixtureId: string): Promise<MatchPreviewData> {
+    const { data: fixture, error: fErr } = await this.database
+      .from("fixtures")
+      .select("id, home_club_id, away_club_id, scheduled_at, league_instance_id")
+      .eq("id", fixtureId)
+      .single();
+
+    if (fErr || !fixture) throw new Error("FIXTURE_NOT_FOUND");
+
+    const [{ data: homeClub }, { data: awayClub }] = await Promise.all([
+      this.database.from("league_clubs").select("id, clubs!inner(name)").eq("id", fixture.home_club_id).single(),
+      this.database.from("league_clubs").select("id, clubs!inner(name)").eq("id", fixture.away_club_id).single(),
+    ]);
+
+    const homeClubName = first<any>(homeClub?.clubs)?.name ?? "Home";
+    const awayClubName = first<any>(awayClub?.clubs)?.name ?? "Away";
+
+    const { data: table } = await this.database
+      .from("league_clubs")
+      .select("id, points, goals_for, goals_against")
+      .eq("league_instance_id", fixture.league_instance_id);
+
+    const ordered = (table ?? []).sort(
+      (a: any, b: any) =>
+        b.points - a.points ||
+        b.goals_for - b.goals_against - (a.goals_for - a.goals_against) ||
+        b.goals_for - a.goals_for
+    );
+
+    const homeRank = ordered.findIndex((c) => c.id === fixture.home_club_id) + 1;
+    const awayRank = ordered.findIndex((c) => c.id === fixture.away_club_id) + 1;
+
+    const [homeOvr, awayOvr] = await Promise.all([
+      this.getTeamOvr(fixture.home_club_id),
+      this.getTeamOvr(fixture.away_club_id),
+    ]);
+
+    const [homeForm, awayForm] = await Promise.all([
+      this.getLast5Form(fixture.home_club_id),
+      this.getLast5Form(fixture.away_club_id),
+    ]);
+
+    const { data: h2hMatches } = await this.database
+      .from("matches")
+      .select("home_club_id, away_club_id, home_goals, away_goals")
+      .or(
+        `and(home_club_id.eq.${fixture.home_club_id},away_club_id.eq.${fixture.away_club_id}),and(home_club_id.eq.${fixture.away_club_id},away_club_id.eq.${fixture.home_club_id})`
+      );
+
+    let homeWins = 0, draws = 0, awayWins = 0;
+    const hasHistory = Boolean(h2hMatches && h2hMatches.length > 0);
+
+    for (const m of h2hMatches || []) {
+      if (m.home_club_id === fixture.home_club_id) {
+        if (m.home_goals > m.away_goals) homeWins++;
+        else if (m.home_goals === m.away_goals) draws++;
+        else awayWins++;
+      } else {
+        if (m.away_goals > m.home_goals) homeWins++;
+        else if (m.away_goals === m.home_goals) draws++;
+        else awayWins++;
+      }
+    }
+
+    const date = new Date(fixture.scheduled_at);
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const day = date.getDate();
+    const month = months[date.getMonth()];
+    const hours = String(date.getHours()).padStart(2, "0");
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    const scheduledAt = `${day} ${month} · ${hours}:${minutes}`;
+
+    return {
+      homeClubName,
+      awayClubName,
+      homeRank: homeRank || 1,
+      awayRank: awayRank || 2,
+      homeOvr,
+      awayOvr,
+      homeForm,
+      awayForm,
+      h2h: { homeWins, draws, awayWins, hasHistory },
+      scheduledAt,
+    };
+  }
+
+  private async getTeamOvr(clubId: string): Promise<number> {
+    const { data: lp } = await this.database
+      .from("lineup_players")
+      .select("effective_rating, lineups!inner(league_club_id)")
+      .eq("lineups.league_club_id", clubId);
+
+    if (lp && lp.length >= 11) {
+      const avg = lp.reduce((sum, p) => sum + Number(p.effective_rating), 0) / lp.length;
+      return Math.round(avg);
+    }
+
+    const { data: squad } = await this.database
+      .from("club_players")
+      .select("players!inner(player_attributes!inner(overall))")
+      .eq("league_club_id", clubId);
+
+    if (squad && squad.length > 0) {
+      const avg = squad.reduce((sum: number, cp: any) => {
+        const p = first<any>(cp.players);
+        const attr = first<any>(p.player_attributes);
+        return sum + Number(attr?.overall ?? 75);
+      }, 0) / squad.length;
+      return Math.round(avg);
+    }
+    return 75;
+  }
+
+  private async getLast5Form(clubId: string): Promise<string> {
+    const { data: matches } = await this.database
+      .from("matches")
+      .select("home_club_id, away_club_id, home_goals, away_goals, played_at")
+      .or(`home_club_id.eq.${clubId},away_club_id.eq.${clubId}`)
+      .order("played_at", { ascending: false })
+      .limit(5);
+
+    if (!matches || !matches.length) return "";
+
+    return matches.reverse().map((m) => {
+      const isHome = m.home_club_id === clubId;
+      const myGoals = isHome ? m.home_goals : m.away_goals;
+      const oppGoals = isHome ? m.away_goals : m.home_goals;
+      if (myGoals > oppGoals) return "W";
+      if (myGoals === oppGoals) return "D";
+      return "L";
+    }).join("");
   }
 }

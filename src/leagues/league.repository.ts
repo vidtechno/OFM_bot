@@ -187,7 +187,7 @@ export class LeagueRepository {
   async listManagedClubs(userId: string): Promise<ManagedClub[]> {
     const { data, error } = await this.database
       .from("league_clubs")
-      .select("id, points, cash_balance, clubs!inner(name, starting_budget), league_instances!inner(id, instance_number, status, competitions!inner(name))")
+      .select("id, points, transfer_budget, clubs!inner(name, starting_budget), league_instances!inner(id, instance_number, status, competitions!inner(name))")
       .eq("manager_user_id", userId)
       .order("created_at");
     if (error) throw new Error(`Manager klublarini olishda xato: ${error.message}`);
@@ -204,7 +204,7 @@ export class LeagueRepository {
         leagueName: `${competition.name} #${String(league.instance_number).padStart(4, "0")}`,
         position: 1,
         points: row.points,
-        budget: Number(row.cash_balance ?? club.starting_budget),
+        budget: Number(row.transfer_budget ?? club.starting_budget ?? 100000000),
         status: league.status,
       };
     });

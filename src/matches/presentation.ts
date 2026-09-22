@@ -1,6 +1,52 @@
 import type { FinanceSummary, MatchOwnerReport, MatchResult, PlayerLeader, TableRow } from "./match.repository.js";
 import { escapeHtml, formatMoney, formatDateTime } from "../lib/html.js";
 
+export interface ClubSeasonStats {
+  clubName: string;
+  games: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  goalDifference: number;
+  homeWins: number;
+  homeDraws: number;
+  homeLosses: number;
+  awayWins: number;
+  awayDraws: number;
+  awayLosses: number;
+}
+
+export interface PlayerSeasonStats {
+  playerName: string;
+  games: number;
+  matchesPlayed?: number;
+  goals: number;
+  assists: number;
+  yellowCards: number;
+  redCards: number;
+  averageRating: number | null;
+}
+
+export interface MatchPreviewData {
+  homeClubName: string;
+  awayClubName: string;
+  homeRank: number;
+  awayRank: number;
+  homeOvr: number;
+  awayOvr: number;
+  homeForm: string;
+  awayForm: string;
+  h2h: {
+    homeWins: number;
+    draws: number;
+    awayWins: number;
+    hasHistory: boolean;
+  };
+  scheduledAt: string;
+}
+
 export function formatResults(results: MatchResult[]): string {
   if (!results.length) {
     return "⚽ <b>NATIJALAR</b>\n\n<i>Hali o‘yin o‘tkazilmagan.</i>";
@@ -48,11 +94,21 @@ export function formatLeaders(title: string, leaders: PlayerLeader[], unit: stri
 }
 
 export function formatFinances(summary: FinanceSummary): string {
-  return [
+  const available = summary.transferBudget - (summary.reservedTransferBudget ?? 0);
+  const lines = [
     "💰 <b>KLUB MOLIYASI</b>",
     "",
-    `🏦 Hisobdagi mablag‘: <b>${formatMoney(summary.cashBalance)}</b>`,
     `💰 Transfer budjeti: <b>${formatMoney(summary.transferBudget)}</b>`,
+  ];
+
+  if ((summary.reservedTransferBudget ?? 0) > 0) {
+    lines.push(
+      `🔒 Band qilingan: <b>${formatMoney(summary.reservedTransferBudget ?? 0)}</b>`,
+      `💵 Mavjud budjet: <b>${formatMoney(available)}</b>`
+    );
+  }
+
+  lines.push(
     "",
     "🧾 <b>SO‘NGGI OPERATSIYALAR</b>",
     ...(summary.transactions.length
@@ -60,7 +116,74 @@ export function formatFinances(summary: FinanceSummary): string {
           (t) =>
             `${t.amount >= 0 ? "🟢 +" : "🔴 -"}${formatMoney(Math.abs(t.amount))} · <i>${escapeHtml(t.description)}</i>`
         )
-      : ["<i>Hozircha moliyaviy operatsiya yo‘q.</i>"]),
+      : ["<i>Hozircha moliyaviy operatsiya yo‘q.</i>"])
+  );
+
+  return lines.join("\n");
+}
+
+export function formatClubSeasonStats(stats: ClubSeasonStats): string {
+  const gdStr = stats.goalDifference >= 0 ? `+${stats.goalDifference}` : `${stats.goalDifference}`;
+
+  return [
+    "📊 <b>MAVSUM STATISTIKASI</b>",
+    "",
+    `🎮 O‘yinlar: <b>${stats.games}</b>`,
+    `✅ G‘alaba: <b>${stats.wins}</b>`,
+    `🤝 Durang: <b>${stats.draws}</b>`,
+    `❌ Mag‘lubiyat: <b>${stats.losses}</b>`,
+    "",
+    `⚽ Urilgan gollar: <b>${stats.goalsFor}</b>`,
+    `🥅 O‘tkazilgan gollar: <b>${stats.goalsAgainst}</b>`,
+    `📈 To‘plar farqi: <b>${gdStr}</b>`,
+    "",
+    "🏠 Uyda:",
+    `${stats.homeWins}W · ${stats.homeDraws}D · ${stats.homeLosses}L`,
+    "",
+    "✈️ Safarda:",
+    `${stats.awayWins}W · ${stats.awayDraws}D · ${stats.awayLosses}L`,
+  ].join("\n");
+}
+
+export function formatPlayerSeasonStats(stats: PlayerSeasonStats): string {
+  const ratingStr = stats.averageRating !== null ? stats.averageRating.toFixed(1) : "—";
+
+  return [
+    "📊 <b>MAVSUM</b>",
+    "",
+    `🎮 O‘yin: <b>${stats.games}</b>`,
+    `⚽ Gol: <b>${stats.goals}</b>`,
+    `🎯 Assist: <b>${stats.assists}</b>`,
+    `🟨 Sariq: <b>${stats.yellowCards}</b>`,
+    `🟥 Qizil: <b>${stats.redCards}</b>`,
+    `⭐ O‘rtacha baho: <b>${ratingStr}</b>`,
+  ].join("\n");
+}
+
+export function formatMatchPreview(preview: MatchPreviewData): string {
+  const h2hText = preview.h2h.hasHistory
+    ? `${preview.h2h.homeWins}W · ${preview.h2h.draws}D · ${preview.h2h.awayWins}L`
+    : "<i>Hali o‘zaro uchrashuv bo‘lmagan.</i>";
+
+  return [
+    "⚔️ <b>KEYINGI O‘YIN</b>",
+    "",
+    `<b>${escapeHtml(preview.homeClubName)} vs ${escapeHtml(preview.awayClubName)}</b>`,
+    "",
+    "📊 <b>Liga holati</b>",
+    `${escapeHtml(preview.homeClubName)} — ${preview.homeRank}-o‘rin`,
+    `${escapeHtml(preview.awayClubName)} — ${preview.awayRank}-o‘rin`,
+    "",
+    "⭐ <b>Jamoa OVR</b>",
+    `${preview.homeOvr} vs ${preview.awayOvr}`,
+    "",
+    "🔥 <b>So‘nggi forma</b>",
+    `${preview.homeForm || "—"} vs ${preview.awayForm || "—"}`,
+    "",
+    "⚔️ <b>O‘zaro o‘yinlar</b>",
+    h2hText,
+    "",
+    `🗓 <i>${escapeHtml(preview.scheduledAt)}</i>`,
   ].join("\n");
 }
 

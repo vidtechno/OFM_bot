@@ -1,25 +1,41 @@
-import type { ManagerProfile, Sponsor } from "./progression.repository.js";
+import type { GlobalLeaderboardEntry, ManagerHonour, ManagerProfile, Sponsor } from "./progression.repository.js";
 import type { ManagedClub } from "../leagues/types.js";
 import { escapeHtml, formatMoney } from "../lib/html.js";
 
 export function formatProfile(p: ManagerProfile, clubs: ManagedClub[] = []): string {
-  const managerName = p.username ? `@${p.username}` : p.name;
-  const totalMatches = p.matches || (p.wins + p.draws + p.losses);
-  const winRate = totalMatches > 0 ? Math.round((p.wins / totalMatches) * 100) : 0;
+  const displayName = p.username ? `@${p.username}` : (p.name || "Manager");
+  const xp = p.xp ?? 0;
+  const globalRank = p.globalRank ?? 1;
+  const winRate = p.matches > 0 ? Math.round((p.wins / p.matches) * 100) : 0;
 
   const lines: string[] = [
     "👤 <b>MANAGER PROFILI</b>",
     "",
-    `<b>${escapeHtml(managerName)}</b>`,
-    `⭐ Reyting: <b>${p.rating.toLocaleString("en-US")}</b>`,
+    `<b>${escapeHtml(displayName)}</b>`,
     "",
-    `🎮 Mavsumlar: ${p.seasons}`,
-    `🏆 Chempionlik: <b>${p.titles}</b>`,
+    `⭐ XP: <b>${xp.toLocaleString("en-US")}</b>`,
+    `🌍 Global reyting: <b>#${globalRank}</b>`,
+  ];
+
+  if (p.rating !== undefined) {
+    lines.push(`⭐ Reyting: <b>${p.rating.toLocaleString("en-US")}</b>`);
+  }
+  if (p.seasons !== undefined) {
+    lines.push(`🎮 Mavsumlar: ${p.seasons}`);
+  }
+
+  lines.push(
     "",
     "📊 <b>KARYERA</b>",
     `W ${p.wins} · D ${p.draws} · L ${p.losses}`,
     `Win rate: <b>${winRate}%</b>`,
-  ];
+    "",
+    `🔥 G‘alaba seriyasi: <b>${p.currentWinStreak ?? 0}</b>`,
+    `🛡 Mag‘lubiyatsiz: <b>${p.currentUnbeatenStreak ?? 0}</b>`,
+    `🏅 Rekord seriya: <b>${p.bestWinStreak ?? 0}</b>`,
+    "",
+    `🏆 Chempionlik: <b>${p.titles}</b>`
+  );
 
   if (clubs.length > 0) {
     lines.push("", "🏟 <b>KLUBLARIM</b>");
@@ -34,6 +50,32 @@ export function formatProfile(p: ManagerProfile, clubs: ManagedClub[] = []): str
   return lines.join("\n");
 }
 
+export function formatGlobalLeaderboard(
+  rows: GlobalLeaderboardEntry[],
+  userRank: number,
+  userXp: number
+): string {
+  if (!rows.length) {
+    return "🌍 <b>GLOBAL REYTING</b>\n\n<i>Reyting yozuvlari topilmadi.</i>";
+  }
+
+  const medals = ["🥇", "🥈", "🥉"];
+  const lines: string[] = ["🌍 <b>GLOBAL REYTING</b>", ""];
+
+  rows.slice(0, 10).forEach((entry, idx) => {
+    const medal = medals[idx] ?? `${idx + 1}.`;
+    const label = entry.username ? `@${entry.username}` : entry.name;
+    lines.push(`${medal} ${escapeHtml(label)} — ⭐ <b>${entry.xp.toLocaleString("en-US")} XP</b>`);
+  });
+
+  lines.push("", "────────────────", "");
+  lines.push(`📍 Siz: <b>#${userRank}</b>`);
+  lines.push(`⭐ <b>${userXp.toLocaleString("en-US")} XP</b>`);
+
+  return lines.join("\n");
+}
+
+// Backward compatibility alias for existing tests
 export function formatLeaderboard(rows: ManagerProfile[]): string {
   if (!rows.length) {
     return "🏆 <b>GLOBAL REYTING</b>\n\n<i>Reyting yozuvlari topilmadi.</i>";
@@ -44,8 +86,33 @@ export function formatLeaderboard(rows: ManagerProfile[]): string {
   rows.slice(0, 10).forEach((p, i) => {
     const medal = medals[i] ?? `${i + 1}.`;
     const name = p.username ? `@${p.username}` : p.name;
-    lines.push(`${medal} <b>${escapeHtml(name)}</b> — ⭐<b>${p.rating}</b> <i>(${p.wins}W)</i>`);
+    const xpOrRating = p.xp !== undefined && p.xp > 0 ? `${p.xp} XP` : `${p.rating}`;
+    lines.push(`${medal} <b>${escapeHtml(name)}</b> — ⭐<b>${xpOrRating}</b> <i>(${p.wins}W)</i>`);
   });
+  return lines.join("\n");
+}
+
+export function formatHonours(honours: ManagerHonour[]): string {
+  if (!honours.length) {
+    return "🏆 <b>MANAGER SOVRINLARI</b>\n\n<i>Hozircha sovrinlar mavjud emas.</i>";
+  }
+
+  const lines: string[] = ["🏆 <b>MANAGER SOVRINLARI</b>", ""];
+  for (const h of honours) {
+    const icon =
+      h.honourType === "CHAMPION"
+        ? "🏆"
+        : h.honourType === "RUNNER_UP"
+        ? "🥈"
+        : h.honourType === "THIRD_PLACE"
+        ? "🥉"
+        : h.honourType === "BEST_ATTACK"
+        ? "⚔️"
+        : h.honourType === "BEST_DEFENSE"
+        ? "🛡"
+        : "🏅";
+    lines.push(`${icon} ${escapeHtml(h.title)}`);
+  }
   return lines.join("\n");
 }
 

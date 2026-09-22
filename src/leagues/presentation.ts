@@ -7,11 +7,9 @@ export function formatClubDashboard(
   club: ManagedClub,
   managerName: string,
   nextMatchSnippet?: string,
-  teamOvr?: number,
-  cashBalance?: number
+  teamOvr?: number
 ): string {
   const ovr = teamOvr ?? club.teamOvr ?? 80;
-  const cash = cashBalance ?? club.cash ?? club.budget;
 
   const lines: string[] = [
     `🏟 <b>${escapeHtml(club.clubName.toUpperCase())}</b>`,
@@ -21,7 +19,6 @@ export function formatClubDashboard(
     `⭐ Jamoa OVR: <b>${ovr}</b>`,
     "",
     `💰 Transfer budjeti: <b>${formatMoney(club.budget)}</b>`,
-    `🏦 G‘azna: <b>${formatMoney(cash)}</b>`,
     "",
     "⏭ <b>Keyingi o‘yin</b>",
     nextMatchSnippet ?? "<i>Rejalashtirilgan o‘yin yo‘q.</i>",

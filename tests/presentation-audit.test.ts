@@ -119,8 +119,7 @@ describe("UI/Presentation Design Audit & Consistency Tests", () => {
         },
         "Diyorbek",
         "<b>vs Barcelona</b>\n<i>Bugun · 20:00</i>",
-        84,
-        45_000_000
+        84
       );
 
       expect(output).toContain("🏟 <b>REAL MADRID</b>");
@@ -128,7 +127,7 @@ describe("UI/Presentation Design Audit & Consistency Tests", () => {
       expect(output).toContain("📍 <b>3-o‘rin</b>");
       expect(output).toContain("⭐ Jamoa OVR: <b>84</b>");
       expect(output).toContain("💰 Transfer budjeti: <b>€120M</b>");
-      expect(output).toContain("🏦 G‘azna: <b>€45M</b>");
+      expect(output).not.toContain("G‘azna");
       expect(output).toContain("⏭ <b>Keyingi o‘yin</b>");
       expect(output).toContain("<b>vs Barcelona</b>");
       expect(output).toContain("<i>Bugun · 20:00</i>");
