@@ -18,10 +18,11 @@ describe("league presentation", () => {
       budget: 84_500_000,
     }, "@manager");
     expect(result).toContain("🏟 <b>ARSENAL</b>");
-    expect(result).toContain("👤 Manager: <b>@manager</b>");
-    expect(result).toContain("🏆 Premier League #0001");
+    expect(result).toContain("🏆 <i>Premier League #0001</i>");
     expect(result).toContain("📍 <b>4-o‘rin</b>");
     expect(result).toContain("💰 Transfer budjeti: <b>€84.5M</b>");
+    expect(result).toContain("🏦 G‘azna: <b>€84.5M</b>");
+    expect(result).toContain("⏭ <b>Keyingi o‘yin</b>");
   });
 
   it("countdown vaqt formatini to'g'ri ko'rsatadi", () => {

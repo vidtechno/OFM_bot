@@ -33,11 +33,13 @@ describe("Transfer Market & League Market Presentation", () => {
     expect(formatted).toContain("🛒 <b>TRANSFER BOZORI</b>");
     expect(formatted).toContain("<i>LaLiga #0001</i>");
     expect(formatted).toContain("1. <b>L. Modrić</b>");
-    expect(formatted).toContain("CM · ⭐86 · €15M");
-    expect(formatted).toContain("<i>Real Madrid</i> 🏷 <i>[Sizniki]</i>");
+    expect(formatted).toContain("🎯 CM · ⭐<b>86</b>");
+    expect(formatted).toContain("🏟 Real Madrid 🏷 <i>[Sizniki]</i>");
+    expect(formatted).toContain("💰 <b>€15M</b>");
     expect(formatted).toContain("2. <b>Pedri</b>");
-    expect(formatted).toContain("CM · ⭐88 · €75M");
-    expect(formatted).toContain("<i>Barcelona</i>");
+    expect(formatted).toContain("🎯 CM · ⭐<b>88</b>");
+    expect(formatted).toContain("🏟 Barcelona");
+    expect(formatted).toContain("💰 <b>€75M</b>");
   });
 
   it("formatLeagueListing yagona futbolchi tafsilotlarini va sotuvchi holatini ko'rsatadi", () => {

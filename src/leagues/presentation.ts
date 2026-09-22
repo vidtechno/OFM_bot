@@ -1,5 +1,5 @@
 import type { ManagedClub } from "./types.js";
-import { escapeHtml, formatMoney, formatLobbyCountdown } from "../lib/html.js";
+import { escapeHtml, formatMoney, formatLobbyCountdown, competitionFlag } from "../lib/html.js";
 
 export { formatMoney, formatLobbyCountdown };
 
@@ -16,15 +16,14 @@ export function formatClubDashboard(
   const lines: string[] = [
     `🏟 <b>${escapeHtml(club.clubName.toUpperCase())}</b>`,
     "",
-    `👤 Manager: <b>${escapeHtml(managerName)}</b>`,
-    `🏆 ${escapeHtml(club.leagueName)}`,
+    `🏆 <i>${escapeHtml(club.leagueName)}</i>`,
     `📍 <b>${club.position}-o‘rin</b>`,
     `⭐ Jamoa OVR: <b>${ovr}</b>`,
     "",
     `💰 Transfer budjeti: <b>${formatMoney(club.budget)}</b>`,
     `🏦 G‘azna: <b>${formatMoney(cash)}</b>`,
     "",
-    "⏭ Keyingi o‘yin",
+    "⏭ <b>Keyingi o‘yin</b>",
     nextMatchSnippet ?? "<i>Rejalashtirilgan o‘yin yo‘q.</i>",
   ];
 
@@ -51,7 +50,7 @@ export function claimErrorMessage(error: unknown): string {
   if (message.includes("LEAGUE_PRE_SEASON_LOCKED")) {
     return "⏳ <b>Liga hali boshlanmagan</b>\n<i>Transferlar liga startidan keyin ochiladi.</i>";
   }
-  return "❌ <b>Xatolik yuz berdi</b>\n<i>Klubni olishda xatolik yuz berdi. Qayta urinib ko‘ring.</i>";
+  return "❌ <b>Amal bajarilmadi</b>\n<i>Qayta urinib ko‘ring.</i>";
 }
 
 export function formatOpenLobbies(
@@ -68,27 +67,27 @@ export function formatOpenLobbies(
 ): string {
   const lines: string[] = ["🏆 <b>LIGALAR</b>", ""];
 
-  lines.push(`🎮 Faol turnirlar: <b>${managedClubs.length}/2</b>`, "");
-  if (managedClubs.length >= 2) {
-    lines.push("⚠️ <i>Siz maksimal 2 ta turnirda ishtirok etyapsiz. Yangi klub tanlash uchun joriy klublaringizdan biridan chiqishingiz lozim.</i>", "");
-  }
-
   for (const lobby of lobbies) {
-    const flag = lobby.competitionCode === "UZB" ? "🇺🇿" : (lobby.competitionCode === "LALIGA" ? "🇪🇸" : (lobby.competitionCode === "PL" ? "🏴" : "🌍"));
+    const flag = competitionFlag(lobby.competitionCode);
     const statusText = lobby.status === "OPEN" ? "🟢 <i>Qabul ochiq</i>" : "⚡ <i>Faol liga</i>";
     const countdown = formatLobbyCountdown(lobby.registrationClosesAt);
+    const countdownLine = countdown.includes("Liga boshlanmoqda")
+      ? `⏳ ${countdown}`
+      : `⏳ Boshlanishiga: ${countdown}`;
 
     lines.push(
       `${flag} <b>${escapeHtml(lobby.competitionName)}</b>`,
       statusText,
       `👤 ${lobby.humanCount}/${lobby.maxClubs} manager`,
-      `⏳ Boshlanishiga: ${countdown}`,
+      countdownLine,
       ""
     );
   }
 
-  if (managedClubs.length > 0) {
-    lines.push("📌 <b>MENING LIGALARIM</b>", "");
+  lines.push("📌 <b>MENING LIGALARIM</b>", "");
+  if (managedClubs.length === 0) {
+    lines.push("<i>Hozircha faol turniringiz yo‘q.</i>", "");
+  } else {
     for (const mc of managedClubs) {
       lines.push(
         `⚽ <b>${escapeHtml(mc.clubName)}</b>`,
@@ -97,6 +96,8 @@ export function formatOpenLobbies(
       );
     }
   }
+
+  lines.push(`🎮 Faol turnirlar: <b>${managedClubs.length}/2</b>`);
 
   return lines.join("\n").trim();
 }

@@ -10,7 +10,7 @@ describe("main keyboard", () => {
     };
     expect(keyboard.keyboard).toEqual([
       [{ text: MAIN_MENU.club }, { text: MAIN_MENU.leagues }],
-      [{ text: MAIN_MENU.profile }],
+      [{ text: MAIN_MENU.profile }, { text: MAIN_MENU.about }],
     ]);
     expect(keyboard.resize_keyboard).toBe(true);
     expect(keyboard.is_persistent).toBe(true);

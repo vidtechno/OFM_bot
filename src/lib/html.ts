@@ -85,3 +85,48 @@ export function formatFixtureDate(dateInput: string | Date): string {
   const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   return `${uzTime.getDate()} ${months[uzTime.getMonth()]} · ${hours}:${minutes}`;
 }
+
+export function competitionFlag(code: string | null | undefined): string {
+  if (!code) return "🏆";
+  const upper = code.toUpperCase();
+  if (upper === "UZB") return "🇺🇿";
+  if (upper === "ELITE") return "🇪🇺";
+  if (upper === "LALIGA") return "🇪🇸";
+  if (upper === "PL") return "🏴";
+  return "🏆";
+}
+
+export function formatCompetitionName(code: string | null | undefined, fallbackName?: string): string {
+  if (!code) return fallbackName ?? "";
+  const upper = code.toUpperCase();
+  if (upper === "UZB") return "O‘zbekiston Superligasi";
+  if (upper === "ELITE") return "OFM Elite League";
+  return fallbackName ?? code;
+}
+
+export function formatLeagueNumber(instanceNumber: number): string {
+  return `#${String(instanceNumber).padStart(4, "0")}`;
+}
+
+export function positionGroupLabel(group: string): string {
+  switch (group) {
+    case "GK": return "Darvozabon";
+    case "DEF": return "Himoyachi";
+    case "MID": return "Yarim himoyachi";
+    case "ATT": return "Hujumchi";
+    default: return "Barchasi";
+  }
+}
+
+export function positionGroupPluralLabel(group: string): string {
+  switch (group) {
+    case "GK": return "Darvozabonlar";
+    case "DEF": return "Himoyachilar";
+    case "MID": return "Yarim himoyachilar";
+    case "ATT": return "Hujumchilar";
+    default: return "Barchasi";
+  }
+}
+
+export const htmlEscape = escapeHtml;
+export const formatCountdown = formatLobbyCountdown;

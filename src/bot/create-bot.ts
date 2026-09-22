@@ -2,9 +2,9 @@ import { Bot, InlineKeyboard, type Context } from "grammy";
 import type { UserRepository, RegisteredUser } from "../users/user.repository.js";
 import type { Logger } from "../lib/logger.js";
 import type { RequestProfiler } from "../lib/profiler.js";
-import { escapeHtml, formatMoney } from "../lib/html.js";
+import { escapeHtml, formatMoney, competitionFlag } from "../lib/html.js";
 import type { LeagueRepository } from "../leagues/league.repository.js";
-import type { AvailableClub, ManagedClub } from "../leagues/types.js";
+import type { AvailableClub, ManagedClub, LeagueClubListing } from "../leagues/types.js";
 import { claimErrorMessage, formatClubDashboard, formatOpenLobbies } from "../leagues/presentation.js";
 import type { SquadRepository } from "../squads/squad.repository.js";
 import { formatSquad } from "../squads/presentation.js";
@@ -15,7 +15,7 @@ import type { FixtureRepository } from "../fixtures/fixture.repository.js";
 import { formatFixtureLine, formatUpcomingFixtures } from "../fixtures/presentation.js";
 import type { MatchRepository } from "../matches/match.repository.js";
 import { formatFinances, formatLeaders, formatResults, formatTable } from "../matches/presentation.js";
-import type { TransferRepository } from "../transfers/transfer.repository.js";
+import type { TransferRepository, MarketPlayer } from "../transfers/transfer.repository.js";
 import {
   formatClubPlayers,
   formatLeagueListing,
@@ -61,15 +61,83 @@ async function editOrReply(context: Context, text: string, keyboard: InlineKeybo
   }
 }
 
-function clubListKeyboard(clubs: AvailableClub[], leagueId: string, page: number): InlineKeyboard {
+function clubListKeyboard(clubs: LeagueClubListing[], leagueId: string, page: number): InlineKeyboard {
   const keyboard = new InlineKeyboard();
-  for (const club of clubs.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)) {
-    keyboard.text(club.clubName, `cf:${club.leagueClubId}`).row();
+  const totalPages = Math.ceil(clubs.length / PAGE_SIZE);
+  const start = page * PAGE_SIZE;
+  const currentBatch = clubs.slice(start, start + PAGE_SIZE);
+
+  for (const club of currentBatch) {
+    if (club.isAvailable) {
+      keyboard.text(`✅ ${club.clubName}`, `cf:${club.leagueClubId}`).row();
+    } else {
+      keyboard.text(`❌ ${club.clubName} — band`, "cb:band").row();
+    }
   }
-  if (page > 0) keyboard.text("⬅️", `lg:${leagueId}:${page - 1}`);
-  if ((page + 1) * PAGE_SIZE < clubs.length) keyboard.text("➡️", `lg:${leagueId}:${page + 1}`);
-  if (page > 0 || (page + 1) * PAGE_SIZE < clubs.length) keyboard.row();
+
+  if (totalPages > 1) {
+    if (page > 0) keyboard.text("⬅️ Oldingi", `lg:${leagueId}:${page - 1}`);
+    keyboard.text(`📄 ${page + 1}/${totalPages}`, "noop");
+    if ((page + 1) * PAGE_SIZE < clubs.length) keyboard.text("Keyingi ➡️", `lg:${leagueId}:${page + 1}`);
+    keyboard.row();
+  }
+
   return keyboard.text("↩️ Orqaga", "join");
+}
+
+function buildTransferMarketKeyboard(
+  cbPrefix: "lm" | "gm",
+  clubId: string,
+  group: string,
+  page: number,
+  items: MarketPlayer[],
+  pageSize = 8
+): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+
+  for (const item of items) {
+    const isLm = cbPrefix === "lm";
+    const buyCb = isLm ? `lb:${item.listingId}` : `gb:${item.listingId}`;
+    const ownTag = item.isOwnListing ? " 🏷" : "";
+    keyboard
+      .text(
+        `${item.name} · ${item.position} · ⭐${item.overall} · ${transferMoney(item.askingPrice)}${ownTag}`,
+        buyCb
+      )
+      .row();
+  }
+
+  // Row 1: ALL
+  const allLabel = group === "ALL" ? "✅ 📋 Barchasi" : "📋 Barchasi";
+  keyboard.text(allLabel, `${cbPrefix}:${clubId}:0:ALL`).row();
+
+  // Row 2: GK, DEF
+  const gkLabel = group === "GK" ? "✅ 🧤 Darvozabon" : "🧤 Darvozabon";
+  const defLabel = group === "DEF" ? "✅ 🛡 Himoyachi" : "🛡 Himoyachi";
+  keyboard.text(gkLabel, `${cbPrefix}:${clubId}:0:GK`).text(defLabel, `${cbPrefix}:${clubId}:0:DEF`).row();
+
+  // Row 3: MID, ATT
+  const midLabel = group === "MID" ? "✅ 🎯 Yarim himoyachi" : "🎯 Yarim himoyachi";
+  const attLabel = group === "ATT" ? "✅ ⚡ Hujumchi" : "⚡ Hujumchi";
+  keyboard.text(midLabel, `${cbPrefix}:${clubId}:0:MID`).text(attLabel, `${cbPrefix}:${clubId}:0:ATT`).row();
+
+  // Pagination row: Only show if more than 1 page
+  const hasPrev = page > 0;
+  const hasNext = items.length === pageSize;
+  if (hasPrev || hasNext) {
+    if (hasPrev) {
+      keyboard.text("⬅️ Oldingi", `${cbPrefix}:${clubId}:${page - 1}:${group}`);
+    }
+    keyboard.text(`📄 ${page + 1}`, "noop");
+    if (hasNext) {
+      keyboard.text("Keyingi ➡️", `${cbPrefix}:${clubId}:${page + 1}:${group}`);
+    }
+    keyboard.row();
+  }
+
+  // Row 5: Back
+  keyboard.text("↩️ Orqaga", `tr:${clubId}`);
+  return keyboard;
 }
 
 function dashboardKeyboard(leagueClubId: string): InlineKeyboard {
@@ -177,8 +245,8 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
 
     const keyboard = new InlineKeyboard();
     for (const lobby of lobbies) {
-      const flag = lobby.competitionCode === "UZB" ? "🇺🇿" : "🌍";
-      keyboard.text(`${flag} ${lobby.competitionName} — Klub tanlash`, `lg:${lobby.leagueId}`).row();
+      const flag = competitionFlag(lobby.competitionCode);
+      keyboard.text(`${flag} ${lobby.competitionName} — Klub tanlash`, `lg:${lobby.leagueId}:0`).row();
     }
     if (managedClubs.length > 0) {
       for (const mc of managedClubs) {
@@ -222,21 +290,60 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
 
     logger.info({ event: "user_registered", userId: user.id, telegramId: user.telegram_id }, "User registered or updated");
 
-    const welcomeLines = [
-      `⚽ Xush kelibsiz, ${telegramUser.first_name}!`,
+    const firstName = escapeHtml(telegramUser.first_name);
+    const welcomeText = [
+      "⚽ <b>OFM GAME</b>",
       "",
-      "OFM Game’da sevimli klubingizni boshqaring: tarkib tuzing, taktika tanlang, transfer qiling va chempionlik uchun kurashing! 🏆",
-    ];
-    if (managedClubs.length === 0) {
-      welcomeLines.push("", "💡 Boshlash uchun quyidagi «🏆 Ligalar» bo‘limiga o‘ting va bo‘sh klubni tanlang 👇");
-    } else {
-      welcomeLines.push("", `🏟 Boshqarayotgan klublaringiz: ${managedClubs.length} ta`, "Kerakli bo‘limni tanlang 👇");
-    }
+      `Xush kelibsiz, <b>${firstName}</b>!`,
+      "",
+      "<i>Klub tanlang. Tarkib tuzing. Taktika yarating.\nTransfer qiling. Chempion bo‘ling.</i>",
+      "",
+      "👥 Jamoani boshqaring",
+      "🧠 O‘yin uslubingizni yarating",
+      "🔁 Transfer bozorida harakat qiling",
+      "📊 Natijalar va statistikani kuzating",
+      "🏆 Mavsum yakunida chempionlik uchun kurashing",
+      "",
+      "<b>O‘yinni boshlash:</b>",
+      "🏆 <b>Ligalar</b> bo‘limiga o‘ting va bo‘sh klubni tanlang.",
+    ].join("\n");
 
     const mainKeyboard = createMainKeyboard(isAdmin(telegramUser.id));
 
-    // Single consolidated message with reply keyboard (50% reduction in Telegram API roundtrips)
-    await context.reply(welcomeLines.join("\n"), { reply_markup: mainKeyboard });
+    await context.reply(welcomeText, { reply_markup: mainKeyboard, parse_mode: "HTML" });
+  });
+
+  bot.hears(MAIN_MENU.about, async (context) => {
+    const text = [
+      "ℹ️ <b>OFM GAME HAQIDA</b>",
+      "",
+      "OFM Game — Telegram ichida ishlaydigan futbol manager o‘yini.",
+      "",
+      "<b>Qanday o‘ynaladi?</b>",
+      "",
+      "1. 🏆 Ligadan bo‘sh klub tanlang.",
+      "2. 👥 Tarkibingizni boshqaring.",
+      "3. 🔥 Asosiy XI tuzing.",
+      "4. 🧠 Taktikani moslang.",
+      "5. 🔁 Transferlar orqali jamoani kuchaytiring.",
+      "6. ⚽ Har kuni o‘yinlarda qatnashing.",
+      "7. 📊 Turnir jadvali va statistikani kuzating.",
+      "8. 🏆 Mavsum yakunida chempionlik uchun kurashing.",
+      "",
+      "<b>Muhim qoidalar:</b>",
+      "• Bir manager maksimal 2 ta faol turnirda qatnasha oladi.",
+      "• Liga boshlanguncha transferlar yopiq.",
+      "• Liga ACTIVE bo‘lgach AI va boshqa managerlar bilan transferlar ochiladi.",
+      "• ACTIVE ligadan chiqsangiz, klub AI boshqaruviga o‘tadi.",
+      "• Klub tarkibi, ochkolar va moliya saqlanadi.",
+      "",
+      "👨‍💻 <b>Muallif</b>",
+      '<a href="https://t.me/diyorbek_anorboyev">@diyorbek_anorboyev</a>',
+      "",
+      "🛟 <b>Support</b>",
+      '<a href="https://t.me/diyorbek_anorboyev">@diyorbek_anorboyev</a>',
+    ].join("\n");
+    await context.reply(text, { parse_mode: "HTML", link_preview_options: { is_disabled: true } });
   });
 
   bot.hears(MAIN_MENU.club, async (context) => {
@@ -361,33 +468,9 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     const clubs = await getContextManagedClubs(context, user.id);
     const club = clubs.find((c) => c.leagueClubId === clubId);
     const items = await transfers.leagueMarket(user.id, clubId, page, 8, group);
-    const keyboard = new InlineKeyboard();
+    const keyboard = buildTransferMarketKeyboard("lm", clubId, group, page, items, 8);
 
-    for (const item of items) {
-      keyboard
-        .text(
-          `${item.name} · ${item.position} · ⭐${item.overall} · ${transferMoney(item.askingPrice)}${item.isOwnListing ? " 🏷" : ""}`,
-          `lb:${item.listingId}`
-        )
-        .row();
-    }
-
-    keyboard
-      .text(group === "ALL" ? "ALL ✅" : "ALL", `lm:${clubId}:0:ALL`)
-      .row()
-      .text(group === "GK" ? "GK ✅" : "GK", `lm:${clubId}:0:GK`)
-      .text(group === "DEF" ? "DEF ✅" : "DEF", `lm:${clubId}:0:DEF`)
-      .row()
-      .text(group === "MID" ? "MID ✅" : "MID", `lm:${clubId}:0:MID`)
-      .text(group === "ATT" ? "ATT ✅" : "ATT", `lm:${clubId}:0:ATT`)
-      .row();
-
-    if (page > 0) keyboard.text("⬅️", `lm:${clubId}:${page - 1}:${group}`);
-    keyboard.text(`${page + 1}`, `lm:${clubId}:${page}:${group}`);
-    if (items.length === 8) keyboard.text("➡️", `lm:${clubId}:${page + 1}:${group}`);
-    keyboard.row().text("↩️ Orqaga", `tr:${clubId}`);
-
-    await editOrReply(context, formatLeagueMarket(items, club?.leagueName), keyboard);
+    await editOrReply(context, formatLeagueMarket(items, club?.leagueName, group), keyboard);
   };
 
   const showMarket = async (
@@ -399,29 +482,12 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     if (!context.from) return;
     const user = await getContextUser(context);
     await transfers.saveInputSession(user.id, "ACTIVE_CLUB", { clubId });
+    const clubs = await getContextManagedClubs(context, user.id);
+    const club = clubs.find((c) => c.leagueClubId === clubId);
     const items = await transfers.market(user.id, clubId, page, 8, group);
-    const keyboard = new InlineKeyboard();
+    const keyboard = buildTransferMarketKeyboard("gm", clubId, group, page, items, 8);
 
-    for (const item of items) {
-      keyboard.text(`${item.name} · ${item.position} · ⭐${item.overall} · ${transferMoney(item.askingPrice)}`, `gb:${item.listingId}`).row();
-    }
-
-    keyboard
-      .text(group === "ALL" ? "ALL ✅" : "ALL", `gm:${clubId}:0:ALL`)
-      .row()
-      .text(group === "GK" ? "GK ✅" : "GK", `gm:${clubId}:0:GK`)
-      .text(group === "DEF" ? "DEF ✅" : "DEF", `gm:${clubId}:0:DEF`)
-      .row()
-      .text(group === "MID" ? "MID ✅" : "MID", `gm:${clubId}:0:MID`)
-      .text(group === "ATT" ? "ATT ✅" : "ATT", `gm:${clubId}:0:ATT`)
-      .row();
-
-    if (page > 0) keyboard.text("⬅️", `gm:${clubId}:${page - 1}:${group}`);
-    keyboard.text(`${page + 1}`, `gm:${clubId}:${page}:${group}`);
-    if (items.length === 8) keyboard.text("➡️", `gm:${clubId}:${page + 1}:${group}`);
-    keyboard.row().text("↩️ Orqaga", `tr:${clubId}`);
-
-    await editOrReply(context, formatMarket(items), keyboard);
+    await editOrReply(context, formatMarket(items, club?.leagueName, group), keyboard);
   };
 
   bot.callbackQuery(/^tr:([0-9a-f-]{36})$/, async (context) => {
@@ -1200,18 +1266,44 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     await editOrReply(context, "🏟 <b>OCHIQ LIGALAR</b>\n\n<i>Klub olish uchun ligani tanlang:</i>", keyboard);
   });
 
-  bot.callbackQuery(/^lg:([0-9a-f-]{36}):(\d+)$/, async (context) => {
+  bot.callbackQuery(/^lg:([0-9a-f-]{36})(?::(\d+))?$/, async (context) => {
     await context.answerCallbackQuery();
-    const leagueId = context.match[1]!;
-    const requestedPage = Number(context.match[2]);
-    const clubs = await leagues.listAvailableClubs(leagueId);
-    if (clubs.length === 0) {
-      await editOrReply(context, "<i>Bu ligadagi barcha klublar band bo‘ldi.</i>", new InlineKeyboard().text("↩️ Orqaga", "join"));
+    const user = await getContextUser(context);
+    const managed = await getContextManagedClubs(context, user.id);
+    if (managed.length >= 2) {
+      await editOrReply(
+        context,
+        "❌ <b>Limitga yetdingiz</b>\n\n<i>Bir murabbiy bir vaqtda maksimal 2 ta faol turnirda qatnasha oladi.</i>",
+        new InlineKeyboard().text("🏆 Ligalar", "join")
+      );
       return;
     }
-    const lastPage = Math.max(0, Math.ceil(clubs.length / PAGE_SIZE) - 1);
-    const page = Math.min(requestedPage, lastPage);
-    await editOrReply(context, `<b>Klub tanlang</b> (${clubs.length} ta mavjud):`, clubListKeyboard(clubs, leagueId, page));
+
+    const leagueId = context.match[1]!;
+    const requestedPage = context.match[2] ? Number(context.match[2]) : 0;
+    try {
+      const details = await leagues.listAllLeagueClubs(leagueId);
+      if (details.clubs.length === 0) {
+        await editOrReply(context, "<i>Bu ligadagi barcha klublar band bo‘ldi yoki liga topilmadi.</i>", new InlineKeyboard().text("↩️ Orqaga", "join"));
+        return;
+      }
+      const flag = competitionFlag(details.competitionCode);
+      const headerTitle = `${flag} <b>${escapeHtml(details.competitionName.toUpperCase())}</b>\n<i>Klub tanlang</i>`;
+      const lastPage = Math.max(0, Math.ceil(details.clubs.length / PAGE_SIZE) - 1);
+      const page = Math.min(requestedPage, lastPage);
+      await editOrReply(context, headerTitle, clubListKeyboard(details.clubs, leagueId, page));
+    } catch (error: unknown) {
+      logger.warn({ event: "list_league_clubs_failed", err: error, leagueId }, "Failed to list league clubs");
+      await editOrReply(context, "❌ <b>Amal bajarilmadi</b>\n<i>Qayta urinib ko‘ring.</i>", new InlineKeyboard().text("↩️ Orqaga", "join"));
+    }
+  });
+
+  bot.callbackQuery("cb:band", async (context) => {
+    await context.answerCallbackQuery({ text: "Bu klub band. Boshqa klub tanlang." });
+  });
+
+  bot.callbackQuery("noop", async (context) => {
+    await context.answerCallbackQuery();
   });
 
   bot.callbackQuery(/^cf:([0-9a-f-]{36})$/, async (context) => {
@@ -1221,8 +1313,8 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     if (managed.length >= 2) {
       await editOrReply(
         context,
-        "❌ <b>Turnir limiti to‘lgan</b>\n\n<i>Siz allaqachon maksimal 2 ta turnirda ishtirok etmoqdasiz. Yangi klub tanlash uchun avval mavjud ligalaringizdan biridan chiqing.</i>",
-        new InlineKeyboard().text("🏆 Ligalar", "menu:leagues")
+        "❌ <b>Limitga yetdingiz</b>\n\n<i>Bir murabbiy bir vaqtda maksimal 2 ta faol turnirda qatnasha oladi.</i>",
+        new InlineKeyboard().text("🏆 Ligalar", "join")
       );
       return;
     }

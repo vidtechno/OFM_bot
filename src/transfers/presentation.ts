@@ -1,5 +1,5 @@
 import type { MarketPlayer, TransferTarget, TransferHistoryItem } from "./transfer.repository.js";
-import { escapeHtml, formatMoney, formatDateTime } from "../lib/html.js";
+import { escapeHtml, formatMoney, formatDateTime, positionGroupPluralLabel } from "../lib/html.js";
 
 export const transferMoney = formatMoney;
 
@@ -79,40 +79,56 @@ export function formatIncomingOffer(buyerClub: string, playerName: string, offer
   ].join("\n");
 }
 
-export function formatMarket(players: MarketPlayer[]): string {
-  const header = "🌍 <b>GLOBAL TRANSFER BOZORI</b>";
+export function formatMarket(players: MarketPlayer[], leagueName?: string, group = "ALL"): string {
+  const groupTitle = positionGroupPluralLabel(group);
+  const lines: string[] = ["🛒 <b>GLOBAL TRANSFER BOZORI</b>"];
+  if (leagueName) lines.push(`🏆 <i>${escapeHtml(leagueName)}</i>`);
+  lines.push("", `📂 Bo‘lim: <b>${escapeHtml(groupTitle)}</b>`, "");
+
   if (!players.length) {
-    return `${header}\n\n<i>Bu bo‘limda hozircha futbolchilar yo‘q.</i>`;
+    lines.push(
+      "<i>Hozircha transferga qo‘yilgan futbolchilar topilmadi.</i>",
+      "",
+      "Boshqa pozitsiyani tanlang yoki keyinroq qayta tekshiring."
+    );
+    return lines.join("\n").trim();
   }
 
-  const lines = [header, ""];
   players.forEach((p, i) => {
+    const posBadge = p.position === "GK" ? "🧤" : (["CB", "LB", "RB", "LWB", "RWB"].includes(p.position) ? "🛡" : (["CM", "CDM", "CAM", "LM", "RM"].includes(p.position) ? "🎯" : "⚡"));
     lines.push(
       `${i + 1}. <b>${escapeHtml(p.name)}</b>`,
-      `${escapeHtml(p.position)} · ⭐${p.overall} · ${formatMoney(p.askingPrice)}`,
-      `<i>${escapeHtml(p.sellerName ?? "Global")}</i>`,
+      `${posBadge} ${escapeHtml(p.position)} · ⭐<b>${p.overall}</b>`,
+      `🏟 ${escapeHtml(p.sellerName ?? "Global")}`,
+      `💰 <b>${formatMoney(p.askingPrice)}</b>`,
       ""
     );
   });
   return lines.join("\n").trim();
 }
 
-export function formatLeagueMarket(players: MarketPlayer[], leagueName?: string): string {
-  const header = [
-    "🛒 <b>TRANSFER BOZORI</b>",
-    leagueName ? `<i>${escapeHtml(leagueName)}</i>` : "",
-  ].filter(Boolean);
+export function formatLeagueMarket(players: MarketPlayer[], leagueName?: string, group = "ALL"): string {
+  const groupTitle = positionGroupPluralLabel(group);
+  const lines: string[] = ["🛒 <b>TRANSFER BOZORI</b>"];
+  if (leagueName) lines.push(`🏆 <i>${escapeHtml(leagueName)}</i>`);
+  lines.push("", `📂 Bo‘lim: <b>${escapeHtml(groupTitle)}</b>`, "");
 
   if (!players.length) {
-    return [...header, "", "<i>Bu bo‘limda hozircha futbolchilar yo‘q.</i>"].join("\n");
+    lines.push(
+      "<i>Hozircha transferga qo‘yilgan futbolchilar topilmadi.</i>",
+      "",
+      "Boshqa pozitsiyani tanlang yoki keyinroq qayta tekshiring."
+    );
+    return lines.join("\n").trim();
   }
 
-  const lines = [...header, ""];
   players.forEach((p, i) => {
+    const posBadge = p.position === "GK" ? "🧤" : (["CB", "LB", "RB", "LWB", "RWB"].includes(p.position) ? "🛡" : (["CM", "CDM", "CAM", "LM", "RM"].includes(p.position) ? "🎯" : "⚡"));
     lines.push(
       `${i + 1}. <b>${escapeHtml(p.name)}</b>`,
-      `${escapeHtml(p.position)} · ⭐${p.overall} · ${formatMoney(p.askingPrice)}`,
-      `<i>${escapeHtml(p.sellerName ?? "Klub")}</i>${p.isOwnListing ? " 🏷 <i>[Sizniki]</i>" : ""}`,
+      `${posBadge} ${escapeHtml(p.position)} · ⭐<b>${p.overall}</b>`,
+      `🏟 ${escapeHtml(p.sellerName ?? "Klub")}${p.isOwnListing ? " 🏷 <i>[Sizniki]</i>" : ""}`,
+      `💰 <b>${formatMoney(p.askingPrice)}</b>`,
       ""
     );
   });

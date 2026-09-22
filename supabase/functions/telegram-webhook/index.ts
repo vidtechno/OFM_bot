@@ -68,6 +68,29 @@ function formatFixtureDate(dateInput) {
   const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   return `${uzTime.getDate()} ${months[uzTime.getMonth()]} \xB7 ${hours}:${minutes}`;
 }
+function competitionFlag(code) {
+  if (!code) return "\u{1F3C6}";
+  const upper = code.toUpperCase();
+  if (upper === "UZB") return "\u{1F1FA}\u{1F1FF}";
+  if (upper === "ELITE") return "\u{1F1EA}\u{1F1FA}";
+  if (upper === "LALIGA") return "\u{1F1EA}\u{1F1F8}";
+  if (upper === "PL") return "\u{1F3F4}";
+  return "\u{1F3C6}";
+}
+function positionGroupPluralLabel(group) {
+  switch (group) {
+    case "GK":
+      return "Darvozabonlar";
+    case "DEF":
+      return "Himoyachilar";
+    case "MID":
+      return "Yarim himoyachilar";
+    case "ATT":
+      return "Hujumchilar";
+    default:
+      return "Barchasi";
+  }
+}
 
 // src/leagues/presentation.ts
 function formatClubDashboard(club, managerName, nextMatchSnippet, teamOvr, cashBalance) {
@@ -76,15 +99,14 @@ function formatClubDashboard(club, managerName, nextMatchSnippet, teamOvr, cashB
   const lines = [
     `\u{1F3DF} <b>${escapeHtml(club.clubName.toUpperCase())}</b>`,
     "",
-    `\u{1F464} Manager: <b>${escapeHtml(managerName)}</b>`,
-    `\u{1F3C6} ${escapeHtml(club.leagueName)}`,
+    `\u{1F3C6} <i>${escapeHtml(club.leagueName)}</i>`,
     `\u{1F4CD} <b>${club.position}-o\u2018rin</b>`,
     `\u2B50 Jamoa OVR: <b>${ovr}</b>`,
     "",
     `\u{1F4B0} Transfer budjeti: <b>${formatMoney(club.budget)}</b>`,
     `\u{1F3E6} G\u2018azna: <b>${formatMoney(cash)}</b>`,
     "",
-    "\u23ED Keyingi o\u2018yin",
+    "\u23ED <b>Keyingi o\u2018yin</b>",
     nextMatchSnippet ?? "<i>Rejalashtirilgan o\u2018yin yo\u2018q.</i>"
   ];
   return lines.join("\n");
@@ -94,8 +116,14 @@ function claimErrorMessage(error) {
   if (message.includes("CLUB_ALREADY_CLAIMED")) {
     return "\u274C <b>Klub band qilingan</b>\n<i>Bu klubni boshqa manager olib bo\u2018ldi. Boshqa klub tanlang.</i>";
   }
-  if (message.includes("COMPETITION_LIMIT_REACHED")) {
-    return "\u274C <b>Cheklov mavjud</b>\n<i>Siz bu ligada allaqachon klub boshqaryapsiz.</i>";
+  if (message.includes("MAX_TOURNAMENT_LIMIT_REACHED")) {
+    return "\u274C <b>Turnir limiti to\u2018lgan</b>\n<i>Siz allaqachon maksimal 2 ta turnirda ishtirok etyapsiz. Yangi klub tanlash uchun mavjud ligalaringizdan biridan chiqing.</i>";
+  }
+  if (message.includes("ALREADY_IN_THIS_LEAGUE") || message.includes("COMPETITION_LIMIT_REACHED")) {
+    return "\u274C <b>Cheklov mavjud</b>\n<i>Siz ushbu liga instansiyasida allaqachon klub boshqaryapsiz.</i>";
+  }
+  if (message.includes("PREVIOUSLY_DEPARTED_THIS_LEAGUE")) {
+    return "\u274C <b>Qayta kirish taqiqlangan</b>\n<i>Siz ushbu faol ligadan avvalroq chiqqansiz. Qayta qo\u2018shilish imkonsiz. Yangi mavsumni kuting.</i>";
   }
   if (message.includes("LEAGUE_NOT_ACTIVE")) {
     return "\u274C <b>Liga faol emas</b>\n<i>Ushbu liga hozirda faol emas.</i>";
@@ -103,24 +131,27 @@ function claimErrorMessage(error) {
   if (message.includes("LEAGUE_PRE_SEASON_LOCKED")) {
     return "\u23F3 <b>Liga hali boshlanmagan</b>\n<i>Transferlar liga startidan keyin ochiladi.</i>";
   }
-  return "\u274C <b>Xatolik yuz berdi</b>\n<i>Klubni olishda xatolik yuz berdi. Qayta urinib ko\u2018ring.</i>";
+  return "\u274C <b>Amal bajarilmadi</b>\n<i>Qayta urinib ko\u2018ring.</i>";
 }
 function formatOpenLobbies(lobbies, managedClubs) {
   const lines = ["\u{1F3C6} <b>LIGALAR</b>", ""];
   for (const lobby of lobbies) {
-    const flag = lobby.competitionCode === "LALIGA" ? "\u{1F1EA}\u{1F1F8}" : "\u{1F3F4}";
+    const flag = competitionFlag(lobby.competitionCode);
     const statusText = lobby.status === "OPEN" ? "\u{1F7E2} <i>Qabul ochiq</i>" : "\u26A1 <i>Faol liga</i>";
     const countdown = formatLobbyCountdown(lobby.registrationClosesAt);
+    const countdownLine = countdown.includes("Liga boshlanmoqda") ? `\u23F3 ${countdown}` : `\u23F3 Boshlanishiga: ${countdown}`;
     lines.push(
       `${flag} <b>${escapeHtml(lobby.competitionName)}</b>`,
       statusText,
       `\u{1F464} ${lobby.humanCount}/${lobby.maxClubs} manager`,
-      `\u23F3 Boshlanishiga: ${countdown}`,
+      countdownLine,
       ""
     );
   }
-  if (managedClubs.length > 0) {
-    lines.push("\u{1F4CC} <b>MENING LIGALARIM</b>", "");
+  lines.push("\u{1F4CC} <b>MENING LIGALARIM</b>", "");
+  if (managedClubs.length === 0) {
+    lines.push("<i>Hozircha faol turniringiz yo\u2018q.</i>", "");
+  } else {
     for (const mc of managedClubs) {
       lines.push(
         `\u26BD <b>${escapeHtml(mc.clubName)}</b>`,
@@ -129,6 +160,7 @@ function formatOpenLobbies(lobbies, managedClubs) {
       );
     }
   }
+  lines.push(`\u{1F3AE} Faol turnirlar: <b>${managedClubs.length}/2</b>`);
   return lines.join("\n").trim();
 }
 
@@ -392,38 +424,51 @@ function formatPlayerProfile(p) {
   }
   return lines.join("\n");
 }
-function formatMarket(players) {
-  const header = "\u{1F30D} <b>GLOBAL TRANSFER BOZORI</b>";
+function formatMarket(players, leagueName, group = "ALL") {
+  const groupTitle = positionGroupPluralLabel(group);
+  const lines = ["\u{1F6D2} <b>GLOBAL TRANSFER BOZORI</b>"];
+  if (leagueName) lines.push(`\u{1F3C6} <i>${escapeHtml(leagueName)}</i>`);
+  lines.push("", `\u{1F4C2} Bo\u2018lim: <b>${escapeHtml(groupTitle)}</b>`, "");
   if (!players.length) {
-    return `${header}
-
-<i>Bu bo\u2018limda hozircha futbolchilar yo\u2018q.</i>`;
+    lines.push(
+      "<i>Hozircha transferga qo\u2018yilgan futbolchilar topilmadi.</i>",
+      "",
+      "Boshqa pozitsiyani tanlang yoki keyinroq qayta tekshiring."
+    );
+    return lines.join("\n").trim();
   }
-  const lines = [header, ""];
   players.forEach((p, i) => {
+    const posBadge = p.position === "GK" ? "\u{1F9E4}" : ["CB", "LB", "RB", "LWB", "RWB"].includes(p.position) ? "\u{1F6E1}" : ["CM", "CDM", "CAM", "LM", "RM"].includes(p.position) ? "\u{1F3AF}" : "\u26A1";
     lines.push(
       `${i + 1}. <b>${escapeHtml(p.name)}</b>`,
-      `${escapeHtml(p.position)} \xB7 \u2B50${p.overall} \xB7 ${formatMoney(p.askingPrice)}`,
-      `<i>${escapeHtml(p.sellerName ?? "Global")}</i>`,
+      `${posBadge} ${escapeHtml(p.position)} \xB7 \u2B50<b>${p.overall}</b>`,
+      `\u{1F3DF} ${escapeHtml(p.sellerName ?? "Global")}`,
+      `\u{1F4B0} <b>${formatMoney(p.askingPrice)}</b>`,
       ""
     );
   });
   return lines.join("\n").trim();
 }
-function formatLeagueMarket(players, leagueName) {
-  const header = [
-    "\u{1F6D2} <b>TRANSFER BOZORI</b>",
-    leagueName ? `<i>${escapeHtml(leagueName)}</i>` : ""
-  ].filter(Boolean);
+function formatLeagueMarket(players, leagueName, group = "ALL") {
+  const groupTitle = positionGroupPluralLabel(group);
+  const lines = ["\u{1F6D2} <b>TRANSFER BOZORI</b>"];
+  if (leagueName) lines.push(`\u{1F3C6} <i>${escapeHtml(leagueName)}</i>`);
+  lines.push("", `\u{1F4C2} Bo\u2018lim: <b>${escapeHtml(groupTitle)}</b>`, "");
   if (!players.length) {
-    return [...header, "", "<i>Bu bo\u2018limda hozircha futbolchilar yo\u2018q.</i>"].join("\n");
+    lines.push(
+      "<i>Hozircha transferga qo\u2018yilgan futbolchilar topilmadi.</i>",
+      "",
+      "Boshqa pozitsiyani tanlang yoki keyinroq qayta tekshiring."
+    );
+    return lines.join("\n").trim();
   }
-  const lines = [...header, ""];
   players.forEach((p, i) => {
+    const posBadge = p.position === "GK" ? "\u{1F9E4}" : ["CB", "LB", "RB", "LWB", "RWB"].includes(p.position) ? "\u{1F6E1}" : ["CM", "CDM", "CAM", "LM", "RM"].includes(p.position) ? "\u{1F3AF}" : "\u26A1";
     lines.push(
       `${i + 1}. <b>${escapeHtml(p.name)}</b>`,
-      `${escapeHtml(p.position)} \xB7 \u2B50${p.overall} \xB7 ${formatMoney(p.askingPrice)}`,
-      `<i>${escapeHtml(p.sellerName ?? "Klub")}</i>${p.isOwnListing ? " \u{1F3F7} <i>[Sizniki]</i>" : ""}`,
+      `${posBadge} ${escapeHtml(p.position)} \xB7 \u2B50<b>${p.overall}</b>`,
+      `\u{1F3DF} ${escapeHtml(p.sellerName ?? "Klub")}${p.isOwnListing ? " \u{1F3F7} <i>[Sizniki]</i>" : ""}`,
+      `\u{1F4B0} <b>${formatMoney(p.askingPrice)}</b>`,
       ""
     );
   });
@@ -563,10 +608,11 @@ var MAIN_MENU = {
   leagues: "\u{1F3C6} Ligalar",
   transfer: "\u{1F30D} Transfer",
   profile: "\u{1F464} Profil",
+  about: "\u2139\uFE0F Bot haqida",
   admin: "\u{1F6E0} Admin panel"
 };
 function createMainKeyboard(isAdmin = false) {
-  const keyboard = new Keyboard().text(MAIN_MENU.club).text(MAIN_MENU.leagues).row().text(MAIN_MENU.profile);
+  const keyboard = new Keyboard().text(MAIN_MENU.club).text(MAIN_MENU.leagues).row().text(MAIN_MENU.profile).text(MAIN_MENU.about);
   if (isAdmin) keyboard.row().text(MAIN_MENU.admin);
   return keyboard.resized().persistent();
 }
@@ -586,16 +632,60 @@ async function editOrReply(context, text, keyboard) {
 }
 function clubListKeyboard(clubs, leagueId, page) {
   const keyboard = new InlineKeyboard();
-  for (const club of clubs.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)) {
-    keyboard.text(club.clubName, `cf:${club.leagueClubId}`).row();
+  const totalPages = Math.ceil(clubs.length / PAGE_SIZE);
+  const start = page * PAGE_SIZE;
+  const currentBatch = clubs.slice(start, start + PAGE_SIZE);
+  for (const club of currentBatch) {
+    if (club.isAvailable) {
+      keyboard.text(`\u2705 ${club.clubName}`, `cf:${club.leagueClubId}`).row();
+    } else {
+      keyboard.text(`\u274C ${club.clubName} \u2014 band`, "cb:band").row();
+    }
   }
-  if (page > 0) keyboard.text("\u2B05\uFE0F", `lg:${leagueId}:${page - 1}`);
-  if ((page + 1) * PAGE_SIZE < clubs.length) keyboard.text("\u27A1\uFE0F", `lg:${leagueId}:${page + 1}`);
-  if (page > 0 || (page + 1) * PAGE_SIZE < clubs.length) keyboard.row();
+  if (totalPages > 1) {
+    if (page > 0) keyboard.text("\u2B05\uFE0F Oldingi", `lg:${leagueId}:${page - 1}`);
+    keyboard.text(`\u{1F4C4} ${page + 1}/${totalPages}`, "noop");
+    if ((page + 1) * PAGE_SIZE < clubs.length) keyboard.text("Keyingi \u27A1\uFE0F", `lg:${leagueId}:${page + 1}`);
+    keyboard.row();
+  }
   return keyboard.text("\u21A9\uFE0F Orqaga", "join");
 }
+function buildTransferMarketKeyboard(cbPrefix, clubId, group, page, items, pageSize = 8) {
+  const keyboard = new InlineKeyboard();
+  for (const item of items) {
+    const isLm = cbPrefix === "lm";
+    const buyCb = isLm ? `lb:${item.listingId}` : `gb:${item.listingId}`;
+    const ownTag = item.isOwnListing ? " \u{1F3F7}" : "";
+    keyboard.text(
+      `${item.name} \xB7 ${item.position} \xB7 \u2B50${item.overall} \xB7 ${transferMoney(item.askingPrice)}${ownTag}`,
+      buyCb
+    ).row();
+  }
+  const allLabel = group === "ALL" ? "\u2705 \u{1F4CB} Barchasi" : "\u{1F4CB} Barchasi";
+  keyboard.text(allLabel, `${cbPrefix}:${clubId}:0:ALL`).row();
+  const gkLabel = group === "GK" ? "\u2705 \u{1F9E4} Darvozabon" : "\u{1F9E4} Darvozabon";
+  const defLabel = group === "DEF" ? "\u2705 \u{1F6E1} Himoyachi" : "\u{1F6E1} Himoyachi";
+  keyboard.text(gkLabel, `${cbPrefix}:${clubId}:0:GK`).text(defLabel, `${cbPrefix}:${clubId}:0:DEF`).row();
+  const midLabel = group === "MID" ? "\u2705 \u{1F3AF} Yarim himoyachi" : "\u{1F3AF} Yarim himoyachi";
+  const attLabel = group === "ATT" ? "\u2705 \u26A1 Hujumchi" : "\u26A1 Hujumchi";
+  keyboard.text(midLabel, `${cbPrefix}:${clubId}:0:MID`).text(attLabel, `${cbPrefix}:${clubId}:0:ATT`).row();
+  const hasPrev = page > 0;
+  const hasNext = items.length === pageSize;
+  if (hasPrev || hasNext) {
+    if (hasPrev) {
+      keyboard.text("\u2B05\uFE0F Oldingi", `${cbPrefix}:${clubId}:${page - 1}:${group}`);
+    }
+    keyboard.text(`\u{1F4C4} ${page + 1}`, "noop");
+    if (hasNext) {
+      keyboard.text("Keyingi \u27A1\uFE0F", `${cbPrefix}:${clubId}:${page + 1}:${group}`);
+    }
+    keyboard.row();
+  }
+  keyboard.text("\u21A9\uFE0F Orqaga", `tr:${clubId}`);
+  return keyboard;
+}
 function dashboardKeyboard(leagueClubId) {
-  return new InlineKeyboard().text("\u{1F465} Jamoa", `sq:${leagueClubId}`).text("\u{1F525} Asosiy XI", `xi:${leagueClubId}`).row().text("\u{1F9E0} Taktika", `tc:${leagueClubId}`).text("\u{1F501} Transfer", `tr:${leagueClubId}`).row().text("\u{1F4C5} O\u2018yinlar", `mt:${leagueClubId}`).text("\u{1F4CA} Liga", `tb:${leagueClubId}`).row();
+  return new InlineKeyboard().text("\u{1F465} Jamoa", `sq:${leagueClubId}`).text("\u{1F525} Asosiy XI", `xi:${leagueClubId}`).row().text("\u{1F9E0} Taktika", `tc:${leagueClubId}`).text("\u{1F501} Transfer", `tr:${leagueClubId}`).row().text("\u{1F4C5} O\u2018yinlar", `mt:${leagueClubId}`).text("\u{1F4CA} Liga", `tb:${leagueClubId}`).row().text("\u{1F6AA} Ligadan chiqish", `lx:${leagueClubId}`).row();
 }
 function createBot({ token, users, leagues, squads, tactics, fixtures, matches, transfers, progression, admin, adminTelegramIds, logger }) {
   const bot = new Bot(token);
@@ -677,8 +767,13 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
     ]);
     const keyboard = new InlineKeyboard();
     for (const lobby of lobbies) {
-      const flag = lobby.competitionCode === "LALIGA" ? "\u{1F1EA}\u{1F1F8}" : "\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}";
-      keyboard.text(`${flag} ${lobby.competitionName} \u2014 Klub tanlash`, `lg:${lobby.leagueId}`).row();
+      const flag = competitionFlag(lobby.competitionCode);
+      keyboard.text(`${flag} ${lobby.competitionName} \u2014 Klub tanlash`, `lg:${lobby.leagueId}:0`).row();
+    }
+    if (managedClubs.length > 0) {
+      for (const mc of managedClubs) {
+        keyboard.text(`\u26BD ${mc.clubName} \u2014 Boshqarish`, `db:${mc.leagueClubId}`).text(`\u{1F6AA} Chiqish`, `lx:${mc.leagueClubId}`).row();
+      }
     }
     keyboard.text("\u{1F504} Yangilash", "refresh:leagues");
     await editOrReply(context, formatOpenLobbies(lobbies, managedClubs), keyboard);
@@ -704,18 +799,57 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
     const managedClubs = startState.managedClubs;
     context.managedClubs = managedClubs;
     logger.info({ event: "user_registered", userId: user.id, telegramId: user.telegram_id }, "User registered or updated");
-    const welcomeLines = [
-      `\u26BD Xush kelibsiz, ${telegramUser.first_name}!`,
+    const firstName = escapeHtml(telegramUser.first_name);
+    const welcomeText = [
+      "\u26BD <b>OFM GAME</b>",
       "",
-      "OFM Game\u2019da sevimli klubingizni boshqaring: tarkib tuzing, taktika tanlang, transfer qiling va chempionlik uchun kurashing! \u{1F3C6}"
-    ];
-    if (managedClubs.length === 0) {
-      welcomeLines.push("", "\u{1F4A1} Boshlash uchun quyidagi \xAB\u{1F3C6} Ligalar\xBB bo\u2018limiga o\u2018ting va bo\u2018sh klubni tanlang \u{1F447}");
-    } else {
-      welcomeLines.push("", `\u{1F3DF} Boshqarayotgan klublaringiz: ${managedClubs.length} ta`, "Kerakli bo\u2018limni tanlang \u{1F447}");
-    }
+      `Xush kelibsiz, <b>${firstName}</b>!`,
+      "",
+      "<i>Klub tanlang. Tarkib tuzing. Taktika yarating.\nTransfer qiling. Chempion bo\u2018ling.</i>",
+      "",
+      "\u{1F465} Jamoani boshqaring",
+      "\u{1F9E0} O\u2018yin uslubingizni yarating",
+      "\u{1F501} Transfer bozorida harakat qiling",
+      "\u{1F4CA} Natijalar va statistikani kuzating",
+      "\u{1F3C6} Mavsum yakunida chempionlik uchun kurashing",
+      "",
+      "<b>O\u2018yinni boshlash:</b>",
+      "\u{1F3C6} <b>Ligalar</b> bo\u2018limiga o\u2018ting va bo\u2018sh klubni tanlang."
+    ].join("\n");
     const mainKeyboard = createMainKeyboard(isAdmin(telegramUser.id));
-    await context.reply(welcomeLines.join("\n"), { reply_markup: mainKeyboard });
+    await context.reply(welcomeText, { reply_markup: mainKeyboard, parse_mode: "HTML" });
+  });
+  bot.hears(MAIN_MENU.about, async (context) => {
+    const text = [
+      "\u2139\uFE0F <b>OFM GAME HAQIDA</b>",
+      "",
+      "OFM Game \u2014 Telegram ichida ishlaydigan futbol manager o\u2018yini.",
+      "",
+      "<b>Qanday o\u2018ynaladi?</b>",
+      "",
+      "1. \u{1F3C6} Ligadan bo\u2018sh klub tanlang.",
+      "2. \u{1F465} Tarkibingizni boshqaring.",
+      "3. \u{1F525} Asosiy XI tuzing.",
+      "4. \u{1F9E0} Taktikani moslang.",
+      "5. \u{1F501} Transferlar orqali jamoani kuchaytiring.",
+      "6. \u26BD Har kuni o\u2018yinlarda qatnashing.",
+      "7. \u{1F4CA} Turnir jadvali va statistikani kuzating.",
+      "8. \u{1F3C6} Mavsum yakunida chempionlik uchun kurashing.",
+      "",
+      "<b>Muhim qoidalar:</b>",
+      "\u2022 Bir manager maksimal 2 ta faol turnirda qatnasha oladi.",
+      "\u2022 Liga boshlanguncha transferlar yopiq.",
+      "\u2022 Liga ACTIVE bo\u2018lgach AI va boshqa managerlar bilan transferlar ochiladi.",
+      "\u2022 ACTIVE ligadan chiqsangiz, klub AI boshqaruviga o\u2018tadi.",
+      "\u2022 Klub tarkibi, ochkolar va moliya saqlanadi.",
+      "",
+      "\u{1F468}\u200D\u{1F4BB} <b>Muallif</b>",
+      '<a href="https://t.me/diyorbek_anorboyev">@diyorbek_anorboyev</a>',
+      "",
+      "\u{1F6DF} <b>Support</b>",
+      '<a href="https://t.me/diyorbek_anorboyev">@diyorbek_anorboyev</a>'
+    ].join("\n");
+    await context.reply(text, { parse_mode: "HTML", link_preview_options: { is_disabled: true } });
   });
   bot.hears(MAIN_MENU.club, async (context) => {
     if (!context.from) return;
@@ -844,35 +978,18 @@ ${hubText}`;
     const clubs = await getContextManagedClubs(context, user.id);
     const club = clubs.find((c) => c.leagueClubId === clubId);
     const items = await transfers.leagueMarket(user.id, clubId, page, 8, group);
-    const keyboard = new InlineKeyboard();
-    for (const item of items) {
-      keyboard.text(
-        `${item.name} \xB7 ${item.position} \xB7 \u2B50${item.overall} \xB7 ${transferMoney(item.askingPrice)}${item.isOwnListing ? " \u{1F3F7}" : ""}`,
-        `lb:${item.listingId}`
-      ).row();
-    }
-    keyboard.text(group === "ALL" ? "ALL \u2705" : "ALL", `lm:${clubId}:0:ALL`).row().text(group === "GK" ? "GK \u2705" : "GK", `lm:${clubId}:0:GK`).text(group === "DEF" ? "DEF \u2705" : "DEF", `lm:${clubId}:0:DEF`).row().text(group === "MID" ? "MID \u2705" : "MID", `lm:${clubId}:0:MID`).text(group === "ATT" ? "ATT \u2705" : "ATT", `lm:${clubId}:0:ATT`).row();
-    if (page > 0) keyboard.text("\u2B05\uFE0F", `lm:${clubId}:${page - 1}:${group}`);
-    keyboard.text(`${page + 1}`, `lm:${clubId}:${page}:${group}`);
-    if (items.length === 8) keyboard.text("\u27A1\uFE0F", `lm:${clubId}:${page + 1}:${group}`);
-    keyboard.row().text("\u21A9\uFE0F Orqaga", `tr:${clubId}`);
-    await editOrReply(context, formatLeagueMarket(items, club?.leagueName), keyboard);
+    const keyboard = buildTransferMarketKeyboard("lm", clubId, group, page, items, 8);
+    await editOrReply(context, formatLeagueMarket(items, club?.leagueName, group), keyboard);
   };
   const showMarket = async (context, clubId, page, group = "ALL") => {
     if (!context.from) return;
     const user = await getContextUser(context);
     await transfers.saveInputSession(user.id, "ACTIVE_CLUB", { clubId });
+    const clubs = await getContextManagedClubs(context, user.id);
+    const club = clubs.find((c) => c.leagueClubId === clubId);
     const items = await transfers.market(user.id, clubId, page, 8, group);
-    const keyboard = new InlineKeyboard();
-    for (const item of items) {
-      keyboard.text(`${item.name} \xB7 ${item.position} \xB7 \u2B50${item.overall} \xB7 ${transferMoney(item.askingPrice)}`, `gb:${item.listingId}`).row();
-    }
-    keyboard.text(group === "ALL" ? "ALL \u2705" : "ALL", `gm:${clubId}:0:ALL`).row().text(group === "GK" ? "GK \u2705" : "GK", `gm:${clubId}:0:GK`).text(group === "DEF" ? "DEF \u2705" : "DEF", `gm:${clubId}:0:DEF`).row().text(group === "MID" ? "MID \u2705" : "MID", `gm:${clubId}:0:MID`).text(group === "ATT" ? "ATT \u2705" : "ATT", `gm:${clubId}:0:ATT`).row();
-    if (page > 0) keyboard.text("\u2B05\uFE0F", `gm:${clubId}:${page - 1}:${group}`);
-    keyboard.text(`${page + 1}`, `gm:${clubId}:${page}:${group}`);
-    if (items.length === 8) keyboard.text("\u27A1\uFE0F", `gm:${clubId}:${page + 1}:${group}`);
-    keyboard.row().text("\u21A9\uFE0F Orqaga", `tr:${clubId}`);
-    await editOrReply(context, formatMarket(items), keyboard);
+    const keyboard = buildTransferMarketKeyboard("gm", clubId, group, page, items, 8);
+    await editOrReply(context, formatMarket(items, club?.leagueName, group), keyboard);
   };
   bot.callbackQuery(/^tr:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
@@ -1583,21 +1700,55 @@ Kodni do\u2018stlaringizga yuboring. Ular \u201CKod bilan qo\u2018shilish\u201D 
     keyboard.text("\u21A9\uFE0F Orqaga", "join");
     await editOrReply(context, "\u{1F3DF} <b>OCHIQ LIGALAR</b>\n\n<i>Klub olish uchun ligani tanlang:</i>", keyboard);
   });
-  bot.callbackQuery(/^lg:([0-9a-f-]{36}):(\d+)$/, async (context) => {
+  bot.callbackQuery(/^lg:([0-9a-f-]{36})(?::(\d+))?$/, async (context) => {
     await context.answerCallbackQuery();
-    const leagueId = context.match[1];
-    const requestedPage = Number(context.match[2]);
-    const clubs = await leagues.listAvailableClubs(leagueId);
-    if (clubs.length === 0) {
-      await editOrReply(context, "<i>Bu ligadagi barcha klublar band bo\u2018ldi.</i>", new InlineKeyboard().text("\u21A9\uFE0F Orqaga", "join"));
+    const user = await getContextUser(context);
+    const managed = await getContextManagedClubs(context, user.id);
+    if (managed.length >= 2) {
+      await editOrReply(
+        context,
+        "\u274C <b>Limitga yetdingiz</b>\n\n<i>Bir murabbiy bir vaqtda maksimal 2 ta faol turnirda qatnasha oladi.</i>",
+        new InlineKeyboard().text("\u{1F3C6} Ligalar", "join")
+      );
       return;
     }
-    const lastPage = Math.max(0, Math.ceil(clubs.length / PAGE_SIZE) - 1);
-    const page = Math.min(requestedPage, lastPage);
-    await editOrReply(context, `<b>Klub tanlang</b> (${clubs.length} ta mavjud):`, clubListKeyboard(clubs, leagueId, page));
+    const leagueId = context.match[1];
+    const requestedPage = context.match[2] ? Number(context.match[2]) : 0;
+    try {
+      const details = await leagues.listAllLeagueClubs(leagueId);
+      if (details.clubs.length === 0) {
+        await editOrReply(context, "<i>Bu ligadagi barcha klublar band bo\u2018ldi yoki liga topilmadi.</i>", new InlineKeyboard().text("\u21A9\uFE0F Orqaga", "join"));
+        return;
+      }
+      const flag = competitionFlag(details.competitionCode);
+      const headerTitle = `${flag} <b>${escapeHtml(details.competitionName.toUpperCase())}</b>
+<i>Klub tanlang</i>`;
+      const lastPage = Math.max(0, Math.ceil(details.clubs.length / PAGE_SIZE) - 1);
+      const page = Math.min(requestedPage, lastPage);
+      await editOrReply(context, headerTitle, clubListKeyboard(details.clubs, leagueId, page));
+    } catch (error) {
+      logger.warn({ event: "list_league_clubs_failed", err: error, leagueId }, "Failed to list league clubs");
+      await editOrReply(context, "\u274C <b>Amal bajarilmadi</b>\n<i>Qayta urinib ko\u2018ring.</i>", new InlineKeyboard().text("\u21A9\uFE0F Orqaga", "join"));
+    }
+  });
+  bot.callbackQuery("cb:band", async (context) => {
+    await context.answerCallbackQuery({ text: "Bu klub band. Boshqa klub tanlang." });
+  });
+  bot.callbackQuery("noop", async (context) => {
+    await context.answerCallbackQuery();
   });
   bot.callbackQuery(/^cf:([0-9a-f-]{36})$/, async (context) => {
     await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const managed = await getContextManagedClubs(context, user.id);
+    if (managed.length >= 2) {
+      await editOrReply(
+        context,
+        "\u274C <b>Limitga yetdingiz</b>\n\n<i>Bir murabbiy bir vaqtda maksimal 2 ta faol turnirda qatnasha oladi.</i>",
+        new InlineKeyboard().text("\u{1F3C6} Ligalar", "join")
+      );
+      return;
+    }
     const leagueClubId = context.match[1];
     const club = await leagues.getAvailableClub(leagueClubId);
     if (!club) {
@@ -1616,12 +1767,66 @@ Kodni do\u2018stlaringizga yuboring. Ular \u201CKod bilan qo\u2018shilish\u201D 
     try {
       const result = await leagues.claimClub(user.id, context.match[1]);
       logger.info({ event: "club_claimed", userId: user.id, leagueClubId: result.leagueClubId }, "Club claimed");
+      delete context.managedClubs;
       const club = (await leagues.listManagedClubs(user.id)).find((item) => item.leagueClubId === result.leagueClubId);
       if (!club) throw new Error("CLAIMED_CLUB_NOT_FOUND");
       await showDashboard(context, club);
     } catch (error) {
       logger.warn({ event: "club_claim_failed", err: error, userId: user.id }, "Club claim failed");
       await editOrReply(context, claimErrorMessage(error), new InlineKeyboard().text("\u21A9\uFE0F Orqaga", "join"));
+    }
+  });
+  bot.callbackQuery(/^lx:([0-9a-f-]{36})$/, async (context) => {
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const leagueClubId = context.match[1];
+    const clubs = await leagues.listManagedClubs(user.id);
+    const club = clubs.find((c) => c.leagueClubId === leagueClubId);
+    if (!club) {
+      await editOrReply(context, "<i>Klub topilmadi yoki sizga tegishli emas.</i>", new InlineKeyboard().text("\u21A9\uFE0F Orqaga", "menu:leagues"));
+      return;
+    }
+    const isPending = club.status === "OPEN";
+    const statusNote = isPending ? "\u2022 Ushbu liga hali boshlanmagan (OPEN). Chiqsangiz, klub darhol boshqa managerlar uchun bo\u2018shaydi." : "\u2022 Ushbu liga allaqachon FAOL (ACTIVE). Chiqsangiz, klub AI boshqaruviga o\u2018tkaziladi (tarkib, ochkolar va byudjet saqlanadi). Siz ushbu mavsumda bu ligaga qayta kira olmaysiz.";
+    const text = [
+      `\u26A0\uFE0F <b>Ligadan chiqishni tasdiqlaysizmi?</b>`,
+      "",
+      `\u{1F3DF} Klub: <b>${escapeHtml(club.clubName)}</b>`,
+      `\u{1F3C6} Liga: <i>${escapeHtml(club.leagueName)}</i>`,
+      "",
+      statusNote,
+      "",
+      `<i>Rostdan ham ushbu ligani tark etmoqchimisiz?</i>`
+    ].join("\n");
+    const keyboard = new InlineKeyboard().text("\u2705 Ha, chiqish", `lxc:${club.leagueClubId}`).row().text("\u274C Bekor qilish", `db:${club.leagueClubId}`);
+    await editOrReply(context, text, keyboard);
+  });
+  bot.callbackQuery(/^lxc:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery({ text: "Ligadan chiqilmoqda\u2026" });
+    const user = await getContextUser(context);
+    const leagueClubId = context.match[1];
+    try {
+      const result = await leagues.exitLeagueClub(user.id, leagueClubId);
+      logger.info({ event: "league_exited", userId: user.id, leagueClubId, result }, "User exited league");
+      delete context.managedClubs;
+      const message = [
+        "\u2705 <b>Siz ligadan muvaffaqiyatli chiqdingiz!</b>",
+        "",
+        `\u{1F3DF} Klub: <b>${escapeHtml(result.clubName)}</b>`,
+        `\u{1F3C6} Liga: <i>${escapeHtml(result.leagueName)}</i>`,
+        "",
+        result.leagueStatus === "OPEN" ? "<i>Klub boshqa managerlar uchun bo\u2018shatildi.</i>" : "<i>Klub AI boshqaruviga o\u2018tkazildi.</i>"
+      ].join("\n");
+      const keyboard = new InlineKeyboard().text("\u{1F3C6} Ligalar ro\u2018yxati", "menu:leagues");
+      await editOrReply(context, message, keyboard);
+    } catch (error) {
+      logger.warn({ event: "league_exit_failed", err: error, userId: user.id }, "League exit failed");
+      await editOrReply(
+        context,
+        "\u274C <b>Xatolik yuz berdi</b>\n<i>Ligadan chiqishda xatolik yuz berdi yoki ruxsat berilmadi.</i>",
+        new InlineKeyboard().text("\u21A9\uFE0F Orqaga", "menu:leagues")
+      );
     }
   });
   bot.callbackQuery(/^db:([0-9a-f-]{36})$/, async (context) => {
@@ -2106,6 +2311,32 @@ var LeagueRepository = class {
       clubCode: one(row.clubs).code
     })).sort((a, b) => a.clubName.localeCompare(b.clubName));
   }
+  async listAllLeagueClubs(leagueId) {
+    const { data: instance, error: instError } = await this.database.from("league_instances").select("id, instance_number, competitions!inner(code, name)").eq("id", leagueId).single();
+    if (instError || !instance) throw new Error("LEAGUE_NOT_FOUND");
+    const comp = one(instance.competitions);
+    const { data, error } = await this.database.from("league_clubs").select("id, manager_type, manager_user_id, clubs!inner(name, code), users(first_name, username)").eq("league_instance_id", leagueId).order("club_id");
+    if (error) throw new Error(`Klublarni olishda xato: ${error.message}`);
+    const clubList = (data ?? []).map((row) => {
+      const club = one(row.clubs);
+      const isAvailable = row.manager_type === "AI";
+      const user = row.users ? one(row.users) : null;
+      const managerName = user ? user.first_name || user.username || "Manager" : null;
+      return {
+        leagueClubId: row.id,
+        clubName: club.name,
+        clubCode: club.code,
+        isAvailable,
+        managerName
+      };
+    }).sort((a, b) => a.clubName.localeCompare(b.clubName));
+    return {
+      competitionCode: comp.code,
+      competitionName: comp.name,
+      instanceNumber: instance.instance_number,
+      clubs: clubList
+    };
+  }
   async getAvailableClub(leagueClubId) {
     const { data, error } = await this.database.from("league_clubs").select("id, clubs!inner(name, code)").eq("id", leagueClubId).eq("manager_type", "AI").maybeSingle();
     if (error) throw new Error(`Klubni olishda xato: ${error.message}`);
@@ -2120,8 +2351,23 @@ var LeagueRepository = class {
     if (!result) throw new Error("CLAIM_RESULT_MISSING");
     return { leagueClubId: result.league_club_id, clubName: result.club_name, leagueName: result.league_name };
   }
+  async exitLeagueClub(userId, leagueClubId) {
+    const { data, error } = await this.database.rpc("exit_league_club", {
+      p_user_id: userId,
+      p_league_club_id: leagueClubId
+    });
+    if (error) throw new Error(error.message);
+    const result = data?.[0];
+    if (!result) throw new Error("EXIT_RESULT_MISSING");
+    return {
+      leagueClubId: result.league_club_id,
+      clubName: result.club_name,
+      leagueName: result.league_name,
+      leagueStatus: result.league_status
+    };
+  }
   async listManagedClubs(userId) {
-    const { data, error } = await this.database.from("league_clubs").select("id, points, cash_balance, clubs!inner(name, starting_budget), league_instances!inner(instance_number, competitions!inner(name))").eq("manager_user_id", userId).order("created_at");
+    const { data, error } = await this.database.from("league_clubs").select("id, points, cash_balance, clubs!inner(name, starting_budget), league_instances!inner(id, instance_number, status, competitions!inner(name))").eq("manager_user_id", userId).order("created_at");
     if (error) throw new Error(`Manager klublarini olishda xato: ${error.message}`);
     return (data ?? []).map((row) => {
       const club = one(row.clubs);
@@ -2129,12 +2375,14 @@ var LeagueRepository = class {
       const competition = one(league.competitions);
       return {
         leagueClubId: row.id,
+        leagueId: league.id,
         clubName: club.name,
         competitionName: competition.name,
         leagueName: `${competition.name} #${String(league.instance_number).padStart(4, "0")}`,
         position: 1,
         points: row.points,
-        budget: Number(row.cash_balance ?? club.starting_budget)
+        budget: Number(row.cash_balance ?? club.starting_budget),
+        status: league.status
       };
     });
   }
@@ -2674,7 +2922,7 @@ var TransferRepository = class {
     );
     let query = this.database.from("global_market_listings").select(
       "id, asking_price, available_until, seller_name, player_id, players!inner(short_name, age, primary_position, player_attributes!inner(overall))"
-    ).eq("status", "ACTIVE").is("club_player_id", null).gt("available_until", (/* @__PURE__ */ new Date()).toISOString()).order("asking_price", { ascending: false });
+    ).eq("status", "ACTIVE").is("club_player_id", null).eq("league_instance_id", owner.league_instance_id).gt("available_until", (/* @__PURE__ */ new Date()).toISOString()).order("asking_price", { ascending: false });
     if (positionGroup !== "ALL") {
       const posMap = {
         GK: ["GK"],

@@ -16,6 +16,21 @@ export interface AvailableClub {
   clubCode: string;
 }
 
+export interface LeagueClubListing {
+  leagueClubId: string;
+  clubName: string;
+  clubCode: string;
+  isAvailable: boolean;
+  managerName?: string | null;
+}
+
+export interface LeagueDetailsWithClubs {
+  competitionCode: string;
+  competitionName: string;
+  instanceNumber: number;
+  clubs: LeagueClubListing[];
+}
+
 export interface ManagedClub {
   leagueClubId: string;
   leagueId?: string;

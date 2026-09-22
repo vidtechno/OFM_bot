@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { AvailableClub, ClaimResult, CompetitionSummary, LeagueSummary, ManagedClub } from "./types.js";
+import type { AvailableClub, ClaimResult, CompetitionSummary, LeagueClubListing, LeagueDetailsWithClubs, LeagueSummary, ManagedClub } from "./types.js";
 
 export interface PrivateLeague { leagueId:string; inviteCode:string; }
 export interface OpenLobbySummary {
@@ -105,6 +105,46 @@ export class LeagueRepository {
       clubName: one(row.clubs).name,
       clubCode: one(row.clubs).code,
     })).sort((a: AvailableClub, b: AvailableClub) => a.clubName.localeCompare(b.clubName));
+  }
+
+  async listAllLeagueClubs(leagueId: string): Promise<LeagueDetailsWithClubs> {
+    const { data: instance, error: instError } = await this.database
+      .from("league_instances")
+      .select("id, instance_number, competitions!inner(code, name)")
+      .eq("id", leagueId)
+      .single();
+    if (instError || !instance) throw new Error("LEAGUE_NOT_FOUND");
+
+    const comp = one<any>(instance.competitions);
+
+    const { data, error } = await this.database
+      .from("league_clubs")
+      .select("id, manager_type, manager_user_id, clubs!inner(name, code), users(first_name, username)")
+      .eq("league_instance_id", leagueId)
+      .order("club_id");
+
+    if (error) throw new Error(`Klublarni olishda xato: ${error.message}`);
+
+    const clubList: LeagueClubListing[] = (data ?? []).map((row: any) => {
+      const club = one<any>(row.clubs);
+      const isAvailable = row.manager_type === "AI";
+      const user = row.users ? one<any>(row.users) : null;
+      const managerName = user ? (user.first_name || user.username || "Manager") : null;
+      return {
+        leagueClubId: row.id,
+        clubName: club.name,
+        clubCode: club.code,
+        isAvailable,
+        managerName,
+      };
+    }).sort((a: LeagueClubListing, b: LeagueClubListing) => a.clubName.localeCompare(b.clubName));
+
+    return {
+      competitionCode: comp.code,
+      competitionName: comp.name,
+      instanceNumber: instance.instance_number,
+      clubs: clubList,
+    };
   }
 
   async getAvailableClub(leagueClubId: string): Promise<AvailableClub | null> {

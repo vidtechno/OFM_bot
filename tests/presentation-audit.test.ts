@@ -124,13 +124,12 @@ describe("UI/Presentation Design Audit & Consistency Tests", () => {
       );
 
       expect(output).toContain("🏟 <b>REAL MADRID</b>");
-      expect(output).toContain("👤 Manager: <b>Diyorbek</b>");
-      expect(output).toContain("🏆 LaLiga #0001");
+      expect(output).toContain("🏆 <i>LaLiga #0001</i>");
       expect(output).toContain("📍 <b>3-o‘rin</b>");
       expect(output).toContain("⭐ Jamoa OVR: <b>84</b>");
       expect(output).toContain("💰 Transfer budjeti: <b>€120M</b>");
       expect(output).toContain("🏦 G‘azna: <b>€45M</b>");
-      expect(output).toContain("⏭ Keyingi o‘yin");
+      expect(output).toContain("⏭ <b>Keyingi o‘yin</b>");
       expect(output).toContain("<b>vs Barcelona</b>");
       expect(output).toContain("<i>Bugun · 20:00</i>");
     });
@@ -212,7 +211,7 @@ describe("UI/Presentation Design Audit & Consistency Tests", () => {
     it("renders transfer market and empty state", () => {
       const empty = formatLeagueMarket([], "LaLiga #0001");
       expect(empty).toContain("🛒 <b>TRANSFER BOZORI</b>");
-      expect(empty).toContain("<i>Bu bo‘limda hozircha futbolchilar yo‘q.</i>");
+      expect(empty).toContain("<i>Hozircha transferga qo‘yilgan futbolchilar topilmadi.</i>");
 
       const market = formatLeagueMarket([
         {
@@ -230,8 +229,9 @@ describe("UI/Presentation Design Audit & Consistency Tests", () => {
 
       expect(market).toContain("🛒 <b>TRANSFER BOZORI</b>");
       expect(market).toContain("1. <b>Cole Palmer</b>");
-      expect(market).toContain("ST · ⭐84 · €55M");
-      expect(market).toContain("<i>Chelsea</i>");
+      expect(market).toContain("⚡ ST · ⭐<b>84</b>");
+      expect(market).toContain("🏟 Chelsea");
+      expect(market).toContain("💰 <b>€55M</b>");
     });
 
     it("renders player profile and incoming offers", () => {
