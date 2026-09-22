@@ -49,41 +49,81 @@ export function formatLobbyCountdown(targetDate: string | Date | null): string {
   return "<b>Liga boshlanmoqda...</b>";
 }
 
-export function formatDateTime(dateInput: string | Date): string {
+interface TashkentParts {
+  day: number;
+  month: string;
+  hours: string;
+  minutes: string;
+  isToday: boolean;
+  isTomorrow: boolean;
+}
+
+function getTashkentParts(dateInput: string | Date): TashkentParts {
   const d = new Date(dateInput);
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  // Use Tashkent time offset (+05:00)
-  const utc = d.getTime() + d.getTimezoneOffset() * 60_000;
-  const uzTime = new Date(utc + 5 * 3_600_000);
-  const day = uzTime.getDate();
-  const month = months[uzTime.getMonth()];
-  const hours = String(uzTime.getHours()).padStart(2, "0");
-  const minutes = String(uzTime.getMinutes()).padStart(2, "0");
-  return `${day} ${month} · ${hours}:${minutes}`;
+  const now = new Date();
+
+  const formatter = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Tashkent",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+
+  const parts = formatter.formatToParts(d).reduce<Record<string, string>>((acc, part) => {
+    acc[part.type] = part.value;
+    return acc;
+  }, {});
+
+  const nowFormatter = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Tashkent",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+  });
+
+  const targetDateFormatted = nowFormatter.format(d);
+  const nowDateFormatted = nowFormatter.format(now);
+  const tomorrow = new Date(now.getTime() + 86_400_000);
+  const tomorrowDateFormatted = nowFormatter.format(tomorrow);
+
+  return {
+    day: Number(parts.day ?? 1),
+    month: parts.month ?? "",
+    hours: parts.hour ?? "00",
+    minutes: parts.minute ?? "00",
+    isToday: targetDateFormatted === nowDateFormatted,
+    isTomorrow: targetDateFormatted === tomorrowDateFormatted,
+  };
+}
+
+export function formatDateTime(dateInput: string | Date): string {
+  const p = getTashkentParts(dateInput);
+  return `${p.day} ${p.month} · ${p.hours}:${p.minutes}`;
 }
 
 export function formatFixtureDate(dateInput: string | Date): string {
-  const d = new Date(dateInput);
-  const now = new Date();
-  const utc = d.getTime() + d.getTimezoneOffset() * 60_000;
-  const uzTime = new Date(utc + 5 * 3_600_000);
-
-  const utcNow = now.getTime() + now.getTimezoneOffset() * 60_000;
-  const uzNow = new Date(utcNow + 5 * 3_600_000);
-
-  const isToday =
-    uzTime.getDate() === uzNow.getDate() &&
-    uzTime.getMonth() === uzNow.getMonth() &&
-    uzTime.getFullYear() === uzNow.getFullYear();
-
-  const hours = String(uzTime.getHours()).padStart(2, "0");
-  const minutes = String(uzTime.getMinutes()).padStart(2, "0");
-
-  if (isToday) {
-    return `Bugun · ${hours}:${minutes}`;
+  const p = getTashkentParts(dateInput);
+  if (p.isToday) {
+    return `Bugun · ${p.hours}:${p.minutes}`;
   }
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  return `${uzTime.getDate()} ${months[uzTime.getMonth()]} · ${hours}:${minutes}`;
+  if (p.isTomorrow) {
+    return `Ertaga · ${p.hours}:${p.minutes}`;
+  }
+  return `${p.day} ${p.month} · ${p.hours}:${p.minutes}`;
+}
+
+export function formatMatchPreviewDate(dateInput: string | Date): string {
+  const p = getTashkentParts(dateInput);
+  if (p.isToday) {
+    return `Bugun, ${p.day} ${p.month} · ${p.hours}:${p.minutes}`;
+  }
+  if (p.isTomorrow) {
+    return `Ertaga, ${p.day} ${p.month} · ${p.hours}:${p.minutes}`;
+  }
+  return `${p.day} ${p.month} · ${p.hours}:${p.minutes}`;
 }
 
 export function competitionFlag(code: string | null | undefined): string {

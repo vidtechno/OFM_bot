@@ -9,7 +9,7 @@ export function formatClubDashboard(
   nextMatchSnippet?: string,
   teamOvr?: number
 ): string {
-  const ovr = teamOvr ?? club.teamOvr ?? 80;
+  const ovr = teamOvr ?? club.teamOvr ?? "—";
 
   const lines: string[] = [
     `🏟 <b>${escapeHtml(club.clubName.toUpperCase())}</b>`,

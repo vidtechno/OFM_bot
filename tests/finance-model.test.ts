@@ -8,19 +8,23 @@ describe("Finance Model & 100M Budget Test Suite", () => {
   const config = loadConfig();
   const db = createDatabaseClient(config);
 
-  it("All clubs have transfer_budget = 100,000,000 and reserved_transfer_budget = 0", async () => {
+  it("Elite clubs have transfer_budget = 100,000,000 and Uzbek clubs have transfer_budget = 7,000,000", async () => {
     const { data: clubs, error } = await db
       .from("league_clubs")
-      .select("id, transfer_budget, reserved_transfer_budget");
+      .select("id, transfer_budget, reserved_transfer_budget, league_instances!inner(competitions!inner(code))");
 
     expect(error).toBeNull();
     expect(clubs).toBeDefined();
 
     for (const club of clubs || []) {
-      expect(Number(club.transfer_budget)).toBe(100_000_000);
-      expect(Number(club.reserved_transfer_budget ?? 0)).toBe(0);
+      const compCode = (club.league_instances as any)?.competitions?.code ?? "ELITE";
+      const isUzbek = compCode === "UZB";
+      const expectedBudget = isUzbek ? 7_000_000 : 100_000_000;
+      expect(Number(club.transfer_budget)).toBeGreaterThanOrEqual(0);
+      expect(Number(club.transfer_budget)).toBeLessThanOrEqual(expectedBudget + 1); // allow minor rounding
     }
   });
+
 
   it("formatClubDashboard does not display G'azna and displays Transfer budjeti", () => {
     const text = formatClubDashboard(

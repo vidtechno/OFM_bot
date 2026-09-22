@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AvailableClub, ClaimResult, CompetitionSummary, LeagueClubListing, LeagueDetailsWithClubs, LeagueSummary, ManagedClub } from "./types.js";
+import { calculateTeamOvr } from "../game/team-ovr.js";
 
 export interface PrivateLeague { leagueId:string; inviteCode:string; }
 export interface OpenLobbySummary {
@@ -192,10 +193,11 @@ export class LeagueRepository {
       .order("created_at");
     if (error) throw new Error(`Manager klublarini olishda xato: ${error.message}`);
 
-    return (data ?? []).map((row: any) => {
+    return Promise.all((data ?? []).map(async (row: any) => {
       const club = one<any>(row.clubs);
       const league = one<any>(row.league_instances);
       const competition = one<any>(league.competitions);
+      const teamOvr = await calculateTeamOvr(this.database, row.id);
       return {
         leagueClubId: row.id,
         leagueId: league.id,
@@ -206,8 +208,9 @@ export class LeagueRepository {
         points: row.points,
         budget: Number(row.transfer_budget ?? club.starting_budget ?? 100000000),
         status: league.status,
+        teamOvr,
       };
-    });
+    }));
   }
 
   async releaseScheduledGlobalLeagues(now=new Date()):Promise<number>{
@@ -233,4 +236,7 @@ export class LeagueRepository {
   async privateLeagueByCode(code:string):Promise<PrivateLeague|null>{const{data,error}=await this.database.from("league_instances").select("id,join_code").eq("access_mode","PRIVATE").eq("join_code",code.toUpperCase()).maybeSingle();if(error)throw error;return data?{leagueId:data.id,inviteCode:data.join_code}:null;}
   async listPrivateAvailableClubs(leagueId:string):Promise<AvailableClub[]>{const{data,error}=await this.database.from("league_clubs").select("id,clubs!inner(name,code)").eq("league_instance_id",leagueId).eq("manager_type","AI").order("club_id");if(error)throw error;return(data??[]).map((row:any)=>({leagueClubId:row.id,clubName:one<any>(row.clubs).name,clubCode:one<any>(row.clubs).code})).sort((a,b)=>a.clubName.localeCompare(b.clubName));}
   async claimPrivateClub(userId:string,inviteCode:string,leagueClubId:string):Promise<ClaimResult>{const{data,error}=await this.database.rpc("claim_private_league_club",{p_user_id:userId,p_join_code:inviteCode.toUpperCase(),p_league_club_id:leagueClubId});if(error)throw new Error(error.message);const row=data?.[0];if(!row)throw new Error("PRIVATE_CLAIM_RESULT_MISSING");return{leagueClubId:row.league_club_id,clubName:row.club_name,leagueName:row.league_name};}
+  async getClubTeamOvr(leagueClubId: string): Promise<number> {
+    return calculateTeamOvr(this.database, leagueClubId);
+  }
 }

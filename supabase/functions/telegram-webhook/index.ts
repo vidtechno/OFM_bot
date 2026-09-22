@@ -41,32 +41,64 @@ function formatLobbyCountdown(targetDate) {
   }
   return "<b>Liga boshlanmoqda...</b>";
 }
-function formatDateTime(dateInput) {
-  const d = new Date(dateInput);
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const utc = d.getTime() + d.getTimezoneOffset() * 6e4;
-  const uzTime = new Date(utc + 5 * 36e5);
-  const day = uzTime.getDate();
-  const month = months[uzTime.getMonth()];
-  const hours = String(uzTime.getHours()).padStart(2, "0");
-  const minutes = String(uzTime.getMinutes()).padStart(2, "0");
-  return `${day} ${month} \xB7 ${hours}:${minutes}`;
-}
-function formatFixtureDate(dateInput) {
+function getTashkentParts(dateInput) {
   const d = new Date(dateInput);
   const now = /* @__PURE__ */ new Date();
-  const utc = d.getTime() + d.getTimezoneOffset() * 6e4;
-  const uzTime = new Date(utc + 5 * 36e5);
-  const utcNow = now.getTime() + now.getTimezoneOffset() * 6e4;
-  const uzNow = new Date(utcNow + 5 * 36e5);
-  const isToday = uzTime.getDate() === uzNow.getDate() && uzTime.getMonth() === uzNow.getMonth() && uzTime.getFullYear() === uzNow.getFullYear();
-  const hours = String(uzTime.getHours()).padStart(2, "0");
-  const minutes = String(uzTime.getMinutes()).padStart(2, "0");
-  if (isToday) {
-    return `Bugun \xB7 ${hours}:${minutes}`;
+  const formatter = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Tashkent",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  });
+  const parts = formatter.formatToParts(d).reduce((acc, part) => {
+    acc[part.type] = part.value;
+    return acc;
+  }, {});
+  const nowFormatter = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Tashkent",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric"
+  });
+  const targetDateFormatted = nowFormatter.format(d);
+  const nowDateFormatted = nowFormatter.format(now);
+  const tomorrow = new Date(now.getTime() + 864e5);
+  const tomorrowDateFormatted = nowFormatter.format(tomorrow);
+  return {
+    day: Number(parts.day ?? 1),
+    month: parts.month ?? "",
+    hours: parts.hour ?? "00",
+    minutes: parts.minute ?? "00",
+    isToday: targetDateFormatted === nowDateFormatted,
+    isTomorrow: targetDateFormatted === tomorrowDateFormatted
+  };
+}
+function formatDateTime(dateInput) {
+  const p = getTashkentParts(dateInput);
+  return `${p.day} ${p.month} \xB7 ${p.hours}:${p.minutes}`;
+}
+function formatFixtureDate(dateInput) {
+  const p = getTashkentParts(dateInput);
+  if (p.isToday) {
+    return `Bugun \xB7 ${p.hours}:${p.minutes}`;
   }
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  return `${uzTime.getDate()} ${months[uzTime.getMonth()]} \xB7 ${hours}:${minutes}`;
+  if (p.isTomorrow) {
+    return `Ertaga \xB7 ${p.hours}:${p.minutes}`;
+  }
+  return `${p.day} ${p.month} \xB7 ${p.hours}:${p.minutes}`;
+}
+function formatMatchPreviewDate(dateInput) {
+  const p = getTashkentParts(dateInput);
+  if (p.isToday) {
+    return `Bugun, ${p.day} ${p.month} \xB7 ${p.hours}:${p.minutes}`;
+  }
+  if (p.isTomorrow) {
+    return `Ertaga, ${p.day} ${p.month} \xB7 ${p.hours}:${p.minutes}`;
+  }
+  return `${p.day} ${p.month} \xB7 ${p.hours}:${p.minutes}`;
 }
 function competitionFlag(code) {
   if (!code) return "\u{1F3C6}";
@@ -94,7 +126,7 @@ function positionGroupPluralLabel(group) {
 
 // src/leagues/presentation.ts
 function formatClubDashboard(club, managerName, nextMatchSnippet, teamOvr) {
-  const ovr = teamOvr ?? club.teamOvr ?? 80;
+  const ovr = teamOvr ?? club.teamOvr ?? "\u2014";
   const lines = [
     `\u{1F3DF} <b>${escapeHtml(club.clubName.toUpperCase())}</b>`,
     "",
@@ -741,6 +773,7 @@ var formatAdminStats = (s) => [
   "\u{1F6E0} <b>ADMIN BOSHQARUV PANELI</b>",
   "",
   `\u{1F464} Foydalanuvchilar: <b>${s.users}</b> \xB7 Faol: <b>${s.activeUsers}</b> \xB7 Blok: <b>${s.blockedUsers}</b>`,
+  `\u{1F3C6} Jami aktiv ligalar: <b>${s.activeLeagues}</b> \xB7 Ochiq lobbilar: <b>${s.openLobbies}</b>`,
   `\u{1F3DF} Klublar: <b>${s.humanClubs}</b> manager \xB7 <b>${s.aiClubs}</b> AI`,
   `\u26BD O\u2018yinlar: <b>${s.matches}</b>`,
   `\u{1F504} Takliflar: <b>${s.offers}</b>`,
@@ -882,6 +915,7 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
     return clubs;
   };
   const privateLeagueJoinPending = /* @__PURE__ */ new Set();
+  const adminBroadcastPending = /* @__PURE__ */ new Set();
   const sendUpdate = async (telegramId, text, keyboard) => {
     if (!telegramId) return;
     try {
@@ -945,8 +979,13 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
     const managerName = telegramUser?.username ? `@${telegramUser.username}` : telegramUser?.first_name ?? "Manager";
     const user = await getContextUser(context);
     const profiler = context.profiler;
-    const [next] = profiler ? await profiler.time("league_club_query", () => fixtures.listUpcoming(user.id, club.leagueClubId, 1, true)) : await fixtures.listUpcoming(user.id, club.leagueClubId, 1, true);
-    await editOrReply(context, formatClubDashboard(club, managerName, next ? formatFixtureLine(next) : void 0), dashboardKeyboard(club.leagueClubId));
+    const [upcoming, liveOvr] = await Promise.all([
+      profiler ? profiler.time("league_club_query", () => fixtures.listUpcoming(user.id, club.leagueClubId, 1, true)) : fixtures.listUpcoming(user.id, club.leagueClubId, 1, true),
+      leagues.getClubTeamOvr(club.leagueClubId).catch(() => club.teamOvr)
+    ]);
+    const next = upcoming[0];
+    const teamOvr = liveOvr ?? club.teamOvr;
+    await editOrReply(context, formatClubDashboard(club, managerName, next ? formatFixtureLine(next) : void 0, teamOvr), dashboardKeyboard(club.leagueClubId));
   };
   bot.command("start", async (context) => {
     const telegramUser = context.from;
@@ -1085,17 +1124,32 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
     await showCompetitions(context);
   });
   const adminHome = async (context) => {
-    await editOrReply(context, formatAdminStats(await admin.stats()), new InlineKeyboard().text("Users", "ad:u").text("Sponsors", "ad:s").row().text("Audit log", "ad:a").text("Refresh", "ad:h"));
+    await editOrReply(
+      context,
+      formatAdminStats(await admin.stats()),
+      new InlineKeyboard().text("Users", "ad:u").text("Sponsors", "ad:s").row().text("Audit log", "ad:a").text("\u{1F4E2} Xabar yuborish", "ad:b").row().text("Refresh", "ad:h")
+    );
   };
   bot.hears(MAIN_MENU.admin, async (context) => {
     if (!context.from || !isAdmin(context.from.id)) return;
     await adminHome(context);
   });
-  bot.callbackQuery(/^ad:([usah])$/, async (context) => {
+  bot.callbackQuery(/^ad:([usahb])$/, async (context) => {
     if (!context.from || !isAdmin(context.from.id)) return context.answerCallbackQuery({ text: "Ruxsat yo\u2018q" });
     await context.answerCallbackQuery();
     const section2 = context.match[1];
-    if (section2 === "h") return adminHome(context);
+    if (section2 === "h") {
+      adminBroadcastPending.delete(context.from.id);
+      return adminHome(context);
+    }
+    if (section2 === "b") {
+      adminBroadcastPending.add(context.from.id);
+      return editOrReply(
+        context,
+        "\u{1F4E2} <b>BARCHA FOYDALANUVCHILARGA XABAR YUBORISH</b>\n\nBarcha faol bot foydalanuvchilariga yubormoqchi bo\u2018lgan xabaringiz matnini kiriting:\n\n<i>(HTML teglari qo\u2018llab-quvvatlanadi. Bekor qilish uchun /cancel deb yozing yoki orqaga bosing)</i>",
+        new InlineKeyboard().text("\u2190 Admin", "ad:h")
+      );
+    }
     if (section2 === "u") {
       const rows2 = await admin.users();
       const kb = new InlineKeyboard();
@@ -1114,8 +1168,16 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
       return editOrReply(context, formatAdminSponsors(rows2), kb);
     }
     const rows = await admin.audit();
-    return editOrReply(context, ["AUDIT LOG", "", ...rows.length ? rows.map((r) => `${r.action} \xB7 ${r.target_type}
-${new Date(r.created_at).toLocaleString("uz-UZ")}`) : ["Hozircha audit yozuvlari yo\u2018q."]].join("\n"), new InlineKeyboard().text("\u2190 Admin", "ad:h"));
+    return editOrReply(
+      context,
+      [
+        "AUDIT LOG",
+        "",
+        ...rows.length ? rows.map((r) => `${r.action} \xB7 ${r.target_type}
+${new Date(r.created_at).toLocaleString("uz-UZ")}`) : ["Hozircha audit yozuvlari yo\u2018q."]
+      ].join("\n"),
+      new InlineKeyboard().text("\u2190 Admin", "ad:h")
+    );
   });
   bot.callbackQuery(/^(ab|au):([0-9a-f-]{36})$/, async (context) => {
     if (!context.from || !isAdmin(context.from.id)) return;
@@ -1737,6 +1799,46 @@ Minimal: <b>${formatMoney(minimum)}</b>`,
   });
   bot.on("message:text", async (context, next) => {
     if (!context.from) return next();
+    if (isAdmin(context.from.id) && adminBroadcastPending.delete(context.from.id)) {
+      const text = context.message.text.trim();
+      if (text === "/cancel") {
+        await context.reply("\u274C Xabar yuborish bekor qilindi.");
+        await adminHome(context);
+        return;
+      }
+      const targets = await admin.broadcastTargets();
+      await context.reply(`\u23F3 Xabar ${targets.length} ta foydalanuvchiga yuborilmoqda...`);
+      let successCount = 0;
+      let failCount = 0;
+      let index = 0;
+      for (const target of targets) {
+        index++;
+        try {
+          await bot.api.sendMessage(target.telegramId, text, { parse_mode: "HTML" });
+          successCount++;
+        } catch {
+          try {
+            await bot.api.sendMessage(target.telegramId, text);
+            successCount++;
+          } catch {
+            failCount++;
+          }
+        }
+        if (index % 25 === 0) {
+          await new Promise((r) => setTimeout(r, 1e3));
+        }
+      }
+      await context.reply(
+        `\u2705 <b>XABAR YUBORILDI</b>
+
+\u{1F4CA} Jami targetlar: <b>${targets.length}</b>
+\u2705 Yetkazildi: <b>${successCount}</b>
+\u274C Yetkazilmadi / Bloklangan: <b>${failCount}</b>`,
+        { parse_mode: "HTML" }
+      );
+      await adminHome(context);
+      return;
+    }
     const user = await getContextUser(context);
     const pending = await transfers.getInputSession(user.id);
     if (!pending || pending.mode !== "SELL" && pending.mode !== "OFFER" && pending.mode !== "COUNTER") {
@@ -2238,6 +2340,7 @@ Kodni do\u2018stlaringizga yuboring. Ular \u201CKod bilan qo\u2018shilish\u201D 
     await context.answerCallbackQuery({ text: "Boshlang\u2018ich tarkib moslanmoqda\u2026" });
     const user = await getContextUser(context);
     await tactics.autoSave(user.id, context.match[1], context.match[2]);
+    delete context.managedClubs;
     await showTactics(context, user.id, context.match[1]);
   });
   const showSetPiecesMenu = async (context, userId, clubId) => {
@@ -2450,6 +2553,7 @@ ${alertText}` : "");
       }
     }
     await tactics.swapOrAssignPlayer(user.id, targetClubId, slotKey, clubPlayerId);
+    delete context.managedClubs;
     await showStartingXi(context, targetClubId, "\u2705 Tarkib muvaffaqiyatli saqlandi!");
   });
   bot.callbackQuery(/^xa:([0-9a-f-]{36})$/, async (context) => {
@@ -2457,6 +2561,7 @@ ${alertText}` : "");
     await context.answerCallbackQuery({ text: "Eng mos futbolchilar tanlanmoqda\u2026" });
     const user = await getContextUser(context), clubId = context.match[1], tactic = await tactics.get(user.id, clubId);
     await tactics.autoSave(user.id, clubId, tactic.formationCode);
+    delete context.managedClubs;
     await showStartingXi(context, clubId, "\u2705 Avtomatik tarkib saqlandi!");
   });
   bot.callbackQuery(/^nu:([0-9a-f-]{36}):(pressing|tempo|defensiveLine|width):([+-])$/, async (context) => {
@@ -2569,6 +2674,74 @@ var UserRepository = class {
     };
   }
 };
+
+// src/game/team-ovr.ts
+var first = (value) => Array.isArray(value) ? value[0] : value;
+var GK_POSITIONS = /* @__PURE__ */ new Set(["GK"]);
+var DEF_POSITIONS = /* @__PURE__ */ new Set(["CB", "LB", "RB", "RWB", "LWB"]);
+var MID_POSITIONS = /* @__PURE__ */ new Set(["CM", "CDM", "CAM", "LM", "RM"]);
+var ATT_POSITIONS = /* @__PURE__ */ new Set(["ST", "CF", "LW", "RW"]);
+async function calculateTeamOvr(database, leagueClubId) {
+  const { data: lpData } = await database.from("lineup_players").select("club_player_id, club_players!inner(players!inner(player_attributes!inner(overall))), lineups!inner(league_club_id)").eq("lineups.league_club_id", leagueClubId);
+  if (lpData && lpData.length === 11) {
+    const ratings = lpData.map((row) => {
+      const cp = first(row.club_players);
+      const p = first(cp.players);
+      const attr = first(p.player_attributes);
+      return Number(attr?.overall ?? 75);
+    });
+    const avg = ratings.reduce((sum, r) => sum + r, 0) / 11;
+    return Math.round(avg);
+  }
+  const { data: squadData } = await database.from("club_players").select("id, players!inner(primary_position, player_attributes!inner(overall))").eq("league_club_id", leagueClubId);
+  if (!squadData || squadData.length === 0) {
+    return 75;
+  }
+  const players = squadData.map((row) => {
+    const p = first(row.players);
+    const attr = first(p.player_attributes);
+    return {
+      id: row.id,
+      position: p.primary_position ?? "CM",
+      overall: Number(attr?.overall ?? 70)
+    };
+  });
+  return selectBestStartingOvr(players);
+}
+function selectBestStartingOvr(players) {
+  if (players.length === 0) return 75;
+  if (players.length <= 11) {
+    const avg2 = players.reduce((sum, p) => sum + p.overall, 0) / players.length;
+    return Math.round(avg2);
+  }
+  const gks = players.filter((p) => GK_POSITIONS.has(p.position)).sort((a, b) => b.overall - a.overall);
+  const defs = players.filter((p) => DEF_POSITIONS.has(p.position)).sort((a, b) => b.overall - a.overall);
+  const mids = players.filter((p) => MID_POSITIONS.has(p.position)).sort((a, b) => b.overall - a.overall);
+  const atts = players.filter((p) => ATT_POSITIONS.has(p.position)).sort((a, b) => b.overall - a.overall);
+  const picked = /* @__PURE__ */ new Set();
+  const starting11 = [];
+  const pick = (list, count) => {
+    let chosen = 0;
+    for (const player of list) {
+      if (chosen >= count) break;
+      if (!picked.has(player.id)) {
+        picked.add(player.id);
+        starting11.push(player);
+        chosen++;
+      }
+    }
+  };
+  pick(gks, 1);
+  pick(defs, 4);
+  pick(mids, 3);
+  pick(atts, 3);
+  if (starting11.length < 11) {
+    const remaining = players.filter((p) => !picked.has(p.id)).sort((a, b) => b.overall - a.overall);
+    pick(remaining, 11 - starting11.length);
+  }
+  const avg = starting11.reduce((sum, p) => sum + p.overall, 0) / starting11.length;
+  return Math.round(avg);
+}
 
 // src/leagues/league.repository.ts
 function one(value) {
@@ -2699,10 +2872,11 @@ var LeagueRepository = class {
   async listManagedClubs(userId) {
     const { data, error } = await this.database.from("league_clubs").select("id, points, transfer_budget, clubs!inner(name, starting_budget), league_instances!inner(id, instance_number, status, competitions!inner(name))").eq("manager_user_id", userId).order("created_at");
     if (error) throw new Error(`Manager klublarini olishda xato: ${error.message}`);
-    return (data ?? []).map((row) => {
+    return Promise.all((data ?? []).map(async (row) => {
       const club = one(row.clubs);
       const league = one(row.league_instances);
       const competition = one(league.competitions);
+      const teamOvr = await calculateTeamOvr(this.database, row.id);
       return {
         leagueClubId: row.id,
         leagueId: league.id,
@@ -2712,9 +2886,10 @@ var LeagueRepository = class {
         position: 1,
         points: row.points,
         budget: Number(row.transfer_budget ?? club.starting_budget ?? 1e8),
-        status: league.status
+        status: league.status,
+        teamOvr
       };
-    });
+    }));
   }
   async releaseScheduledGlobalLeagues(now = /* @__PURE__ */ new Date()) {
     const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tashkent", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" }).formatToParts(now).reduce((result, part) => {
@@ -2762,6 +2937,9 @@ var LeagueRepository = class {
     const row = data?.[0];
     if (!row) throw new Error("PRIVATE_CLAIM_RESULT_MISSING");
     return { leagueClubId: row.league_club_id, clubName: row.club_name, leagueName: row.league_name };
+  }
+  async getClubTeamOvr(leagueClubId) {
+    return calculateTeamOvr(this.database, leagueClubId);
   }
 };
 
@@ -3078,7 +3256,7 @@ var FixtureRepository = class {
 };
 
 // src/matches/match.repository.ts
-var first = (value) => Array.isArray(value) ? value[0] : value;
+var first2 = (value) => Array.isArray(value) ? value[0] : value;
 var MatchRepository = class {
   constructor(database) {
     this.database = database;
@@ -3095,7 +3273,7 @@ var MatchRepository = class {
     if (ratings.length < 11) {
       const { data, error } = await this.database.from("club_players").select("players!inner(player_attributes!inner(overall))").eq("league_club_id", clubId);
       if (error) throw error;
-      ratings = (data ?? []).map((row) => Number(first(first(row.players).player_attributes).overall)).sort((a, b) => b - a).slice(0, 11);
+      ratings = (data ?? []).map((row) => Number(first2(first2(row.players).player_attributes).overall)).sort((a, b) => b - a).slice(0, 11);
     }
     return {
       clubId,
@@ -3162,7 +3340,7 @@ var MatchRepository = class {
       }
     }
     const firstInstance = ordered[0]?.league_instances;
-    const comp = first(firstInstance?.competitions);
+    const comp = first2(firstInstance?.competitions);
     const compCode = comp?.code ?? "ELITE";
     const compName = comp?.name ?? "OFM Elite League";
     const instanceNum = firstInstance?.instance_number ?? 1;
@@ -3217,12 +3395,12 @@ var MatchRepository = class {
       if (error) throw error;
       if (eventError) throw eventError;
       const players = (data ?? []).map((row) => {
-        const player = first(row.players);
+        const player = first2(row.players);
         return {
           id: player.id,
           clubPlayerId: row.id,
           position: player.primary_position,
-          overall: Number(first(player.player_attributes).overall)
+          overall: Number(first2(player.player_attributes).overall)
         };
       }).sort((a, b) => {
         const weight = (p) => p === "ST" ? 4 : p === "LW" || p === "RW" || p === "CAM" ? 3 : p === "CM" || p === "LM" || p === "RM" ? 2 : 1;
@@ -3290,22 +3468,22 @@ var MatchRepository = class {
     const allTable = await this.database.from("league_clubs").select("id,points,goals_for,goals_against,clubs!inner(name)").eq("league_instance_id", match.league_instance_id);
     if (allTable.error) throw allTable.error;
     const ordered = (allTable.data ?? []).sort((a, b) => b.points - a.points || b.goals_for - b.goals_against - (a.goals_for - a.goals_against) || b.goals_for - a.goals_for);
-    const stats = first(match.match_stats);
+    const stats = first2(match.match_stats);
     const clubMap = new Map((clubs ?? []).map((club) => [club.id, club]));
     const home = clubMap.get(match.home_club_id), away = clubMap.get(match.away_club_id);
     if (!home || !away) return [];
     const result = [];
     for (const club of [home, away]) {
       if (club.manager_type !== "HUMAN") continue;
-      const user = first(club.users);
+      const user = first2(club.users);
       if (!user?.telegram_id) continue;
       const isHome = club.id === match.home_club_id, opponent = isHome ? away : home;
       const { data: incomeRows, error: incomeError } = await this.database.from("finance_transactions").select("amount").eq("match_id", matchId).eq("league_club_id", club.id);
       if (incomeError) throw incomeError;
       const { data: next, error: nextError } = await this.database.from("fixtures").select("scheduled_at,home:league_clubs!fixtures_home_club_id_fkey(clubs!inner(name)),away:league_clubs!fixtures_away_club_id_fkey(clubs!inner(name))").or(`home_club_id.eq.${club.id},away_club_id.eq.${club.id}`).eq("status", "SCHEDULED").gt("scheduled_at", (/* @__PURE__ */ new Date()).toISOString()).order("scheduled_at").limit(1).maybeSingle();
       if (nextError) throw nextError;
-      const league = first(club.league_instances), competition = first(league.competitions);
-      result.push({ telegramId: Number(user.telegram_id), clubId: club.id, club: first(club.clubs).name, opponent: first(opponent.clubs).name, isHome, homeGoals: match.home_goals, awayGoals: match.away_goals, goals: (events ?? []).map((event) => ({ minute: event.minute, player: first(event.players)?.short_name ?? "Noma\u2019lum", assist: assistantName.get(event.metadata?.assist_player_id) ?? null })), possession: [stats.possession_home, 100 - stats.possession_home], shots: [stats.shots_home, stats.shots_away], onTarget: [stats.shots_on_target_home, stats.shots_on_target_away], corners: [stats.corners_home, stats.corners_away], position: ordered.findIndex((row) => row.id === club.id) + 1, points: club.points, played: club.played, wins: club.wins, draws: club.draws, losses: club.losses, income: (incomeRows ?? []).reduce((sum, row) => sum + Number(row.amount), 0), balance: Number(club.cash_balance), next: next ? { home: first(first(next.home).clubs).name, away: first(first(next.away).clubs).name, scheduledAt: next.scheduled_at } : null, leagueName: `${competition.name} #${String(league.instance_number).padStart(4, "0")}` });
+      const league = first2(club.league_instances), competition = first2(league.competitions);
+      result.push({ telegramId: Number(user.telegram_id), clubId: club.id, club: first2(club.clubs).name, opponent: first2(opponent.clubs).name, isHome, homeGoals: match.home_goals, awayGoals: match.away_goals, goals: (events ?? []).map((event) => ({ minute: event.minute, player: first2(event.players)?.short_name ?? "Noma\u2019lum", assist: assistantName.get(event.metadata?.assist_player_id) ?? null })), possession: [stats.possession_home, 100 - stats.possession_home], shots: [stats.shots_home, stats.shots_away], onTarget: [stats.shots_on_target_home, stats.shots_on_target_away], corners: [stats.corners_home, stats.corners_away], position: ordered.findIndex((row) => row.id === club.id) + 1, points: club.points, played: club.played, wins: club.wins, draws: club.draws, losses: club.losses, income: (incomeRows ?? []).reduce((sum, row) => sum + Number(row.amount), 0), balance: Number(club.cash_balance), next: next ? { home: first2(first2(next.home).clubs).name, away: first2(first2(next.away).clubs).name, scheduledAt: next.scheduled_at } : null, leagueName: `${competition.name} #${String(league.instance_number).padStart(4, "0")}` });
     }
     return result;
   }
@@ -3314,14 +3492,14 @@ var MatchRepository = class {
     if (!owned) throw new Error("CLUB_NOT_OWNED");
     const { data, error } = await this.database.from("matches").select("id,played_at,home_goals,away_goals,fixtures!inner(round_number),home:league_clubs!matches_home_club_id_fkey(clubs!inner(name)),away:league_clubs!matches_away_club_id_fkey(clubs!inner(name))").or(`home_club_id.eq.${leagueClubId},away_club_id.eq.${leagueClubId}`).order("played_at", { ascending: false }).limit(limit);
     if (error) throw error;
-    return (data ?? []).map((row) => ({ id: row.id, round: first(row.fixtures).round_number, playedAt: row.played_at, homeClub: first(first(row.home).clubs).name, awayClub: first(first(row.away).clubs).name, homeGoals: row.home_goals, awayGoals: row.away_goals }));
+    return (data ?? []).map((row) => ({ id: row.id, round: first2(row.fixtures).round_number, playedAt: row.played_at, homeClub: first2(first2(row.home).clubs).name, awayClub: first2(first2(row.away).clubs).name, homeGoals: row.home_goals, awayGoals: row.away_goals }));
   }
   async table(userId, leagueClubId) {
     const { data: owned } = await this.database.from("league_clubs").select("league_instance_id").eq("id", leagueClubId).eq("manager_user_id", userId).maybeSingle();
     if (!owned) throw new Error("CLUB_NOT_OWNED");
     const { data, error } = await this.database.from("league_clubs").select("played,wins,draws,losses,goals_for,goals_against,points,clubs!inner(name)").eq("league_instance_id", owned.league_instance_id).order("points", { ascending: false }).order("goals_for", { ascending: false });
     if (error) throw error;
-    return (data ?? []).sort((a, b) => b.points - a.points - (a.goals_for - a.goals_against - (b.goals_for - b.goals_against))).map((r, i) => ({ position: i + 1, club: first(r.clubs).name, played: r.played, wins: r.wins, draws: r.draws, losses: r.losses, goalDifference: r.goals_for - r.goals_against, points: r.points }));
+    return (data ?? []).sort((a, b) => b.points - a.points - (a.goals_for - a.goals_against - (b.goals_for - b.goals_against))).map((r, i) => ({ position: i + 1, club: first2(r.clubs).name, played: r.played, wins: r.wins, draws: r.draws, losses: r.losses, goalDifference: r.goals_for - r.goals_against, points: r.points }));
   }
   async leaders(userId, leagueClubId, kind) {
     const { data: owned, error: ownedError } = await this.database.from("league_clubs").select("league_instance_id").eq("id", leagueClubId).eq("manager_user_id", userId).maybeSingle();
@@ -3330,7 +3508,7 @@ var MatchRepository = class {
     if (error) throw error;
     const totals = /* @__PURE__ */ new Map();
     for (const row of data ?? []) {
-      const player = first(row.players), club = first(first(row.league_clubs).clubs), current = totals.get(row.player_id) ?? { name: player.short_name, club: club.name, total: 0 };
+      const player = first2(row.players), club = first2(first2(row.league_clubs).clubs), current = totals.get(row.player_id) ?? { name: player.short_name, club: club.name, total: 0 };
       current.total += Number(row[kind]);
       totals.set(row.player_id, current);
     }
@@ -3347,7 +3525,7 @@ var MatchRepository = class {
   async clubSeasonStats(userId, leagueClubId) {
     const { data: club, error: clubErr } = await this.database.from("league_clubs").select("id, league_instance_id, played, wins, draws, losses, goals_for, goals_against, clubs!inner(name)").eq("id", leagueClubId).eq("manager_user_id", userId).maybeSingle();
     if (clubErr || !club) throw new Error("CLUB_NOT_OWNED");
-    const clubName = first(club.clubs).name;
+    const clubName = first2(club.clubs).name;
     const { data: matches, error: mErr } = await this.database.from("matches").select("home_club_id, away_club_id, home_goals, away_goals").or(`home_club_id.eq.${leagueClubId},away_club_id.eq.${leagueClubId}`);
     if (mErr) throw mErr;
     let homeWins = 0, homeDraws = 0, homeLosses = 0;
@@ -3390,7 +3568,7 @@ var MatchRepository = class {
     if (cp) {
       resolvedPlayerId = cp.player_id;
       if (!resolvedClubId) resolvedClubId = cp.league_club_id;
-      const p = first(cp.players);
+      const p = first2(cp.players);
       playerName = p?.short_name ?? p?.name ?? "Futbolchi";
     } else {
       const { data: p } = await this.database.from("players").select("short_name, name").eq("id", playerIdOrClubPlayerId).maybeSingle();
@@ -3434,8 +3612,8 @@ var MatchRepository = class {
       this.database.from("league_clubs").select("id, clubs!inner(name)").eq("id", fixture.home_club_id).single(),
       this.database.from("league_clubs").select("id, clubs!inner(name)").eq("id", fixture.away_club_id).single()
     ]);
-    const homeClubName = first(homeClub?.clubs)?.name ?? "Home";
-    const awayClubName = first(awayClub?.clubs)?.name ?? "Away";
+    const homeClubName = first2(homeClub?.clubs)?.name ?? "Home";
+    const awayClubName = first2(awayClub?.clubs)?.name ?? "Away";
     const { data: table } = await this.database.from("league_clubs").select("id, points, goals_for, goals_against").eq("league_instance_id", fixture.league_instance_id);
     const ordered = (table ?? []).sort(
       (a, b) => b.points - a.points || b.goals_for - b.goals_against - (a.goals_for - a.goals_against) || b.goals_for - a.goals_for
@@ -3466,13 +3644,7 @@ var MatchRepository = class {
         else awayWins++;
       }
     }
-    const date = new Date(fixture.scheduled_at);
-    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    const day = date.getDate();
-    const month = months[date.getMonth()];
-    const hours = String(date.getHours()).padStart(2, "0");
-    const minutes = String(date.getMinutes()).padStart(2, "0");
-    const scheduledAt = `${day} ${month} \xB7 ${hours}:${minutes}`;
+    const scheduledAt = formatMatchPreviewDate(fixture.scheduled_at);
     return {
       homeClubName,
       awayClubName,
@@ -3487,21 +3659,7 @@ var MatchRepository = class {
     };
   }
   async getTeamOvr(clubId) {
-    const { data: lp } = await this.database.from("lineup_players").select("effective_rating, lineups!inner(league_club_id)").eq("lineups.league_club_id", clubId);
-    if (lp && lp.length >= 11) {
-      const avg = lp.reduce((sum, p) => sum + Number(p.effective_rating), 0) / lp.length;
-      return Math.round(avg);
-    }
-    const { data: squad } = await this.database.from("club_players").select("players!inner(player_attributes!inner(overall))").eq("league_club_id", clubId);
-    if (squad && squad.length > 0) {
-      const avg = squad.reduce((sum, cp) => {
-        const p = first(cp.players);
-        const attr = first(p.player_attributes);
-        return sum + Number(attr?.overall ?? 75);
-      }, 0) / squad.length;
-      return Math.round(avg);
-    }
-    return 75;
+    return calculateTeamOvr(this.database, clubId);
   }
   async getLast5Form(clubId) {
     const { data: matches } = await this.database.from("matches").select("home_club_id, away_club_id, home_goals, away_goals, played_at").or(`home_club_id.eq.${clubId},away_club_id.eq.${clubId}`).order("played_at", { ascending: false }).limit(5);
@@ -4183,24 +4341,67 @@ var AdminRepository = class {
       if (r.error) throw r.error;
       return r.count ?? 0;
     };
-    return { users: await count("users"), activeUsers: await count("users", (q) => q.eq("is_blocked", false)), blockedUsers: await count("users", (q) => q.eq("is_blocked", true)), humanClubs: await count("league_clubs", (q) => q.eq("manager_type", "HUMAN")), aiClubs: await count("league_clubs", (q) => q.eq("manager_type", "AI")), matches: await count("matches"), offers: await count("transfer_offers"), activeListings: await count("global_market_listings", (q) => q.eq("status", "ACTIVE")) };
+    return {
+      users: await count("users"),
+      activeUsers: await count("users", (q) => q.eq("is_blocked", false)),
+      blockedUsers: await count("users", (q) => q.eq("is_blocked", true)),
+      activeLeagues: await count("league_instances", (q) => q.eq("status", "ACTIVE")),
+      openLobbies: await count("league_instances", (q) => q.eq("status", "OPEN")),
+      humanClubs: await count("league_clubs", (q) => q.eq("manager_type", "HUMAN")),
+      aiClubs: await count("league_clubs", (q) => q.eq("manager_type", "AI")),
+      matches: await count("matches"),
+      offers: await count("transfer_offers"),
+      activeListings: await count("global_market_listings", (q) => q.eq("status", "ACTIVE"))
+    };
   }
   async users() {
     const { data, error } = await this.database.from("users").select("id,telegram_id,first_name,username,is_blocked,last_seen_at").order("last_seen_at", { ascending: false }).limit(20);
     if (error) throw error;
-    return (data ?? []).map((u) => ({ id: u.id, telegramId: Number(u.telegram_id), name: u.first_name, username: u.username, blocked: u.is_blocked, lastSeen: u.last_seen_at }));
+    return (data ?? []).map((u) => ({
+      id: u.id,
+      telegramId: Number(u.telegram_id),
+      name: u.first_name,
+      username: u.username,
+      blocked: u.is_blocked,
+      lastSeen: u.last_seen_at
+    }));
   }
   async sponsors() {
     const { data, error } = await this.database.from("sponsors").select("id,name,payment_per_match,is_active,required_channel_id,required_channel_username,join_url").order("payment_per_match");
     if (error) throw error;
-    return (data ?? []).map((s) => ({ id: s.id, name: s.name, payment: Number(s.payment_per_match), active: s.is_active, channelId: s.required_channel_id ? Number(s.required_channel_id) : null, channel: s.required_channel_username, joinUrl: s.join_url }));
+    return (data ?? []).map((s) => ({
+      id: s.id,
+      name: s.name,
+      payment: Number(s.payment_per_match),
+      active: s.is_active,
+      channelId: s.required_channel_id ? Number(s.required_channel_id) : null,
+      channel: s.required_channel_username,
+      joinUrl: s.join_url
+    }));
+  }
+  async broadcastTargets() {
+    const { data, error } = await this.database.from("users").select("id, telegram_id").eq("is_blocked", false).not("telegram_id", "is", null);
+    if (error) throw error;
+    return (data ?? []).map((u) => ({
+      id: u.id,
+      telegramId: Number(u.telegram_id)
+    }));
   }
   async setBlocked(actor, target, blocked) {
-    const { error } = await this.database.rpc("admin_set_user_blocked", { p_actor_user_id: actor, p_target_user_id: target, p_blocked: blocked, p_reason: "Telegram admin panel" });
+    const { error } = await this.database.rpc("admin_set_user_blocked", {
+      p_actor_user_id: actor,
+      p_target_user_id: target,
+      p_blocked: blocked,
+      p_reason: "Telegram admin panel"
+    });
     if (error) throw error;
   }
   async setSponsor(actor, id, active) {
-    const { error } = await this.database.rpc("admin_set_sponsor_active", { p_actor_user_id: actor, p_sponsor_id: id, p_active: active });
+    const { error } = await this.database.rpc("admin_set_sponsor_active", {
+      p_actor_user_id: actor,
+      p_sponsor_id: id,
+      p_active: active
+    });
     if (error) throw error;
   }
   async audit() {

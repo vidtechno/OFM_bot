@@ -210,6 +210,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
   };
 
   const privateLeagueJoinPending = new Set<number>();
+  const adminBroadcastPending = new Set<number>();
   const sendUpdate = async (telegramId: number | null, text: string, keyboard: InlineKeyboard): Promise<void> => {
     if (!telegramId) return;
     try {
@@ -284,10 +285,15 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     const managerName = telegramUser?.username ? `@${telegramUser.username}` : telegramUser?.first_name ?? "Manager";
     const user = await getContextUser(context);
     const profiler: RequestProfiler | undefined = (context as any).profiler;
-    const [next] = profiler
-      ? await profiler.time("league_club_query", () => fixtures.listUpcoming(user.id, club.leagueClubId, 1, true))
-      : await fixtures.listUpcoming(user.id, club.leagueClubId, 1, true);
-    await editOrReply(context, formatClubDashboard(club, managerName, next ? formatFixtureLine(next) : undefined), dashboardKeyboard(club.leagueClubId));
+    const [upcoming, liveOvr] = await Promise.all([
+      profiler
+        ? profiler.time("league_club_query", () => fixtures.listUpcoming(user.id, club.leagueClubId, 1, true))
+        : fixtures.listUpcoming(user.id, club.leagueClubId, 1, true),
+      leagues.getClubTeamOvr(club.leagueClubId).catch(() => club.teamOvr),
+    ]);
+    const next = upcoming[0];
+    const teamOvr = liveOvr ?? club.teamOvr;
+    await editOrReply(context, formatClubDashboard(club, managerName, next ? formatFixtureLine(next) : undefined, teamOvr), dashboardKeyboard(club.leagueClubId));
   };
 
   bot.command("start", async (context) => {
@@ -456,13 +462,69 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
   });
 
   const adminHome = async (context: Context) => {
-    await editOrReply(context, formatAdminStats(await admin.stats()), new InlineKeyboard().text("Users", "ad:u").text("Sponsors", "ad:s").row().text("Audit log", "ad:a").text("Refresh", "ad:h"));
+    await editOrReply(
+      context,
+      formatAdminStats(await admin.stats()),
+      new InlineKeyboard()
+        .text("Users", "ad:u")
+        .text("Sponsors", "ad:s")
+        .row()
+        .text("Audit log", "ad:a")
+        .text("📢 Xabar yuborish", "ad:b")
+        .row()
+        .text("Refresh", "ad:h")
+    );
   };
   bot.hears(MAIN_MENU.admin, async (context) => {
     if (!context.from || !isAdmin(context.from.id)) return;
     await adminHome(context);
   });
-  bot.callbackQuery(/^ad:([usah])$/,async context=>{if(!context.from||!isAdmin(context.from.id))return context.answerCallbackQuery({text:"Ruxsat yo‘q"});await context.answerCallbackQuery();const section=context.match[1];if(section==='h')return adminHome(context);if(section==='u'){const rows=await admin.users();const kb=new InlineKeyboard();for(const u of rows){if(u.telegramId===context.from.id)continue;kb.text(`${u.blocked?'✅ Unblock':'⛔ Block'} ${u.username?`@${u.username}`:u.name}`,`${u.blocked?'au':'ab'}:${u.id}`).row();}kb.text("← Admin","ad:h");return editOrReply(context,formatAdminUsers(rows),kb);}if(section==='s'){const rows=await admin.sponsors();const kb=new InlineKeyboard();for(const s of rows)kb.text(`${s.active?'⏸':'▶️'} ${s.name}`,`as:${s.id}:${s.active?'0':'1'}`).row();kb.text("← Admin","ad:h");return editOrReply(context,formatAdminSponsors(rows),kb);}const rows=await admin.audit();return editOrReply(context,["AUDIT LOG","",...(rows.length?rows.map((r:any)=>`${r.action} · ${r.target_type}\n${new Date(r.created_at).toLocaleString('uz-UZ')}`):["Hozircha audit yozuvlari yo‘q."])].join('\n'),new InlineKeyboard().text("← Admin","ad:h"));});
+  bot.callbackQuery(/^ad:([usahb])$/, async (context) => {
+    if (!context.from || !isAdmin(context.from.id)) return context.answerCallbackQuery({ text: "Ruxsat yo‘q" });
+    await context.answerCallbackQuery();
+    const section = context.match[1];
+    if (section === "h") {
+      adminBroadcastPending.delete(context.from.id);
+      return adminHome(context);
+    }
+    if (section === "b") {
+      adminBroadcastPending.add(context.from.id);
+      return editOrReply(
+        context,
+        "📢 <b>BARCHA FOYDALANUVCHILARGA XABAR YUBORISH</b>\n\nBarcha faol bot foydalanuvchilariga yubormoqchi bo‘lgan xabaringiz matnini kiriting:\n\n<i>(HTML teglari qo‘llab-quvvatlanadi. Bekor qilish uchun /cancel deb yozing yoki orqaga bosing)</i>",
+        new InlineKeyboard().text("← Admin", "ad:h")
+      );
+    }
+    if (section === "u") {
+      const rows = await admin.users();
+      const kb = new InlineKeyboard();
+      for (const u of rows) {
+        if (u.telegramId === context.from.id) continue;
+        kb.text(`${u.blocked ? "✅ Unblock" : "⛔ Block"} ${u.username ? `@${u.username}` : u.name}`, `${u.blocked ? "au" : "ab"}:${u.id}`).row();
+      }
+      kb.text("← Admin", "ad:h");
+      return editOrReply(context, formatAdminUsers(rows), kb);
+    }
+    if (section === "s") {
+      const rows = await admin.sponsors();
+      const kb = new InlineKeyboard();
+      for (const s of rows) kb.text(`${s.active ? "⏸" : "▶️"} ${s.name}`, `as:${s.id}:${s.active ? "0" : "1"}`).row();
+      kb.text("← Admin", "ad:h");
+      return editOrReply(context, formatAdminSponsors(rows), kb);
+    }
+    const rows = await admin.audit();
+    return editOrReply(
+      context,
+      [
+        "AUDIT LOG",
+        "",
+        ...(rows.length
+          ? rows.map((r: any) => `${r.action} · ${r.target_type}\n${new Date(r.created_at).toLocaleString("uz-UZ")}`)
+          : ["Hozircha audit yozuvlari yo‘q."]),
+      ].join("\n"),
+      new InlineKeyboard().text("← Admin", "ad:h")
+    );
+  });
   bot.callbackQuery(/^(ab|au):([0-9a-f-]{36})$/,async context=>{if(!context.from||!isAdmin(context.from.id))return;await context.answerCallbackQuery();const actor=await getContextUser(context);await admin.setBlocked(actor.id,context.match[2]!,context.match[1]==='ab');await context.reply("User holati yangilandi.");});
   bot.callbackQuery(/^as:([0-9a-f-]{36}):([01])$/,async context=>{if(!context.from||!isAdmin(context.from.id))return;await context.answerCallbackQuery();const actor=await getContextUser(context);await admin.setSponsor(actor.id,context.match[1]!,context.match[2]==='1');await context.reply("Sponsor holati yangilandi.");});
 
@@ -1221,6 +1283,45 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
 
   bot.on("message:text", async (context, next) => {
     if (!context.from) return next();
+    if (isAdmin(context.from.id) && adminBroadcastPending.delete(context.from.id)) {
+      const text = context.message.text.trim();
+      if (text === "/cancel") {
+        await context.reply("❌ Xabar yuborish bekor qilindi.");
+        await adminHome(context);
+        return;
+      }
+      const targets = await admin.broadcastTargets();
+      await context.reply(`⏳ Xabar ${targets.length} ta foydalanuvchiga yuborilmoqda...`);
+      let successCount = 0;
+      let failCount = 0;
+      let index = 0;
+      for (const target of targets) {
+        index++;
+        try {
+          await bot.api.sendMessage(target.telegramId, text, { parse_mode: "HTML" });
+          successCount++;
+        } catch {
+          try {
+            await bot.api.sendMessage(target.telegramId, text);
+            successCount++;
+          } catch {
+            failCount++;
+          }
+        }
+        if (index % 25 === 0) {
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+      }
+      await context.reply(
+        `✅ <b>XABAR YUBORILDI</b>\n\n` +
+          `📊 Jami targetlar: <b>${targets.length}</b>\n` +
+          `✅ Yetkazildi: <b>${successCount}</b>\n` +
+          `❌ Yetkazilmadi / Bloklangan: <b>${failCount}</b>`,
+        { parse_mode: "HTML" }
+      );
+      await adminHome(context);
+      return;
+    }
     const user = await getContextUser(context);
     const pending = await transfers.getInputSession(user.id);
     if (!pending || (pending.mode !== "SELL" && pending.mode !== "OFFER" && pending.mode !== "COUNTER")) {
@@ -1735,7 +1836,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
   });
   bot.callbackQuery(/^fs:([0-9a-f-]{36}):(\d+)$/, async (context) => {
     if (!context.from) return; await context.answerCallbackQuery({text:"Boshlang‘ich tarkib moslanmoqda…"});
-    const user=await getContextUser(context);await tactics.autoSave(user.id,context.match[1]!,context.match[2]!);await showTactics(context,user.id,context.match[1]!);
+    const user=await getContextUser(context);await tactics.autoSave(user.id,context.match[1]!,context.match[2]!);delete (context as any).managedClubs;await showTactics(context,user.id,context.match[1]!);
   });
   const showSetPiecesMenu = async (context: Context, userId: string, clubId: string): Promise<void> => {
     const setPieces = await tactics.getSetPieces(userId, clubId);
@@ -1998,6 +2099,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     }
 
     await tactics.swapOrAssignPlayer(user.id, targetClubId, slotKey, clubPlayerId);
+    delete (context as any).managedClubs;
     await showStartingXi(context, targetClubId, "✅ Tarkib muvaffaqiyatli saqlandi!");
   });
 
@@ -2006,6 +2108,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     await context.answerCallbackQuery({ text: "Eng mos futbolchilar tanlanmoqda…" });
     const user = await getContextUser(context), clubId = context.match[1]!, tactic = await tactics.get(user.id, clubId);
     await tactics.autoSave(user.id, clubId, tactic.formationCode);
+    delete (context as any).managedClubs;
     await showStartingXi(context, clubId, "✅ Avtomatik tarkib saqlandi!");
   });
   bot.callbackQuery(/^nu:([0-9a-f-]{36}):(pressing|tempo|defensiveLine|width):([+-])$/,async context=>{

@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { MatchSimulation, MatchTeamInput } from "./match-engine.js";
 import type { ClubSeasonStats, MatchPreviewData, PlayerSeasonStats } from "./presentation.js";
+import { calculateTeamOvr } from "../game/team-ovr.js";
+import { formatMatchPreviewDate } from "../lib/html.js";
 
 export interface DueMatch { fixtureId: string; home: MatchTeamInput; away: MatchTeamInput; }
 export interface MatchResult { id: string; round: number; playedAt: string; homeClub: string; awayClub: string; homeGoals: number; awayGoals: number; }
@@ -526,13 +528,7 @@ export class MatchRepository {
       }
     }
 
-    const date = new Date(fixture.scheduled_at);
-    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    const day = date.getDate();
-    const month = months[date.getMonth()];
-    const hours = String(date.getHours()).padStart(2, "0");
-    const minutes = String(date.getMinutes()).padStart(2, "0");
-    const scheduledAt = `${day} ${month} · ${hours}:${minutes}`;
+    const scheduledAt = formatMatchPreviewDate(fixture.scheduled_at);
 
     return {
       homeClubName,
@@ -549,30 +545,7 @@ export class MatchRepository {
   }
 
   private async getTeamOvr(clubId: string): Promise<number> {
-    const { data: lp } = await this.database
-      .from("lineup_players")
-      .select("effective_rating, lineups!inner(league_club_id)")
-      .eq("lineups.league_club_id", clubId);
-
-    if (lp && lp.length >= 11) {
-      const avg = lp.reduce((sum, p) => sum + Number(p.effective_rating), 0) / lp.length;
-      return Math.round(avg);
-    }
-
-    const { data: squad } = await this.database
-      .from("club_players")
-      .select("players!inner(player_attributes!inner(overall))")
-      .eq("league_club_id", clubId);
-
-    if (squad && squad.length > 0) {
-      const avg = squad.reduce((sum: number, cp: any) => {
-        const p = first<any>(cp.players);
-        const attr = first<any>(p.player_attributes);
-        return sum + Number(attr?.overall ?? 75);
-      }, 0) / squad.length;
-      return Math.round(avg);
-    }
-    return 75;
+    return calculateTeamOvr(this.database, clubId);
   }
 
   private async getLast5Form(clubId: string): Promise<string> {

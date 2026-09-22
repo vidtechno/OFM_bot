@@ -1,12 +1,118 @@
 import type{SupabaseClient}from"@supabase/supabase-js";
-export interface AdminStats{users:number;activeUsers:number;blockedUsers:number;humanClubs:number;aiClubs:number;matches:number;offers:number;activeListings:number;}
-export interface AdminUser{id:string;telegramId:number;name:string;username:string|null;blocked:boolean;lastSeen:string;}
-export interface AdminSponsor{id:string;name:string;payment:number;active:boolean;channelId:number|null;channel:string|null;joinUrl:string|null;}
-export class AdminRepository{constructor(private readonly database:SupabaseClient){}
- async stats():Promise<AdminStats>{const count=async(table:string,filters?:(q:any)=>any)=>{let q=this.database.from(table).select('*',{count:'exact',head:true});if(filters)q=filters(q);const r=await q;if(r.error)throw r.error;return r.count??0;};return{users:await count('users'),activeUsers:await count('users',q=>q.eq('is_blocked',false)),blockedUsers:await count('users',q=>q.eq('is_blocked',true)),humanClubs:await count('league_clubs',q=>q.eq('manager_type','HUMAN')),aiClubs:await count('league_clubs',q=>q.eq('manager_type','AI')),matches:await count('matches'),offers:await count('transfer_offers'),activeListings:await count('global_market_listings',q=>q.eq('status','ACTIVE'))};}
- async users():Promise<AdminUser[]>{const{data,error}=await this.database.from('users').select('id,telegram_id,first_name,username,is_blocked,last_seen_at').order('last_seen_at',{ascending:false}).limit(20);if(error)throw error;return(data??[]).map((u:any)=>({id:u.id,telegramId:Number(u.telegram_id),name:u.first_name,username:u.username,blocked:u.is_blocked,lastSeen:u.last_seen_at}));}
- async sponsors():Promise<AdminSponsor[]>{const{data,error}=await this.database.from('sponsors').select('id,name,payment_per_match,is_active,required_channel_id,required_channel_username,join_url').order('payment_per_match');if(error)throw error;return(data??[]).map((s:any)=>({id:s.id,name:s.name,payment:Number(s.payment_per_match),active:s.is_active,channelId:s.required_channel_id?Number(s.required_channel_id):null,channel:s.required_channel_username,joinUrl:s.join_url}));}
- async setBlocked(actor:string,target:string,blocked:boolean):Promise<void>{const{error}=await this.database.rpc('admin_set_user_blocked',{p_actor_user_id:actor,p_target_user_id:target,p_blocked:blocked,p_reason:'Telegram admin panel'});if(error)throw error;}
- async setSponsor(actor:string,id:string,active:boolean):Promise<void>{const{error}=await this.database.rpc('admin_set_sponsor_active',{p_actor_user_id:actor,p_sponsor_id:id,p_active:active});if(error)throw error;}
- async audit():Promise<any[]>{const{data,error}=await this.database.from('admin_audit_log').select('action,target_type,reason,created_at,users!inner(username,first_name)').order('created_at',{ascending:false}).limit(20);if(error)throw error;return data??[];}
+export interface AdminStats {
+  users: number;
+  activeUsers: number;
+  blockedUsers: number;
+  activeLeagues: number;
+  openLobbies: number;
+  humanClubs: number;
+  aiClubs: number;
+  matches: number;
+  offers: number;
+  activeListings: number;
 }
+export interface AdminUser { id: string; telegramId: number; name: string; username: string | null; blocked: boolean; lastSeen: string; }
+export interface AdminSponsor { id: string; name: string; payment: number; active: boolean; channelId: number | null; channel: string | null; joinUrl: string | null; }
+
+export class AdminRepository {
+  constructor(private readonly database: SupabaseClient) {}
+
+  async stats(): Promise<AdminStats> {
+    const count = async (table: string, filters?: (q: any) => any) => {
+      let q = this.database.from(table).select("*", { count: "exact", head: true });
+      if (filters) q = filters(q);
+      const r = await q;
+      if (r.error) throw r.error;
+      return r.count ?? 0;
+    };
+    return {
+      users: await count("users"),
+      activeUsers: await count("users", (q) => q.eq("is_blocked", false)),
+      blockedUsers: await count("users", (q) => q.eq("is_blocked", true)),
+      activeLeagues: await count("league_instances", (q) => q.eq("status", "ACTIVE")),
+      openLobbies: await count("league_instances", (q) => q.eq("status", "OPEN")),
+      humanClubs: await count("league_clubs", (q) => q.eq("manager_type", "HUMAN")),
+      aiClubs: await count("league_clubs", (q) => q.eq("manager_type", "AI")),
+      matches: await count("matches"),
+      offers: await count("transfer_offers"),
+      activeListings: await count("global_market_listings", (q) => q.eq("status", "ACTIVE")),
+    };
+  }
+
+  async users(): Promise<AdminUser[]> {
+    const { data, error } = await this.database
+      .from("users")
+      .select("id,telegram_id,first_name,username,is_blocked,last_seen_at")
+      .order("last_seen_at", { ascending: false })
+      .limit(20);
+    if (error) throw error;
+    return (data ?? []).map((u: any) => ({
+      id: u.id,
+      telegramId: Number(u.telegram_id),
+      name: u.first_name,
+      username: u.username,
+      blocked: u.is_blocked,
+      lastSeen: u.last_seen_at,
+    }));
+  }
+
+  async sponsors(): Promise<AdminSponsor[]> {
+    const { data, error } = await this.database
+      .from("sponsors")
+      .select("id,name,payment_per_match,is_active,required_channel_id,required_channel_username,join_url")
+      .order("payment_per_match");
+    if (error) throw error;
+    return (data ?? []).map((s: any) => ({
+      id: s.id,
+      name: s.name,
+      payment: Number(s.payment_per_match),
+      active: s.is_active,
+      channelId: s.required_channel_id ? Number(s.required_channel_id) : null,
+      channel: s.required_channel_username,
+      joinUrl: s.join_url,
+    }));
+  }
+
+  async broadcastTargets(): Promise<Array<{ id: string; telegramId: number }>> {
+    const { data, error } = await this.database
+      .from("users")
+      .select("id, telegram_id")
+      .eq("is_blocked", false)
+      .not("telegram_id", "is", null);
+    if (error) throw error;
+    return (data ?? []).map((u: any) => ({
+      id: u.id,
+      telegramId: Number(u.telegram_id),
+    }));
+  }
+
+  async setBlocked(actor: string, target: string, blocked: boolean): Promise<void> {
+    const { error } = await this.database.rpc("admin_set_user_blocked", {
+      p_actor_user_id: actor,
+      p_target_user_id: target,
+      p_blocked: blocked,
+      p_reason: "Telegram admin panel",
+    });
+    if (error) throw error;
+  }
+
+  async setSponsor(actor: string, id: string, active: boolean): Promise<void> {
+    const { error } = await this.database.rpc("admin_set_sponsor_active", {
+      p_actor_user_id: actor,
+      p_sponsor_id: id,
+      p_active: active,
+    });
+    if (error) throw error;
+  }
+
+  async audit(): Promise<any[]> {
+    const { data, error } = await this.database
+      .from("admin_audit_log")
+      .select("action,target_type,reason,created_at,users!inner(username,first_name)")
+      .order("created_at", { ascending: false })
+      .limit(20);
+    if (error) throw error;
+    return data ?? [];
+  }
+}
+

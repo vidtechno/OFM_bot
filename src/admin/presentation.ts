@@ -5,6 +5,7 @@ export const formatAdminStats = (s: AdminStats) => [
   "🛠 <b>ADMIN BOSHQARUV PANELI</b>",
   "",
   `👤 Foydalanuvchilar: <b>${s.users}</b> · Faol: <b>${s.activeUsers}</b> · Blok: <b>${s.blockedUsers}</b>`,
+  `🏆 Jami aktiv ligalar: <b>${s.activeLeagues}</b> · Ochiq lobbilar: <b>${s.openLobbies}</b>`,
   `🏟 Klublar: <b>${s.humanClubs}</b> manager · <b>${s.aiClubs}</b> AI`,
   `⚽ O‘yinlar: <b>${s.matches}</b>`,
   `🔄 Takliflar: <b>${s.offers}</b>`,

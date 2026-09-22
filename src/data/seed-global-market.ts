@@ -145,8 +145,9 @@ export async function seedGlobalMarket(targetInstanceId?: string): Promise<numbe
       // Price calculation
       let askingPrice: number;
       if (isUzbek) {
-        // Controlled asking price for Uzbek clubs (€2.5M to €6.8M)
-        askingPrice = Math.round((2_000_000 + (p.overall - 74) * 800_000) / 100_000) * 100_000;
+        // Balanced asking price calibrated for €7M Uzbek clubs (€2.2M to €5.4M)
+        // 75 OVR: €2.2M, 76: €2.8M, 77: €3.5M, 78: €4.1M, 79: €4.8M, 80: €5.4M
+        askingPrice = Math.round((1_500_000 + (p.overall - 74) * 650_000) / 100_000) * 100_000;
       } else {
         // Elite clubs standard price (1.15x market value, rounded to 100k)
         askingPrice = Math.max(1_000_000, Math.round((p.marketValue * 1.15) / 100_000) * 100_000);

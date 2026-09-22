@@ -82,6 +82,7 @@ describe("League Exit & Exploit Protection", () => {
 
     // Create a temporary test league instance in ACTIVE status
     const { data: comp } = await db.from("competitions").select("id").eq("code", "ELITE").single();
+    const testInstanceNumber = 90000 + Math.floor(Math.random() * 9999);
     const { data: testInstance, error: instErr } = await db
       .from("league_instances")
       .insert({
@@ -89,7 +90,7 @@ describe("League Exit & Exploit Protection", () => {
         access_mode: "PRIVATE",
         join_code: `T${Math.floor(1000 + Math.random() * 9000)}`,
         status: "ACTIVE",
-        instance_number: 9999,
+        instance_number: testInstanceNumber,
         current_round: 5,
       })
       .select("id")
