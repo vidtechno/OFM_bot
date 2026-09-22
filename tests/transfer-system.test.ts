@@ -6,8 +6,8 @@ describe("Transfer System & Presentation", () => {
   it("Transfer Hub budjet va g'aznani to'g'ri ko'rsatadi", () => {
     const hub = formatTransferHub("Real Madrid", 50_000_000, 25_000_000);
     expect(hub).toContain("REAL MADRID — TRANSFER");
-    expect(hub).toContain("€50.0M");
-    expect(hub).toContain("€25.0M");
+    expect(hub).toContain("€50M");
+    expect(hub).toContain("💰 Budjet: <b>€50M</b>");
   });
 
   it("Raqib klub tarkibi formatlanadi", () => {
@@ -23,7 +23,8 @@ describe("Transfer System & Presentation", () => {
     ];
     const text = formatClubPlayers("Manchester City", players);
     expect(text).toContain("MANCHESTER CITY — FUTBOLCHILAR");
-    expect(text).toContain("Erling Haaland — ST — ⭐91 — €180.0M");
+    expect(text).toContain("1. <b>Erling Haaland</b>");
+    expect(text).toContain("ST · ⭐91 · €180M");
   });
 
   it("Futbolchi profili va transfer taklifi ekrani formatlanadi", () => {
@@ -38,11 +39,11 @@ describe("Transfer System & Presentation", () => {
       nationality: "Belgiya",
     };
     const profile = formatPlayerProfile(player);
-    expect(profile).toContain("K. De Bruyne");
+    expect(profile).toContain("K. DE BRUYNE");
     expect(profile).toContain("Manchester City");
-    expect(profile).toContain("⭐ Overall: 90");
-    expect(profile).toContain("33 yosh");
-    expect(profile).toContain("€60.0M");
+    expect(profile).toContain("⭐ OVR: <b>90</b>");
+    expect(profile).toContain("🎂 Yosh: <b>33</b>");
+    expect(profile).toContain("€60M");
   });
 
   it("Barcha Telegram callback_data satrlari 64 baytdan oshmaydi (Stateless invariant)", () => {

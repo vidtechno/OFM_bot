@@ -13,15 +13,15 @@ describe("Starting XI Presentation", () => {
       { clubPlayerId: "c3", slotKey: "ST", slotPosition: "ST", shortName: "K. Mbappé", overall: 91, effectiveRating: 91 },
     ]);
 
-    expect(text).toContain("🔥 REAL MADRID — ASOSIY XI");
-    expect(text).toContain("📐 Sxema: 4-3-3");
-    expect(text).toContain("⭐ Jamoaviy kuch: 89.0");
-    expect(text).toContain("🧤 DARVOZABON");
-    expect(text).toContain("GK: ✅ T. Courtois — ⭐90");
-    expect(text).toContain("🛡 HIMOYACHILAR");
-    expect(text).toContain("LB: ✅ Cucurella — ⭐86");
-    expect(text).toContain("⚡ HUJUMCHILAR");
-    expect(text).toContain("ST: ✅ K. Mbappé — ⭐91");
+    expect(text).toContain("🔥 <b>REAL MADRID — ASOSIY XI</b>");
+    expect(text).toContain("<i>Formation: 4-3-3</i>");
+    expect(text).toContain("GK");
+    expect(text).toContain("T. Courtois — ⭐<b>90</b>");
+    expect(text).toContain("LB");
+    expect(text).toContain("Cucurella — ⭐<b>86</b>");
+    expect(text).toContain("ST");
+    expect(text).toContain("K. Mbappé — ⭐<b>91</b>");
+    expect(text).toContain("⭐ Jamoa kuchi: <b>89.0</b>");
   });
 });
 

@@ -7,7 +7,8 @@ describe("formatUpcomingFixtures", () => {
       id: "f1", round: 1, scheduledAt: "2026-09-22T08:00:00.000Z", status: "SCHEDULED",
       isHome: true, homeClub: "Real Madrid", awayClub: "Barcelona",
     }]);
-    expect(text).toContain("1-tur · 22/09, 13:00");
-    expect(text).toContain("Real Madrid — Barcelona · UY");
+    expect(text).toContain("📅 <b>KEYINGI O‘YINLAR</b>");
+    expect(text).toContain("<b>1-tur</b> · vs <b>Barcelona</b>");
+    expect(text).toContain("13:00");
   });
 });

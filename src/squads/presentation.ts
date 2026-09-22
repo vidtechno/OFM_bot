@@ -1,4 +1,5 @@
 import type { SquadPlayer } from "./squad.repository.js";
+import { escapeHtml } from "../lib/html.js";
 
 const defenders = new Set(["LB", "LWB", "CB", "RB", "RWB"]);
 const midfielders = new Set(["LM", "CDM", "CM", "CAM", "RM"]);
@@ -33,34 +34,34 @@ export function formatSquad(clubName: string, players: SquadPlayer[]): string {
   }
 
   const sectionTitles: Record<"GK" | "DEF" | "MID" | "ATT", string> = {
-    GK: "🧤 DARVOZABONLAR",
-    DEF: "🛡 HIMOYACHILAR",
-    MID: "🎯 YARIM HIMOYACHILAR",
-    ATT: "⚡ HUJUMCHILAR",
+    GK: "🧤 <b>DARVOZABONLAR</b>",
+    DEF: "🛡 <b>HIMOYACHILAR</b>",
+    MID: "🎯 <b>YARIM HIMOYACHILAR</b>",
+    ATT: "⚡ <b>HUJUMCHILAR</b>",
   };
 
   const lines: string[] = [
-    `👥 ${clubName.toUpperCase()} — JAMOA`,
-    `📋 ${players.length} futbolchi`,
+    `👥 <b>${escapeHtml(clubName.toUpperCase())} — JAMOA</b>`,
+    `📋 <b>${players.length}</b> futbolchi`,
   ];
 
   for (const [secKey, title] of Object.entries(sectionTitles) as Array<["GK" | "DEF" | "MID" | "ATT", string]>) {
     const group = groups.get(secKey) ?? [];
     lines.push("", title);
     if (group.length === 0) {
-      lines.push("—");
+      lines.push("<i>Futbolchi yo‘q</i>");
       continue;
     }
     group.forEach((p, idx) => {
       const pos = formatPlayerPosition(p.primaryPosition, p.secondaryPosition);
-      lines.push(`${idx + 1}. ${p.shortName} — ${pos} — ⭐${p.overall}`);
+      lines.push(`${idx + 1}. ${escapeHtml(p.shortName)} — ${escapeHtml(pos)} — ⭐<b>${p.overall}</b>`);
     });
   }
 
   let text = lines.join("\n");
   // Safety guard against Telegram 4096 character limit
   if (text.length > 4000) {
-    text = text.slice(0, 3990) + "\n… [qolgan o‘yinchilar qisqartirildi]";
+    text = text.slice(0, 3990) + "\n… <i>[qolgan o‘yinchilar qisqartirildi]</i>";
   }
 
   return text;

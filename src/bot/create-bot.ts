@@ -2,6 +2,7 @@ import { Bot, InlineKeyboard, type Context } from "grammy";
 import type { UserRepository, RegisteredUser } from "../users/user.repository.js";
 import type { Logger } from "../lib/logger.js";
 import type { RequestProfiler } from "../lib/profiler.js";
+import { escapeHtml, formatMoney } from "../lib/html.js";
 import type { LeagueRepository } from "../leagues/league.repository.js";
 import type { AvailableClub, ManagedClub } from "../leagues/types.js";
 import { claimErrorMessage, formatClubDashboard, formatOpenLobbies } from "../leagues/presentation.js";
@@ -51,12 +52,12 @@ const PAGE_SIZE = 10;
 
 async function editOrReply(context: Context, text: string, keyboard: InlineKeyboard): Promise<void> {
   if (context.callbackQuery?.message) {
-    try { await context.editMessageText(text, { reply_markup: keyboard }); }
+    try { await context.editMessageText(text, { reply_markup: keyboard, parse_mode: "HTML" }); }
     catch (error: unknown) {
       if (!(error instanceof Error) || !error.message.includes("message is not modified")) throw error;
     }
   } else {
-    await context.reply(text, { reply_markup: keyboard });
+    await context.reply(text, { reply_markup: keyboard, parse_mode: "HTML" });
   }
 }
 
@@ -65,18 +66,17 @@ function clubListKeyboard(clubs: AvailableClub[], leagueId: string, page: number
   for (const club of clubs.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)) {
     keyboard.text(club.clubName, `cf:${club.leagueClubId}`).row();
   }
-  if (page > 0) keyboard.text("← Oldingi", `lg:${leagueId}:${page - 1}`);
-  if ((page + 1) * PAGE_SIZE < clubs.length) keyboard.text("Keyingi →", `lg:${leagueId}:${page + 1}`);
+  if (page > 0) keyboard.text("⬅️", `lg:${leagueId}:${page - 1}`);
+  if ((page + 1) * PAGE_SIZE < clubs.length) keyboard.text("➡️", `lg:${leagueId}:${page + 1}`);
   if (page > 0 || (page + 1) * PAGE_SIZE < clubs.length) keyboard.row();
-  return keyboard.text("← Competitionlar", "join");
+  return keyboard.text("↩️ Orqaga", "join");
 }
 
 function dashboardKeyboard(leagueClubId: string): InlineKeyboard {
   return new InlineKeyboard()
-    .text("👥 Tarkib", `sq:${leagueClubId}`).text("🧠 Taktika", `tc:${leagueClubId}`).row()
-    .text("🔄 Transferlar", `tr:${leagueClubId}`).text("💰 Moliya", `fn:${leagueClubId}`).row()
-    .text("⚽ Uchrashuvlar", `mt:${leagueClubId}`).text("🏆 Liga jadvali", `tb:${leagueClubId}`).row()
-    .text("🥅 To‘purarlar", `sc:${leagueClubId}`).text("🎯 Assistentlar", `asst:${leagueClubId}`);
+    .text("👥 Jamoa", `sq:${leagueClubId}`).text("🔥 Asosiy XI", `xi:${leagueClubId}`).row()
+    .text("🧠 Taktika", `tc:${leagueClubId}`).text("🔁 Transfer", `tr:${leagueClubId}`).row()
+    .text("📅 O‘yinlar", `mt:${leagueClubId}`).text("📊 Liga", `tb:${leagueClubId}`).row();
 }
 
 export function createBot({ token, users, leagues, squads, tactics, fixtures, matches, transfers, progression, admin, adminTelegramIds, logger }: BotDependencies): Bot {
@@ -124,7 +124,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
   const sendUpdate = async (telegramId: number | null, text: string, keyboard: InlineKeyboard): Promise<void> => {
     if (!telegramId) return;
     try {
-      await bot.api.sendMessage(telegramId, text, { reply_markup: keyboard });
+      await bot.api.sendMessage(telegramId, text, { reply_markup: keyboard, parse_mode: "HTML" });
     } catch (error) {
       logger.warn({ event: "transfer_notification_failed", err: error }, "Transfer notification failed");
     }
@@ -264,7 +264,10 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
         : progression.profile(user.id),
       getContextManagedClubs(context, user.id),
     ]);
-    await context.reply(formatProfile(profile, clubs), { reply_markup: new InlineKeyboard().text("🏅 Global reyting", "lb:0") });
+    await context.reply(formatProfile(profile, clubs), {
+      reply_markup: new InlineKeyboard().text("🏅 Global reyting", "lb:0"),
+      parse_mode: "HTML",
+    });
   });
 
   bot.callbackQuery("lb:0", async (context) => {
@@ -273,7 +276,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     const leaders = profiler
       ? await profiler.time("manager_profile", () => progression.leaderboard())
       : await progression.leaderboard();
-    await editOrReply(context, formatLeaderboard(leaders), new InlineKeyboard().text("← Profil", "pf:0"));
+    await editOrReply(context, formatLeaderboard(leaders), new InlineKeyboard().text("↩️ Orqaga", "pf:0"));
   });
 
   bot.callbackQuery("pf:0", async (context) => {
@@ -284,7 +287,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     const profile = profiler
       ? await profiler.time("manager_profile", () => progression.profile(user.id))
       : await progression.profile(user.id);
-    await editOrReply(context, formatProfile(profile), new InlineKeyboard().text("Global reyting", "lb:0"));
+    await editOrReply(context, formatProfile(profile), new InlineKeyboard().text("🏅 Global reyting", "lb:0"));
   });
 
   bot.callbackQuery("refresh:leagues", async (context) => {
@@ -323,7 +326,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
       .text("📥 Takliflar", `io:${clubId}`)
       .text("📜 Transfer tarixi", `th:${clubId}`)
       .row()
-      .text("↩️ Klubga qaytish", `db:${clubId}`);
+      .text("↩️ Orqaga", `db:${clubId}`);
 
     let hubText = formatTransferHub(
       clubName,
@@ -333,7 +336,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     );
 
     if (owner.league_status === "OPEN") {
-      hubText = `⏳ DIQQAT: Liga hali boshlanmagan (Pre-season).\nBarcha transferlar liga startidan keyin ochiladi.\n\n${hubText}`;
+      hubText = `⏳ <b>Liga hali boshlanmagan</b>\n<i>Transferlar liga startidan keyin ochiladi.</i>\n\n${hubText}`;
     }
 
     await editOrReply(context, hubText, keyboard);
@@ -348,43 +351,36 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     if (!context.from) return;
     const user = await getContextUser(context);
     await transfers.saveInputSession(user.id, "ACTIVE_CLUB", { clubId });
+    const clubs = await getContextManagedClubs(context, user.id);
+    const club = clubs.find((c) => c.leagueClubId === clubId);
     const items = await transfers.leagueMarket(user.id, clubId, page, 8, group);
     const keyboard = new InlineKeyboard();
 
     for (const item of items) {
       keyboard
         .text(
-          `⚽ ${item.name} (${item.sellerName ?? "Klub"}) · ⭐${item.overall} · ${transferMoney(item.askingPrice)}${item.isOwnListing ? " 🏷" : ""}`,
+          `${item.name} · ${item.position} · ⭐${item.overall} · ${transferMoney(item.askingPrice)}${item.isOwnListing ? " 🏷" : ""}`,
           `lb:${item.listingId}`
         )
         .row();
     }
 
     keyboard
-      .text(group === "ALL" ? "✅ Barchasi" : "🌟 Barchasi", `lm:${clubId}:0:ALL`)
-      .text(group === "GK" ? "✅ Darvozabon" : "🥅 Darvozabon", `lm:${clubId}:0:GK`)
+      .text(group === "ALL" ? "ALL ✅" : "ALL", `lm:${clubId}:0:ALL`)
       .row()
-      .text(group === "DEF" ? "✅ Himoyachi" : "🛡 Himoyachi", `lm:${clubId}:0:DEF`)
-      .text(group === "MID" ? "✅ Yarimhimoya" : "🧠 Yarimhimoya", `lm:${clubId}:0:MID`)
+      .text(group === "GK" ? "GK ✅" : "GK", `lm:${clubId}:0:GK`)
+      .text(group === "DEF" ? "DEF ✅" : "DEF", `lm:${clubId}:0:DEF`)
       .row()
-      .text(group === "ATT" ? "✅ Hujumchi" : "⚡ Hujumchi", `lm:${clubId}:0:ATT`);
+      .text(group === "MID" ? "MID ✅" : "MID", `lm:${clubId}:0:MID`)
+      .text(group === "ATT" ? "ATT ✅" : "ATT", `lm:${clubId}:0:ATT`)
+      .row();
 
-    if (page > 0) keyboard.row().text("← Oldingi", `lm:${clubId}:${page - 1}:${group}`);
-    if (items.length === 8) keyboard.text("Keyingi →", `lm:${clubId}:${page + 1}:${group}`);
-    keyboard.row().text("← Transfer markazi", `tr:${clubId}`);
+    if (page > 0) keyboard.text("⬅️", `lm:${clubId}:${page - 1}:${group}`);
+    keyboard.text(`${page + 1}`, `lm:${clubId}:${page}:${group}`);
+    if (items.length === 8) keyboard.text("➡️", `lm:${clubId}:${page + 1}:${group}`);
+    keyboard.row().text("↩️ Orqaga", `tr:${clubId}`);
 
-    const groupTitle =
-      group === "ALL"
-        ? "BARCHASI"
-        : group === "GK"
-        ? "DARVOZABONLAR"
-        : group === "DEF"
-        ? "HIMOYACHILAR"
-        : group === "MID"
-        ? "YARIMHIMOYACHILAR"
-        : "HUJUMCHILAR";
-
-    await editOrReply(context, `🛒 LIGA TRANSFER BOZORI · ${groupTitle}\n\n${formatLeagueMarket(items)}`, keyboard);
+    await editOrReply(context, formatLeagueMarket(items, club?.leagueName), keyboard);
   };
 
   const showMarket = async (
@@ -400,34 +396,25 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     const keyboard = new InlineKeyboard();
 
     for (const item of items) {
-      keyboard.text(`⚽ ${item.name} · ⭐${item.overall} · ${transferMoney(item.askingPrice)}`, `gb:${item.listingId}`).row();
+      keyboard.text(`${item.name} · ${item.position} · ⭐${item.overall} · ${transferMoney(item.askingPrice)}`, `gb:${item.listingId}`).row();
     }
 
     keyboard
-      .text(group === "ALL" ? "✅ Barchasi" : "🌟 Barchasi", `gm:${clubId}:0:ALL`)
-      .text(group === "GK" ? "✅ Darvozabon" : "🥅 Darvozabon", `gm:${clubId}:0:GK`)
+      .text(group === "ALL" ? "ALL ✅" : "ALL", `gm:${clubId}:0:ALL`)
       .row()
-      .text(group === "DEF" ? "✅ Himoyachi" : "🛡 Himoyachi", `gm:${clubId}:0:DEF`)
-      .text(group === "MID" ? "✅ Yarimhimoya" : "🧠 Yarimhimoya", `gm:${clubId}:0:MID`)
+      .text(group === "GK" ? "GK ✅" : "GK", `gm:${clubId}:0:GK`)
+      .text(group === "DEF" ? "DEF ✅" : "DEF", `gm:${clubId}:0:DEF`)
       .row()
-      .text(group === "ATT" ? "✅ Hujumchi" : "⚡ Hujumchi", `gm:${clubId}:0:ATT`);
+      .text(group === "MID" ? "MID ✅" : "MID", `gm:${clubId}:0:MID`)
+      .text(group === "ATT" ? "ATT ✅" : "ATT", `gm:${clubId}:0:ATT`)
+      .row();
 
-    if (page > 0) keyboard.row().text("← Oldingi", `gm:${clubId}:${page - 1}:${group}`);
-    if (items.length === 8) keyboard.text("Keyingi →", `gm:${clubId}:${page + 1}:${group}`);
-    keyboard.row().text("← Transfer markazi", `tr:${clubId}`);
+    if (page > 0) keyboard.text("⬅️", `gm:${clubId}:${page - 1}:${group}`);
+    keyboard.text(`${page + 1}`, `gm:${clubId}:${page}:${group}`);
+    if (items.length === 8) keyboard.text("➡️", `gm:${clubId}:${page + 1}:${group}`);
+    keyboard.row().text("↩️ Orqaga", `tr:${clubId}`);
 
-    const groupTitle =
-      group === "ALL"
-        ? "YULDUZLAR"
-        : group === "GK"
-        ? "DARVOZABONLAR"
-        : group === "DEF"
-        ? "HIMOYACHILAR"
-        : group === "MID"
-        ? "YARIMHIMOYACHILAR"
-        : "HUJUMCHILAR";
-
-    await editOrReply(context, `🌍 GLOBAL TRANSFER · ${groupTitle}\n\n${formatMarket(items)}`, keyboard);
+    await editOrReply(context, formatMarket(items), keyboard);
   };
 
   bot.callbackQuery(/^tr:([0-9a-f-]{36})$/, async (context) => {
@@ -456,7 +443,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     if (!clubId) return context.reply("Transfer markaziga qaytib, klubni qayta tanlang.");
     const item = await transfers.listing(user.id, clubId, context.match[1]!);
     if (!item) {
-      return editOrReply(context, "Bu futbolchi transfer bozorida faol emas.", new InlineKeyboard().text("← Bozor", `lm:${clubId}:0:ALL`));
+      return editOrReply(context, "<i>Bu futbolchi transfer bozorida faol emas.</i>", new InlineKeyboard().text("↩️ Orqaga", `lm:${clubId}:0:ALL`));
     }
 
     const kb = new InlineKeyboard();
@@ -465,7 +452,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     } else {
       kb.text("✅ Xaridni tasdiqlash", `lc:${item.listingId}`).row();
     }
-    kb.text("← Liga bozori", `lm:${clubId}:0:ALL`);
+    kb.text("↩️ Orqaga", `lm:${clubId}:0:ALL`);
 
     await editOrReply(context, formatLeagueListing(item), kb);
   });
@@ -483,21 +470,23 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
       await transfers.buy(user.id, clubId, context.match[1]!);
       await editOrReply(
         context,
-        "✅ TRANSFER YAKUNLANDI\n\nFutbolchi klubingizga muvaffaqiyatli qo‘shildi!",
-        new InlineKeyboard().text("← Liga bozori", `lm:${clubId}:0:ALL`).text("🏟 Klub", `db:${clubId}`)
+        "✅ <b>Transfer yakunlandi!</b>\n\n<i>Futbolchi klubingizga muvaffaqiyatli qo‘shildi.</i>",
+        new InlineKeyboard().text("↩️ Orqaga", `lm:${clubId}:0:ALL`).text("🏟 Klub", `db:${clubId}`)
       );
     } catch (error: any) {
       logger.warn({ event: "league_transfer_failed", err: error }, "League transfer failed");
       const err = error?.message ?? "";
-      const text =
-        err === "INSUFFICIENT_BUDGET"
-          ? "❌ Klub budjetida mablag‘ yetarli emas."
-          : err === "SQUAD_LIMIT_REACHED"
-          ? "❌ Tarkibda bo‘sh joy yo‘q (maksimal 30 futbolchi)."
-          : err === "LISTING_NOT_AVAILABLE" || err === "LISTING_EXPIRED"
-          ? "❌ Ushbu futbolchi allaqachon sotilgan yoki listing muddati tugagan."
-          : `❌ Transfer amalga oshmadi: ${err || "qayta urinib ko‘ring"}`;
-      await editOrReply(context, text, new InlineKeyboard().text("← Liga bozori", `lm:${clubId}:0:ALL`));
+      let text = "❌ <b>Transfer amalga oshmadi</b>\n<i>Qayta urinib ko‘ring.</i>";
+      if (err.includes("INSUFFICIENT_BUDGET")) {
+        text = "❌ <b>Transfer amalga oshmadi</b>\n<i>Klub budjetida yetarli mablag‘ yo‘q.</i>";
+      } else if (err.includes("SQUAD_LIMIT_REACHED")) {
+        text = "❌ <b>Transfer amalga oshmadi</b>\n<i>Tarkibda bo‘sh joy yo‘q (maksimal 30 futbolchi).</i>";
+      } else if (err.includes("LISTING_NOT_AVAILABLE") || err.includes("LISTING_EXPIRED")) {
+        text = "❌ <b>Transfer amalga oshmadi</b>\n<i>Ushbu futbolchi allaqachon sotilgan yoki listing muddati tugagan.</i>";
+      } else if (err.includes("LEAGUE_PRE_SEASON_LOCKED")) {
+        text = "⏳ <b>Liga hali boshlanmagan</b>\n<i>Transferlar liga startidan keyin ochiladi.</i>";
+      }
+      await editOrReply(context, text, new InlineKeyboard().text("↩️ Orqaga", `lm:${clubId}:0:ALL`));
     }
   });
 
@@ -650,14 +639,19 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
       await transfers.listForSale(user.id, clubId, clubPlayerId, askingPrice);
       await editOrReply(
         context,
-        `✅ ${player.name} ${transferMoney(askingPrice)} narxida liga transfer bozoriga qo‘yildi!`,
-        new InlineKeyboard().text("🛒 Transfer bozorini ko‘rish", `lm:${clubId}:0:ALL`).row().text("← Sotuv bo‘limi", `ts:${clubId}`)
+        `✅ <b>${escapeHtml(player.name)}</b> <b>${formatMoney(askingPrice)}</b> narxida transfer bozoriga qo‘yildi!`,
+        new InlineKeyboard().text("🛒 Transfer bozorini ko‘rish", `lm:${clubId}:0:ALL`).row().text("↩️ Orqaga", `ts:${clubId}`)
       );
     } catch (error: any) {
+      const err = error?.message ?? "";
+      let text = "❌ <b>Futbolchini sotuvga qo‘yib bo‘lmadi</b>\n<i>Qayta urinib ko‘ring.</i>";
+      if (err.includes("LEAGUE_PRE_SEASON_LOCKED")) {
+        text = "⏳ <b>Liga hali boshlanmagan</b>\n<i>Transferlar liga startidan keyin ochiladi.</i>";
+      }
       await editOrReply(
         context,
-        `❌ Xatolik: ${error?.message ?? "Futbolchini sotuvga qo‘yib bo‘lmadi."}`,
-        new InlineKeyboard().text("← Orqaga", `ts:${clubId}`)
+        text,
+        new InlineKeyboard().text("↩️ Orqaga", `ts:${clubId}`)
       );
     }
   });
@@ -686,8 +680,8 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
 
     await editOrReply(
       context,
-      `💰 ${player.name} uchun sotuv narxini yuboring.\n\nMinimal narx: ${transferMoney(minimum)}\nMisol: 45M yoki 45000000`,
-      new InlineKeyboard().text("← Bekor qilish", `ts:${clubId}`)
+      `💰 <b>${escapeHtml(player.name)}</b> uchun sotuv narxini yuboring.\n\nMinimal narx: <b>${formatMoney(minimum)}</b>\n<i>Misol: 45M yoki 45000000</i>`,
+      new InlineKeyboard().text("↩️ Orqaga", `ts:${clubId}`)
     );
   });
 
@@ -704,16 +698,16 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
       kb.text(`🏟 ${club.clubName}`, `tk:${club.leagueClubId}:0`).row();
     }
 
-    if (page > 0) kb.text("← Oldingi", `tf:${clubId}:${page - 1}`);
-    if ((page + 1) * 10 < clubs.length) kb.text("Keyingi →", `tf:${clubId}:${page + 1}`);
+    if (page > 0) kb.text("⬅️", `tf:${clubId}:${page - 1}`);
+    if ((page + 1) * 10 < clubs.length) kb.text("➡️", `tf:${clubId}:${page + 1}`);
     if (page > 0 || (page + 1) * 10 < clubs.length) kb.row();
-    kb.text("← Transfer markazi", `tr:${clubId}`);
+    kb.text("↩️ Orqaga", `tr:${clubId}`);
 
     await editOrReply(
       context,
       clubs.length
-        ? "🔎 LIGADAN IZLASH\n\nRaqib klubni tanlang va uning futbolchilariga taklif yuboring:"
-        : "Bu ligada boshqa raqib klublar topilmadi.",
+        ? "🔎 <b>LIGADAN IZLASH</b>\n\n<i>Raqib klubni tanlang va uning futbolchilariga taklif yuboring:</i>"
+        : "🔎 <b>LIGADAN IZLASH</b>\n\n<i>Bu ligada boshqa raqib klublar topilmadi.</i>",
       kb
     );
   });
@@ -739,10 +733,10 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
       kb.text(`⚽ ${player.name} · ${player.position} · ⭐${player.overall}`, `tp:${player.clubPlayerId}`).row();
     }
 
-    if (page > 0) kb.text("← Oldingi", `tk:${targetClubId}:${page - 1}`);
-    if (players.length === 15) kb.text("Keyingi →", `tk:${targetClubId}:${page + 1}`);
+    if (page > 0) kb.text("⬅️", `tk:${targetClubId}:${page - 1}`);
+    if (players.length === 15) kb.text("➡️", `tk:${targetClubId}:${page + 1}`);
     if (page > 0 || players.length === 15) kb.row();
-    kb.text("← Klublar", `tf:${buyerClubId}:0`).text("← Transfer", `tr:${buyerClubId}`);
+    kb.text("↩️ Orqaga", `tf:${buyerClubId}:0`);
 
     await editOrReply(context, formatClubPlayers(targetClubName, players), kb);
   });
@@ -766,27 +760,28 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
           .text("❌ Rad etish", `ir:${player.activeNegotiation.offerId}`)
           .row();
       }
-      kb.text("← Tarkib", player.targetClubId ? `tk:${player.targetClubId}:0` : "home:club");
+      kb.text("↩️ Orqaga", player.targetClubId ? `tk:${player.targetClubId}:0` : "home:club");
 
       const negText = [
-        "⏳ MUZOKARA DAVOM ETMOQDA",
+        "⏳ <b>Muzokara davom etmoqda</b>",
         "",
-        `⚽ ${player.name} (${player.position}, ⭐${player.overall})`,
-        `🏟 Klub: ${player.clubName}`,
+        `👤 <b>${escapeHtml(player.name.toUpperCase())}</b>`,
+        `🏟 ${escapeHtml(player.clubName)}`,
+        `📍 ${escapeHtml(player.position)} · ⭐<b>${player.overall}</b>`,
         "",
         player.activeNegotiation.status === "COUNTERED"
-          ? `${player.clubName} qarshi taklifi:\n💰 ${transferMoney(player.activeNegotiation.counterAmount!)}`
-          : `Yuborilgan taklifingiz: ${transferMoney(player.activeNegotiation.amount)} ko‘rib chiqilmoqda…`,
+          ? `<b>${escapeHtml(player.clubName)}</b> qarshi taklifi: <b>${formatMoney(player.activeNegotiation.counterAmount!)}</b>`
+          : `<i>Yuborilgan taklifingiz (${formatMoney(player.activeNegotiation.amount)}) ko‘rib chiqilmoqda…</i>`,
       ].join("\n");
 
       return editOrReply(context, negText, kb);
     }
 
     if (player.isResaleLocked) {
-      const kb = new InlineKeyboard().text("← Tarkib", player.targetClubId ? `tk:${player.targetClubId}:0` : "home:club");
+      const kb = new InlineKeyboard().text("↩️ Orqaga", player.targetClubId ? `tk:${player.targetClubId}:0` : "home:club");
       return editOrReply(
         context,
-        `👤 ${player.name} (${player.position}, ⭐${player.overall})\n\n🔒 Bu futbolchi yaqinda transfer qilingan va qayta sotilishi vaqtincha cheklangan.`,
+        `👤 <b>${escapeHtml(player.name.toUpperCase())}</b>\n\n🔒 <i>Bu futbolchi yaqinda transfer qilingan va qayta sotilishi vaqtincha cheklangan.</i>`,
         kb
       );
     }
@@ -800,7 +795,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
       .row()
       .text("✍️ Boshqa summa kiritish", `oc:${player.clubPlayerId}`)
       .row()
-      .text("← Tarkib", player.targetClubId ? `tk:${player.targetClubId}:0` : "home:club");
+      .text("↩️ Orqaga", player.targetClubId ? `tk:${player.targetClubId}:0` : "home:club");
 
     await editOrReply(context, formatPlayerProfile(player), kb);
   });
@@ -833,40 +828,48 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
       if (result.status === "PENDING" && offer?.sellerTelegramId) {
         await sendUpdate(
           offer.sellerTelegramId,
-          `📩 YANGI TRANSFER TAKLIFI\n\n⚽ ${player.name}\n🏟 Xaridor: ${offer.buyerClub}\n💰 Taklif: ${transferMoney(amount)}`,
+          [
+            "📥 <b>TRANSFER TAKLIFI</b>",
+            "",
+            `<b>${escapeHtml(offer.buyerClub)}</b>`,
+            `sizning <b>${escapeHtml(player.name)}</b> futbolchingiz uchun`,
+            "",
+            `💶 <b>${formatMoney(amount)}</b> taklif qildi.`,
+          ].join("\n"),
           new InlineKeyboard()
             .text("✅ Qabul qilish", `ia:${result.offerId}`)
             .text("❌ Rad etish", `ir:${result.offerId}`)
             .row()
-            .text("💬 Qarshi taklif", `ic:${result.offerId}`)
+            .text("↔️ Counter", `ic:${result.offerId}`)
         );
       }
 
       const text =
         result.status === "ACCEPTED"
-          ? `✅ ${player.name} transferi muvaffaqiyatli yakunlandi! Futbolchi klubingizga qo‘shildi.`
+          ? `✅ <b>Transfer yakunlandi!</b>\n\n<b>${escapeHtml(player.name)}</b> klubingiz safiga qo‘shildi.`
           : result.status === "COUNTERED"
-          ? `🤝 AI qarshi taklif bildirdi: ${transferMoney(result.counterAmount!)}`
+          ? `⏳ <b>Muzokara davom etmoqda</b>\n\n<b>${escapeHtml(player.clubName)}</b> qarshi taklifi: <b>${formatMoney(result.counterAmount!)}</b>`
           : result.status === "PENDING"
-          ? `⏳ Taklif ${player.clubName} murabbiyiga yuborildi.`
-          : `❌ ${player.clubName} taklifni rad etdi.`;
+          ? `⏳ <b>Taklif yuborildi</b>\n\n<i>Taklif ${escapeHtml(player.clubName)} murabbiyiga yuborildi.</i>`
+          : `❌ <b>Taklif rad etildi</b>\n\n<i>${escapeHtml(player.clubName)} taklifni rad etdi.</i>`;
 
       await editOrReply(
         context,
         text,
         new InlineKeyboard()
-          .text("← Klub tarkibi", player.targetClubId ? `tk:${player.targetClubId}:0` : `tr:${buyerClubId}`)
-          .text("← Transfer markazi", `tr:${buyerClubId}`)
+          .text("↩️ Orqaga", player.targetClubId ? `tk:${player.targetClubId}:0` : `tr:${buyerClubId}`)
       );
     } catch (error: any) {
       const code = error?.message ?? "";
       const msg =
         code === "INSUFFICIENT_BUDGET"
-          ? "❌ Klub budjetida mablag‘ yetarli emas."
+          ? "❌ <b>Taklif yuborilmadi</b>\n<i>Klub budjetida yetarli mablag‘ yo‘q.</i>"
           : code === "PLAYER_NOT_AVAILABLE"
-          ? "❌ Futbolchi transfer uchun ochiq emas yoki yaqinda sotib olingan."
-          : "❌ Taklifni yuborib bo‘lmadi. Qayta urinib ko‘ring.";
-      await context.reply(msg);
+          ? "❌ <b>Transfer cheklangan</b>\n<i>Futbolchi transfer uchun ochiq emas yoki yaqinda sotib olingan.</i>"
+          : code === "LEAGUE_PRE_SEASON_LOCKED"
+          ? "⏳ <b>Liga hali boshlanmagan</b>\n<i>Transferlar liga startidan keyin ochiladi.</i>"
+          : "❌ <b>Taklif yuborilmadi</b>\n<i>Qayta urinib ko‘ring.</i>";
+      await context.reply(msg, { parse_mode: "HTML" });
     }
   });
 
@@ -914,11 +917,13 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     for (const offer of offers) {
       kb.text(`${offer.playerName} · ${offer.buyerClub} · ${transferMoney(offer.amount)}`, `iv:${offer.offerId}`).row();
     }
-    kb.text("← Transfer markazi", `tr:${clubId}`);
+    kb.text("↩️ Orqaga", `tr:${clubId}`);
 
     await editOrReply(
       context,
-      offers.length ? "📩 KELGAN TAKLIFLAR\n\nTaklifni ochib qabul qiling yoki rad eting:" : "📩 Hozircha sizning klubingizga kelgan faol taklif yo‘q.",
+      offers.length
+        ? "📥 <b>TAKLIFLAR</b>\n\n<i>Taklifni ochib qabul qiling yoki rad eting:</i>"
+        : "📥 <b>TAKLIFLAR</b>\n\n<i>Hozircha aktiv takliflar yo‘q.</i>",
       kb
     );
   });
@@ -930,16 +935,25 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     const offer = await transfers.notification(offerId);
     if (!offer) return context.answerCallbackQuery({ text: "Taklif endi faol emas" });
 
+    const text = [
+      "📥 <b>TRANSFER TAKLIFI</b>",
+      "",
+      `<b>${escapeHtml(offer.buyerClub)}</b>`,
+      `sizning <b>${escapeHtml(offer.playerName)}</b> futbolchingiz uchun`,
+      "",
+      `💶 <b>${formatMoney(offer.amount)}</b> taklif qildi.`,
+    ].join("\n");
+
     await editOrReply(
       context,
-      `📩 TAKLIF\n\n⚽ ${offer.playerName}\n🏟 Xaridor: ${offer.buyerClub}\n💰 Taklif: ${transferMoney(offer.amount)}`,
+      text,
       new InlineKeyboard()
         .text("✅ Qabul qilish", `ia:${offer.offerId}`)
         .text("❌ Rad etish", `ir:${offer.offerId}`)
         .row()
-        .text("💬 Qarshi taklif", `ic:${offer.offerId}`)
+        .text("↔️ Counter", `ic:${offer.offerId}`)
         .row()
-        .text("← Takliflar", `io:${offer.sellerClubId}`)
+        .text("↩️ Orqaga", `io:${offer.sellerClubId}`)
     );
   });
 
@@ -961,8 +975,8 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
 
     await editOrReply(
       context,
-      `💬 ${offer.playerName} uchun qarshi taklif summasini yuboring.\n\nAsl taklif: ${transferMoney(offer.amount)}\nMinimal: ${transferMoney(minimum)}`,
-      new InlineKeyboard().text("← Taklif", `iv:${offer.offerId}`)
+      `↔️ <b>${escapeHtml(offer.playerName)}</b> uchun qarshi taklif summasini yuboring.\n\nAsl taklif: <b>${formatMoney(offer.amount)}</b>\nMinimal: <b>${formatMoney(minimum)}</b>`,
+      new InlineKeyboard().text("↩️ Orqaga", `iv:${offer.offerId}`)
     );
   });
 
@@ -1042,12 +1056,12 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     if (!clubId) return context.reply("Transfer markaziga qaytib, klubni qayta tanlang.");
     const item = await transfers.listing(user.id, clubId, context.match[1]!);
     if (!item) {
-      return editOrReply(context, "Bu futbolchi Global Transfer bozorida faol emas.", new InlineKeyboard().text("← Bozor", `gm:${clubId}:0`));
+      return editOrReply(context, "<i>Bu futbolchi Global Transfer bozorida faol emas.</i>", new InlineKeyboard().text("↩️ Orqaga", `gm:${clubId}:0:ALL`));
     }
     await editOrReply(
       context,
       formatListing(item),
-      new InlineKeyboard().text("✅ Xaridni tasdiqlash", `gc:${item.listingId}`).row().text("← Bozor", `gm:${clubId}:0`)
+      new InlineKeyboard().text("✅ Xaridni tasdiqlash", `gc:${item.listingId}`).row().text("↩️ Orqaga", `gm:${clubId}:0:ALL`)
     );
   });
 
@@ -1064,21 +1078,23 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
       await transfers.buy(user.id, clubId, context.match[1]!);
       await editOrReply(
         context,
-        "✅ TRANSFER YAKUNLANDI\n\nFutbolchi klubingizga qo‘shildi va asosiy tarkibingizga kiritildi.",
-        new InlineKeyboard().text("← Bozor", `gm:${clubId}:0`).text("🏟 Klub", `db:${clubId}`)
+        "✅ <b>Transfer yakunlandi!</b>\n\n<i>Futbolchi klubingizga qo‘shildi va asosiy tarkibingizga kiritildi.</i>",
+        new InlineKeyboard().text("↩️ Orqaga", `gm:${clubId}:0:ALL`).text("🏟 Klub", `db:${clubId}`)
       );
     } catch (error: any) {
       logger.warn({ event: "global_transfer_failed", err: error }, "Global transfer failed");
       const err = error?.message ?? "";
-      const text =
-        err === "INSUFFICIENT_BUDGET"
-          ? "❌ Klub budjetida mablag‘ yetarli emas."
-          : err === "SQUAD_LIMIT_REACHED"
-          ? "❌ Tarkibda bo‘sh joy yo‘q (maksimal 30 futbolchi)."
-          : err === "LISTING_NOT_ACTIVE"
-          ? "❌ Ushbu futbolchi allaqachon sotilgan yoki listing muddati tugagan."
-          : "❌ Transfer amalga oshmadi: budjet, tarkib limiti yoki listing holatini tekshiring.";
-      await context.reply(text);
+      let text = "❌ <b>Transfer amalga oshmadi</b>\n<i>Qayta urinib ko‘ring.</i>";
+      if (err.includes("INSUFFICIENT_BUDGET")) {
+        text = "❌ <b>Transfer amalga oshmadi</b>\n<i>Klub budjetida yetarli mablag‘ yo‘q.</i>";
+      } else if (err.includes("SQUAD_LIMIT_REACHED")) {
+        text = "❌ <b>Transfer amalga oshmadi</b>\n<i>Tarkibda bo‘sh joy yo‘q (maksimal 30 futbolchi).</i>";
+      } else if (err.includes("LISTING_NOT_ACTIVE") || err.includes("LISTING_NOT_AVAILABLE") || err.includes("LISTING_EXPIRED")) {
+        text = "❌ <b>Transfer amalga oshmadi</b>\n<i>Ushbu futbolchi allaqachon sotilgan yoki listing muddati tugagan.</i>";
+      } else if (err.includes("LEAGUE_PRE_SEASON_LOCKED")) {
+        text = "⏳ <b>Liga hali boshlanmagan</b>\n<i>Transferlar liga startidan keyin ochiladi.</i>";
+      }
+      await editOrReply(context, text, new InlineKeyboard().text("↩️ Orqaga", `gm:${clubId}:0:ALL`));
     }
   });
 
@@ -1168,13 +1184,13 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     const competitionId = context.match[1]!;
     const leagueList = await leagues.listJoinableLeagues(competitionId);
     if (leagueList.length === 0) {
-      await editOrReply(context, "Hozir bo‘sh public liga yo‘q. Keyinroq qayta urinib ko‘ring.", new InlineKeyboard().text("← Orqaga", "join"));
+      await editOrReply(context, "<i>Hozir bo‘sh public liga yo‘q. Keyinroq qayta urinib ko‘ring.</i>", new InlineKeyboard().text("↩️ Orqaga", "join"));
       return;
     }
     const keyboard = new InlineKeyboard();
     for (const league of leagueList) keyboard.text(`${league.name} · ${league.availableClubs} klub`, `lg:${league.id}:0`).row();
-    keyboard.text("← Orqaga", "join");
-    await editOrReply(context, "🏟 OCHIQ LIGALAR\n\nKlub olish uchun ligani tanlang:", keyboard);
+    keyboard.text("↩️ Orqaga", "join");
+    await editOrReply(context, "🏟 <b>OCHIQ LIGALAR</b>\n\n<i>Klub olish uchun ligani tanlang:</i>", keyboard);
   });
 
   bot.callbackQuery(/^lg:([0-9a-f-]{36}):(\d+)$/, async (context) => {
@@ -1183,12 +1199,12 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     const requestedPage = Number(context.match[2]);
     const clubs = await leagues.listAvailableClubs(leagueId);
     if (clubs.length === 0) {
-      await editOrReply(context, "Bu ligadagi barcha klublar band bo‘ldi.", new InlineKeyboard().text("← Competitionlar", "join"));
+      await editOrReply(context, "<i>Bu ligadagi barcha klublar band bo‘ldi.</i>", new InlineKeyboard().text("↩️ Orqaga", "join"));
       return;
     }
     const lastPage = Math.max(0, Math.ceil(clubs.length / PAGE_SIZE) - 1);
     const page = Math.min(requestedPage, lastPage);
-    await editOrReply(context, `Klub tanlang (${clubs.length} ta mavjud):`, clubListKeyboard(clubs, leagueId, page));
+    await editOrReply(context, `<b>Klub tanlang</b> (${clubs.length} ta mavjud):`, clubListKeyboard(clubs, leagueId, page));
   });
 
   bot.callbackQuery(/^cf:([0-9a-f-]{36})$/, async (context) => {
@@ -1196,11 +1212,11 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     const leagueClubId = context.match[1]!;
     const club = await leagues.getAvailableClub(leagueClubId);
     if (!club) {
-      await editOrReply(context, "Bu klub endi mavjud emas. Ro‘yxatdan boshqa klub tanlang.", new InlineKeyboard().text("← Competitionlar", "join"));
+      await editOrReply(context, "<i>Bu klub endi mavjud emas. Ro‘yxatdan boshqa klub tanlang.</i>", new InlineKeyboard().text("↩️ Orqaga", "join"));
       return;
     }
-    const keyboard = new InlineKeyboard().text("Tasdiqlash", `cl:${club.leagueClubId}`).row().text("← Orqaga", "join");
-    await editOrReply(context, `${club.clubName} klubini boshqarishni tasdiqlaysizmi?\n\nKlubning mavjud holati saqlanadi.`, keyboard);
+    const keyboard = new InlineKeyboard().text("✅ Tasdiqlash", `cl:${club.leagueClubId}`).row().text("↩️ Orqaga", "join");
+    await editOrReply(context, `<b>${escapeHtml(club.clubName)}</b> klubini boshqarishni tasdiqlaysizmi?\n\n<i>Klubning mavjud holati saqlanadi.</i>`, keyboard);
   });
 
   bot.callbackQuery(/^cl:([0-9a-f-]{36})$/, async (context) => {
@@ -1215,7 +1231,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
       await showDashboard(context, club);
     } catch (error: unknown) {
       logger.warn({ event: "club_claim_failed", err: error, userId: user.id }, "Club claim failed");
-      await editOrReply(context, claimErrorMessage(error), new InlineKeyboard().text("← Boshqa klub", "join"));
+      await editOrReply(context, claimErrorMessage(error), new InlineKeyboard().text("↩️ Orqaga", "join"));
     }
   });
 
@@ -1259,32 +1275,154 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     const user = await getContextUser(context);
     const leagueClubId = context.match[1]!;
     const upcoming = await fixtures.listUpcoming(user.id, leagueClubId);
-    await editOrReply(context, formatUpcomingFixtures(upcoming), new InlineKeyboard().text("Natijalar", `rs:${leagueClubId}`).text("Liga jadvali", `tb:${leagueClubId}`).row().text("← Klub", `db:${leagueClubId}`));
+    await editOrReply(
+      context,
+      formatUpcomingFixtures(upcoming),
+      new InlineKeyboard()
+        .text("⚽ Natijalar", `rs:${leagueClubId}`)
+        .text("📊 Liga jadvali", `tb:${leagueClubId}`)
+        .row()
+        .text("↩️ Orqaga", `db:${leagueClubId}`)
+    );
   });
 
-  bot.callbackQuery(/^rs:([0-9a-f-]{36})$/,async(context)=>{if(!context.from)return;await context.answerCallbackQuery();const user=await getContextUser(context);const club=context.match[1]!;await editOrReply(context,formatResults(await matches.history(user.id,club)),new InlineKeyboard().text("Keyingi matchlar",`mt:${club}`).text("← Klub",`db:${club}`));});
-  bot.callbackQuery(/^tb:([0-9a-f-]{36})$/,async(context)=>{if(!context.from)return;await context.answerCallbackQuery();const user=await getContextUser(context);const club=context.match[1]!;await editOrReply(context,formatTable(await matches.table(user.id,club)),new InlineKeyboard().text("← Klub",`db:${club}`));});
-  bot.callbackQuery(/^sc:([0-9a-f-]{36})$/,async(context)=>{if(!context.from)return;await context.answerCallbackQuery();const user=await getContextUser(context),club=context.match[1]!;await editOrReply(context,formatLeaders("🥅 LIGA TO‘PURARLARI",await matches.leaders(user.id,club,"goals"),"gol"),new InlineKeyboard().text("🎯 Assistentlar",`asst:${club}`).row().text("← Klub",`db:${club}`));});
-  bot.callbackQuery(/^asst:([0-9a-f-]{36})$/,async(context)=>{if(!context.from)return;await context.answerCallbackQuery();const user=await getContextUser(context),club=context.match[1]!;await editOrReply(context,formatLeaders("🎯 LIGA ASSISTENTLARI",await matches.leaders(user.id,club,"assists"),"assist"),new InlineKeyboard().text("🥅 To‘purarlar",`sc:${club}`).row().text("← Klub",`db:${club}`));});
-  bot.callbackQuery(/^fn:([0-9a-f-]{36})$/,async(context)=>{if(!context.from)return;await context.answerCallbackQuery();const user=await getContextUser(context);const club=context.match[1]!;await editOrReply(context,formatFinances(await matches.finances(user.id,club)),new InlineKeyboard().text("Homiylar",`sp:${club}`).row().text("← Klub",`db:${club}`));});
-  bot.callbackQuery(/^sp:([0-9a-f-]{36})$/,async context=>{await context.answerCallbackQuery();const club=context.match[1]!,rows=await progression.sponsors();const keyboard=new InlineKeyboard();for(const s of rows)keyboard.text(`${s.name} · ${transferMoney(s.payment)}`,`sa:${s.id}`).row();keyboard.text("← Moliya",`fn:${club}`);await editOrReply(context,formatSponsors(rows),keyboard);});
-  bot.callbackQuery(/^sa:([0-9a-f-]{36})$/,async context=>{if(!context.from)return;await context.answerCallbackQuery();const user=await getContextUser(context),club=(await getContextManagedClubs(context,user.id))[0]?.leagueClubId,sponsor=context.match[1]!;if(!club)return;await progression.acceptSponsor(user.id,club,sponsor);const selected=(await progression.sponsors()).find(s=>s.id===sponsor);if(selected?.channelId){let eligible=false;try{const member=await context.api.getChatMember(selected.channelId,context.from.id);eligible=!['left','kicked'].includes(member.status);}catch(error){logger.warn({event:'sponsor_membership_check_failed',err:error},'Membership check failed');}await progression.setEligibility(user.id,club,eligible);await context.reply(eligible?"Homiy faol. Kanal a’zoligi tasdiqlandi.":"Homiy tanlandi, ammo kanal a’zoligi tasdiqlanmadi.");}else await context.reply("Homiy shartnomasi faol qilindi.");});
+  bot.callbackQuery(/^rs:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const club = context.match[1]!;
+    await editOrReply(
+      context,
+      formatResults(await matches.history(user.id, club)),
+      new InlineKeyboard()
+        .text("📅 Keyingi o‘yinlar", `mt:${club}`)
+        .row()
+        .text("↩️ Orqaga", `db:${club}`)
+    );
+  });
+
+  bot.callbackQuery(/^tb:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const club = context.match[1]!;
+    const clubs = await getContextManagedClubs(context, user.id);
+    const clubObj = clubs.find((c) => c.leagueClubId === club);
+    const leagueTitle = clubObj?.competitionName ? `${clubObj.competitionName.toUpperCase()} — JADVAL` : "LALIGA — JADVAL";
+    await editOrReply(
+      context,
+      formatTable(await matches.table(user.id, club), clubObj?.clubName, leagueTitle),
+      new InlineKeyboard()
+        .text("🥅 To‘purarlar", `sc:${club}`)
+        .text("🎯 Assistentlar", `asst:${club}`)
+        .row()
+        .text("↩️ Orqaga", `db:${club}`)
+    );
+  });
+
+  bot.callbackQuery(/^sc:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const club = context.match[1]!;
+    await editOrReply(
+      context,
+      formatLeaders("TO‘PURARLAR", await matches.leaders(user.id, club, "goals"), "gol"),
+      new InlineKeyboard()
+        .text("🎯 Assistentlar", `asst:${club}`)
+        .text("📊 Liga jadvali", `tb:${club}`)
+        .row()
+        .text("↩️ Orqaga", `db:${club}`)
+    );
+  });
+
+  bot.callbackQuery(/^asst:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const club = context.match[1]!;
+    await editOrReply(
+      context,
+      formatLeaders("ASSISTLAR", await matches.leaders(user.id, club, "assists"), "assist"),
+      new InlineKeyboard()
+        .text("🥅 To‘purarlar", `sc:${club}`)
+        .text("📊 Liga jadvali", `tb:${club}`)
+        .row()
+        .text("↩️ Orqaga", `db:${club}`)
+    );
+  });
+
+  bot.callbackQuery(/^fn:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const club = context.match[1]!;
+    await editOrReply(
+      context,
+      formatFinances(await matches.finances(user.id, club)),
+      new InlineKeyboard()
+        .text("💰 Homiylar", `sp:${club}`)
+        .row()
+        .text("↩️ Orqaga", `db:${club}`)
+    );
+  });
+
+  bot.callbackQuery(/^sp:([0-9a-f-]{36})$/, async (context) => {
+    await context.answerCallbackQuery();
+    const club = context.match[1]!;
+    const rows = await progression.sponsors();
+    const keyboard = new InlineKeyboard();
+    for (const s of rows) {
+      keyboard.text(`${s.name} · ${transferMoney(s.payment)}`, `sa:${s.id}`).row();
+    }
+    keyboard.text("↩️ Orqaga", `fn:${club}`);
+    await editOrReply(context, formatSponsors(rows), keyboard);
+  });
+
+  bot.callbackQuery(/^sa:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const club = (await getContextManagedClubs(context, user.id))[0]?.leagueClubId;
+    const sponsor = context.match[1]!;
+    if (!club) return;
+    await progression.acceptSponsor(user.id, club, sponsor);
+    const selected = (await progression.sponsors()).find((s) => s.id === sponsor);
+    if (selected?.channelId) {
+      let eligible = false;
+      try {
+        const member = await context.api.getChatMember(selected.channelId, context.from.id);
+        eligible = !["left", "kicked"].includes(member.status);
+      } catch (error) {
+        logger.warn({ event: "sponsor_membership_check_failed", err: error }, "Membership check failed");
+      }
+      await progression.setEligibility(user.id, club, eligible);
+      await context.reply(
+        eligible
+          ? "✅ <b>Homiy shartnomasi faol!</b>\n<i>Kanal a’zoligi tasdiqlandi.</i>"
+          : "⚠️ <b>Homiy tanlandi</b>\n<i>Kanal a’zoligi tasdiqlanmadi. Mukofot olish uchun kanalga a’zo bo‘ling.</i>",
+        { parse_mode: "HTML" }
+      );
+    } else {
+      await context.reply("✅ <b>Homiy shartnomasi faol qilindi.</b>", { parse_mode: "HTML" });
+    }
+  });
 
   const tacticKeyboard = (clubId: string, tactic: Tactic): InlineKeyboard => new InlineKeyboard()
-    .text(`📐 Sxema: ${tactic.formationName}`, `fm:${clubId}`).row()
-    .text(`⚖️ Uslub: ${footballTerm(tactic.mentality)} [✅]`, `cy:${clubId}:mentality`).row()
-    .text(`🔥 Pressing: ${tactic.pressing}`, `tc:${clubId}`)
+    .text(`🧩 Formation: ${tactic.formationName}`, `fm:${clubId}`).row()
+    .text(`🎯 Mentalitet: ${footballTerm(tactic.mentality)} [✅]`, `cy:${clubId}:mentality`).row()
+    .text(`⚡ Pressing: ${tactic.pressing}`, `tc:${clubId}`)
     .text("−10", `nu:${clubId}:pressing:-`).text("+10", `nu:${clubId}:pressing:+`).row()
-    .text(`⚡ Sur’at: ${tactic.tempo}`, `tc:${clubId}`)
+    .text(`⏱ Temp: ${tactic.tempo}`, `tc:${clubId}`)
     .text("−10", `nu:${clubId}:tempo:-`).text("+10", `nu:${clubId}:tempo:+`).row()
-    .text(`🛡 Himoya: ${tactic.defensiveLine}`, `tc:${clubId}`)
+    .text(`📏 Himoya: ${tactic.defensiveLine}`, `tc:${clubId}`)
     .text("−10", `nu:${clubId}:defensiveLine:-`).text("+10", `nu:${clubId}:defensiveLine:+`).row()
     .text(`↔️ Kenglik: ${tactic.width}`, `tc:${clubId}`)
     .text("−10", `nu:${clubId}:width:-`).text("+10", `nu:${clubId}:width:+`).row()
     .text(`🎯 Pas: ${footballTerm(tactic.passingStyle)} [✅]`, `cy:${clubId}:passingStyle`).row()
-    .text(`🚀 Hujum: ${footballTerm(tactic.attackFocus)} [✅]`, `cy:${clubId}:attackFocus`).row()
-    .text(`🦵 Kurash: ${footballTerm(tactic.tackling)} [✅]`, `cy:${clubId}:tackling`).row()
-    .text("🔥 Asosiy XI", `xi:${clubId}`).text("← Klub", `db:${clubId}`);
+    .text(`⚔️ Hujum: ${footballTerm(tactic.attackFocus)} [✅]`, `cy:${clubId}:attackFocus`).row()
+    .text(`🛡 Kurash: ${footballTerm(tactic.tackling)} [✅]`, `cy:${clubId}:tackling`).row()
+    .text("🔥 Asosiy XI", `xi:${clubId}`).text("↩️ Orqaga", `db:${clubId}`);
 
   const showTactics = async (context: Context, userId: string, clubId: string): Promise<void> => {
     const tactic = await tactics.get(userId, clubId);
@@ -1323,10 +1461,9 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
       .text("🔄 O‘yinchini almashtirish", `xsl:${clubId}`)
       .text("🤖 Avtomatik tanlash", `xa:${clubId}`)
       .row()
-      .text("📐 Sxemani o‘zgartirish", `fm:${clubId}`)
+      .text("🧩 Formation", `fm:${clubId}`)
       .row()
-      .text("← Jamoa", `sq:${clubId}`)
-      .text("← Klub", `db:${clubId}`);
+      .text("↩️ Orqaga", `db:${clubId}`);
 
     const text = formatStartingXi(clubName, lineup.formation, lineup.players) + (alertText ? `\n\n${alertText}` : "");
     await editOrReply(context, text, keyboard);
@@ -1476,7 +1613,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     await showStartingXi(context, clubId, "✅ Avtomatik tarkib saqlandi!");
   });
   bot.callbackQuery(/^nu:([0-9a-f-]{36}):(pressing|tempo|defensiveLine|width):([+-])$/,async context=>{
-    if(!context.from)return;const user=await getContextUser(context);const club=context.match[1]!,field=context.match[2] as "pressing"|"tempo"|"defensiveLine"|"width";const current=await tactics.get(user.id,club);const value=Math.max(0,Math.min(100,current[field]+(context.match[3]==="+"?10:-10)));const updated=await tactics.update(user.id,club,{[field]:value});await context.answerCallbackQuery({text:`✅ ${field==='tempo'?'Sur’at':field==='defensiveLine'?'Himoya chizig‘i':field==='width'?'Kenglik':'Pressing'}: ${updated[field]}`});await showTactics(context,user.id,club);
+    if(!context.from)return;const user=await getContextUser(context);const club=context.match[1]!,field=context.match[2] as "pressing"|"tempo"|"defensiveLine"|"width";const current=await tactics.get(user.id,club);const value=Math.max(0,Math.min(100,current[field]+(context.match[3]==="+"?10:-10)));await tactics.update(user.id,club,{[field]:value});await context.answerCallbackQuery({text:"✅ Saqlandi"});await showTactics(context,user.id,club);
   });
   bot.callbackQuery(/^cy:([0-9a-f-]{36}):(mentality|passingStyle|attackFocus|tackling)$/, async (context) => {
     if (!context.from) return;
@@ -1492,7 +1629,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     }[field];
     const next = options[(options.indexOf(current[field]) + 1) % options.length]!;
     await tactics.update(user.id, club, { [field]: next });
-    await context.answerCallbackQuery({ text: `✅ ${footballTerm(next)} tanlandi!` });
+    await context.answerCallbackQuery({ text: "✅ Saqlandi" });
     await showTactics(context, user.id, club);
   });
 

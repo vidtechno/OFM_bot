@@ -1,4 +1,30 @@
-import type{AdminSponsor,AdminStats,AdminUser}from"./admin.repository.js";
-export const formatAdminStats=(s:AdminStats)=>["ADMIN CONTROL CENTER","",`Users: ${s.users} · Active: ${s.activeUsers} · Blocked: ${s.blockedUsers}`,`Clubs: ${s.humanClubs} human · ${s.aiClubs} AI`,`Matches: ${s.matches}`,`Transfer offers: ${s.offers}`,`Active listings: ${s.activeListings}`].join("\n");
-export const formatAdminUsers=(rows:AdminUser[])=>["FOYDALANUVCHILAR","",...rows.map((u,i)=>`${i+1}. ${u.username?`@${u.username}`:u.name} · ${u.telegramId} · ${u.blocked?'BLOCKED':'ACTIVE'}`)].join("\n");
-export const formatAdminSponsors=(rows:AdminSponsor[])=>["HOMIYLAR","",...rows.map((s,i)=>`${i+1}. ${s.name} · €${(s.payment/1e6).toFixed(1)}M · ${s.active?'ACTIVE':'PAUSED'}\n   Majburiy kanal: ${s.channel??(s.channelId?String(s.channelId):'sozlanmagan')}`)].join("\n");
+import type { AdminSponsor, AdminStats, AdminUser } from "./admin.repository.js";
+import { escapeHtml, formatMoney } from "../lib/html.js";
+
+export const formatAdminStats = (s: AdminStats) => [
+  "🛠 <b>ADMIN BOSHQARUV PANELI</b>",
+  "",
+  `👤 Foydalanuvchilar: <b>${s.users}</b> · Faol: <b>${s.activeUsers}</b> · Blok: <b>${s.blockedUsers}</b>`,
+  `🏟 Klublar: <b>${s.humanClubs}</b> manager · <b>${s.aiClubs}</b> AI`,
+  `⚽ O‘yinlar: <b>${s.matches}</b>`,
+  `🔄 Takliflar: <b>${s.offers}</b>`,
+  `🛒 Faol listinglar: <b>${s.activeListings}</b>`,
+].join("\n");
+
+export const formatAdminUsers = (rows: AdminUser[]) => [
+  "👥 <b>FOYDALANUVCHILAR</b>",
+  "",
+  ...rows.map(
+    (u, i) =>
+      `${i + 1}. <b>${escapeHtml(u.username ? `@${u.username}` : u.name)}</b> · <code>${u.telegramId}</code> · <i>${u.blocked ? "BLOCKED" : "ACTIVE"}</i>`
+  ),
+].join("\n");
+
+export const formatAdminSponsors = (rows: AdminSponsor[]) => [
+  "💰 <b>HOMIYLAR</b>",
+  "",
+  ...rows.map(
+    (s, i) =>
+      `${i + 1}. <b>${escapeHtml(s.name)}</b> — <b>${formatMoney(s.payment)}</b> · <i>${s.active ? "ACTIVE" : "PAUSED"}</i>\n   Kanal: <i>${escapeHtml(s.channel ?? (s.channelId ? String(s.channelId) : "sozlanmagan"))}</i>`
+  ),
+].join("\n");

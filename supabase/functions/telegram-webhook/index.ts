@@ -4,49 +4,115 @@ import { createClient } from "@supabase/supabase-js";
 // src/bot/create-bot.ts
 import { Bot, InlineKeyboard } from "grammy";
 
-// src/leagues/presentation.ts
+// src/lib/html.ts
+function escapeHtml(str) {
+  if (!str) return "";
+  return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
 function formatMoney(amount) {
-  return `\u20AC${(amount / 1e6).toFixed(1)}M`;
-}
-function formatClubDashboard(club, managerName, nextMatch) {
-  return [
-    club.clubName.toUpperCase(),
-    "",
-    `\u{1F454} Murabbiy: ${managerName}`,
-    `\u{1F3C6} Liga: ${club.leagueName}`,
-    `\u{1F4CA} O\u2018rin: ${club.position}`,
-    `\u{1F3AF} Ochko: ${club.points}`,
-    `\u{1F4B0} Budjet: ${formatMoney(club.budget)}`,
-    "",
-    "\u{1F4C5} KEYINGI UCHRASHUV",
-    nextMatch ?? "Rejalashtirilgan o\u2018yin yo\u2018q."
-  ].join("\n");
-}
-function claimErrorMessage(error) {
-  const message = error instanceof Error ? error.message : String(error);
-  if (message.includes("CLUB_ALREADY_CLAIMED")) return "Bu klubni boshqa manager olib bo\u2018ldi. Boshqa klub tanlang.";
-  if (message.includes("COMPETITION_LIMIT_REACHED")) return "Siz bu competitionda allaqachon klub boshqaryapsiz.";
-  if (message.includes("LEAGUE_NOT_ACTIVE")) return "Bu liga hozir faol emas.";
-  if (message.includes("LEAGUE_PRE_SEASON_LOCKED")) return "\u23F3 Ushbu liga hali boshlanmagan (pre-season). Barcha transferlar liga startidan keyin ochiladi.";
-  return "Klubni olishda xato yuz berdi. Qayta urinib ko\u2018ring.";
+  const abs = Math.abs(amount);
+  if (abs >= 1e6) {
+    const val = amount / 1e6;
+    const formatted = val % 1 === 0 ? val.toFixed(0) : val.toFixed(1);
+    return `\u20AC${formatted}M`;
+  }
+  if (abs >= 1e3) {
+    const val = amount / 1e3;
+    const formatted = val % 1 === 0 ? val.toFixed(0) : val.toFixed(1);
+    return `\u20AC${formatted}K`;
+  }
+  return `\u20AC${amount}`;
 }
 function formatLobbyCountdown(targetDate) {
-  if (!targetDate) return "Tez orada";
+  if (!targetDate) return "<b>Liga boshlanmoqda...</b>";
   const diffMs = new Date(targetDate).getTime() - Date.now();
-  if (diffMs <= 0) return "Boshlanmoqda\u2026";
+  if (diffMs <= 0) return "<b>Liga boshlanmoqda...</b>";
   const totalMinutes = Math.floor(diffMs / 6e4);
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
-  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+  if (hours > 0 && minutes > 0) {
+    return `<b>${hours}</b> soat <b>${minutes}</b> daqiqa qoldi`;
+  }
+  if (hours > 0 && minutes === 0) {
+    return `<b>${hours}</b> soat qoldi`;
+  }
+  if (hours === 0 && minutes > 0) {
+    return `<b>${minutes}</b> daqiqa qoldi`;
+  }
+  return "<b>Liga boshlanmoqda...</b>";
+}
+function formatDateTime(dateInput) {
+  const d = new Date(dateInput);
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const utc = d.getTime() + d.getTimezoneOffset() * 6e4;
+  const uzTime = new Date(utc + 5 * 36e5);
+  const day = uzTime.getDate();
+  const month = months[uzTime.getMonth()];
+  const hours = String(uzTime.getHours()).padStart(2, "0");
+  const minutes = String(uzTime.getMinutes()).padStart(2, "0");
+  return `${day} ${month} \xB7 ${hours}:${minutes}`;
+}
+function formatFixtureDate(dateInput) {
+  const d = new Date(dateInput);
+  const now = /* @__PURE__ */ new Date();
+  const utc = d.getTime() + d.getTimezoneOffset() * 6e4;
+  const uzTime = new Date(utc + 5 * 36e5);
+  const utcNow = now.getTime() + now.getTimezoneOffset() * 6e4;
+  const uzNow = new Date(utcNow + 5 * 36e5);
+  const isToday = uzTime.getDate() === uzNow.getDate() && uzTime.getMonth() === uzNow.getMonth() && uzTime.getFullYear() === uzNow.getFullYear();
+  const hours = String(uzTime.getHours()).padStart(2, "0");
+  const minutes = String(uzTime.getMinutes()).padStart(2, "0");
+  if (isToday) {
+    return `Bugun \xB7 ${hours}:${minutes}`;
+  }
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${uzTime.getDate()} ${months[uzTime.getMonth()]} \xB7 ${hours}:${minutes}`;
+}
+
+// src/leagues/presentation.ts
+function formatClubDashboard(club, managerName, nextMatchSnippet, teamOvr, cashBalance) {
+  const ovr = teamOvr ?? club.teamOvr ?? 80;
+  const cash = cashBalance ?? club.cash ?? club.budget;
+  const lines = [
+    `\u{1F3DF} <b>${escapeHtml(club.clubName.toUpperCase())}</b>`,
+    "",
+    `\u{1F464} Manager: <b>${escapeHtml(managerName)}</b>`,
+    `\u{1F3C6} ${escapeHtml(club.leagueName)}`,
+    `\u{1F4CD} <b>${club.position}-o\u2018rin</b>`,
+    `\u2B50 Jamoa OVR: <b>${ovr}</b>`,
+    "",
+    `\u{1F4B0} Transfer budjeti: <b>${formatMoney(club.budget)}</b>`,
+    `\u{1F3E6} G\u2018azna: <b>${formatMoney(cash)}</b>`,
+    "",
+    "\u23ED Keyingi o\u2018yin",
+    nextMatchSnippet ?? "<i>Rejalashtirilgan o\u2018yin yo\u2018q.</i>"
+  ];
+  return lines.join("\n");
+}
+function claimErrorMessage(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("CLUB_ALREADY_CLAIMED")) {
+    return "\u274C <b>Klub band qilingan</b>\n<i>Bu klubni boshqa manager olib bo\u2018ldi. Boshqa klub tanlang.</i>";
+  }
+  if (message.includes("COMPETITION_LIMIT_REACHED")) {
+    return "\u274C <b>Cheklov mavjud</b>\n<i>Siz bu ligada allaqachon klub boshqaryapsiz.</i>";
+  }
+  if (message.includes("LEAGUE_NOT_ACTIVE")) {
+    return "\u274C <b>Liga faol emas</b>\n<i>Ushbu liga hozirda faol emas.</i>";
+  }
+  if (message.includes("LEAGUE_PRE_SEASON_LOCKED")) {
+    return "\u23F3 <b>Liga hali boshlanmagan</b>\n<i>Transferlar liga startidan keyin ochiladi.</i>";
+  }
+  return "\u274C <b>Xatolik yuz berdi</b>\n<i>Klubni olishda xatolik yuz berdi. Qayta urinib ko\u2018ring.</i>";
 }
 function formatOpenLobbies(lobbies, managedClubs) {
-  const lines = ["\u{1F3C6} LIGALAR", ""];
+  const lines = ["\u{1F3C6} <b>LIGALAR</b>", ""];
   for (const lobby of lobbies) {
-    const flag = lobby.competitionCode === "LALIGA" ? "\u{1F1EA}\u{1F1F8}" : "\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}";
-    const statusText = lobby.status === "OPEN" ? "\u{1F7E2} Qabul ochiq" : "\u26A1 Faol liga";
+    const flag = lobby.competitionCode === "LALIGA" ? "\u{1F1EA}\u{1F1F8}" : "\u{1F3F4}";
+    const statusText = lobby.status === "OPEN" ? "\u{1F7E2} <i>Qabul ochiq</i>" : "\u26A1 <i>Faol liga</i>";
     const countdown = formatLobbyCountdown(lobby.registrationClosesAt);
     lines.push(
-      `${flag} ${lobby.competitionName}`,
+      `${flag} <b>${escapeHtml(lobby.competitionName)}</b>`,
       statusText,
       `\u{1F464} ${lobby.humanCount}/${lobby.maxClubs} manager`,
       `\u23F3 Boshlanishiga: ${countdown}`,
@@ -54,9 +120,13 @@ function formatOpenLobbies(lobbies, managedClubs) {
     );
   }
   if (managedClubs.length > 0) {
-    lines.push("\u{1F4CC} MENING LIGALARIM", "");
+    lines.push("\u{1F4CC} <b>MENING LIGALARIM</b>", "");
     for (const mc of managedClubs) {
-      lines.push(`${mc.clubName} \u2014 ${mc.leagueName}`);
+      lines.push(
+        `\u26BD <b>${escapeHtml(mc.clubName)}</b>`,
+        `<i>${escapeHtml(mc.leagueName)}</i>`,
+        ""
+      );
     }
   }
   return lines.join("\n").trim();
@@ -89,30 +159,30 @@ function formatSquad(clubName, players) {
     group.sort((a, b) => b.overall - a.overall || a.shortName.localeCompare(b.shortName));
   }
   const sectionTitles = {
-    GK: "\u{1F9E4} DARVOZABONLAR",
-    DEF: "\u{1F6E1} HIMOYACHILAR",
-    MID: "\u{1F3AF} YARIM HIMOYACHILAR",
-    ATT: "\u26A1 HUJUMCHILAR"
+    GK: "\u{1F9E4} <b>DARVOZABONLAR</b>",
+    DEF: "\u{1F6E1} <b>HIMOYACHILAR</b>",
+    MID: "\u{1F3AF} <b>YARIM HIMOYACHILAR</b>",
+    ATT: "\u26A1 <b>HUJUMCHILAR</b>"
   };
   const lines = [
-    `\u{1F465} ${clubName.toUpperCase()} \u2014 JAMOA`,
-    `\u{1F4CB} ${players.length} futbolchi`
+    `\u{1F465} <b>${escapeHtml(clubName.toUpperCase())} \u2014 JAMOA</b>`,
+    `\u{1F4CB} <b>${players.length}</b> futbolchi`
   ];
   for (const [secKey, title] of Object.entries(sectionTitles)) {
     const group = groups2.get(secKey) ?? [];
     lines.push("", title);
     if (group.length === 0) {
-      lines.push("\u2014");
+      lines.push("<i>Futbolchi yo\u2018q</i>");
       continue;
     }
     group.forEach((p, idx) => {
       const pos = formatPlayerPosition(p.primaryPosition, p.secondaryPosition);
-      lines.push(`${idx + 1}. ${p.shortName} \u2014 ${pos} \u2014 \u2B50${p.overall}`);
+      lines.push(`${idx + 1}. ${escapeHtml(p.shortName)} \u2014 ${escapeHtml(pos)} \u2014 \u2B50<b>${p.overall}</b>`);
     });
   }
   let text = lines.join("\n");
   if (text.length > 4e3) {
-    text = text.slice(0, 3990) + "\n\u2026 [qolgan o\u2018yinchilar qisqartirildi]";
+    text = text.slice(0, 3990) + "\n\u2026 <i>[qolgan o\u2018yinchilar qisqartirildi]</i>";
   }
   return text;
 }
@@ -121,19 +191,19 @@ function formatSquad(clubName, players) {
 var terms = {
   VERY_DEFENSIVE: "Juda himoyaviy",
   DEFENSIVE: "Himoyaviy",
-  BALANCED: "Muvozanatli",
+  BALANCED: "Balansli",
   ATTACKING: "Hujumkor",
   VERY_ATTACKING: "Juda hujumkor",
-  SHORT: "Qisqa pas",
-  MIXED: "Aralash",
-  DIRECT: "To\u2018g\u2018ridan-to\u2018g\u2018ri",
-  LEFT: "Chap qanot",
-  CENTRE: "Markaz",
-  RIGHT: "O\u2018ng qanot",
-  BOTH_WINGS: "Ikki qanot",
-  CAUTIOUS: "Ehtiyotkor",
-  NORMAL: "Me\u2019yorida",
-  AGGRESSIVE: "Keskin"
+  SHORT: "Short",
+  MIXED: "Mixed",
+  DIRECT: "Direct",
+  LEFT: "Left Wing",
+  CENTRE: "Centre",
+  RIGHT: "Right Wing",
+  BOTH_WINGS: "Both Wings",
+  CAUTIOUS: "Cautious",
+  NORMAL: "Normal",
+  AGGRESSIVE: "Aggressive"
 };
 var footballTerm = (value) => terms[value] ?? value;
 var positionName = (value) => ({
@@ -153,208 +223,338 @@ var positionName = (value) => ({
   RW: "O\u2018ng qanot hujumchi"
 })[value] ?? value;
 var formatTactics = (t) => [
-  "\u{1F9E0} TAKTIK REJA",
+  "\u{1F9E0} <b>TAKTIKA</b>",
   "",
-  `\u{1F4D0} Sxema: ${t.formationName}`,
-  `\u2696\uFE0F O\u2018yin uslubi: ${footballTerm(t.mentality)}`,
-  `\u{1F525} Pressing: ${t.pressing}/100`,
-  `\u26A1 Sur\u2019at: ${t.tempo}/100`,
-  `\u{1F6E1} Himoya chizig\u2018i: ${t.defensiveLine}/100`,
-  `\u2194\uFE0F Maydon kengligi: ${t.width}/100`,
-  `\u{1F3AF} Pas uslubi: ${footballTerm(t.passingStyle)}`,
-  `\u{1F680} Hujum yo\u2018nalishi: ${footballTerm(t.attackFocus)}`,
-  `\u{1F9B5} To\u2018p uchun kurash: ${footballTerm(t.tackling)}`
+  `\u{1F9E9} Formation: <b>${escapeHtml(t.formationName)}</b>`,
+  `\u{1F3AF} Mentalitet: <b>${escapeHtml(footballTerm(t.mentality))}</b>`,
+  `\u26A1 Pressing: <b>${t.pressing}</b>`,
+  `\u23F1 Temp: <b>${t.tempo}</b>`,
+  `\u{1F4CF} Himoya chizig\u2018i: <b>${t.defensiveLine}</b>`,
+  `\u2194\uFE0F Kenglik: <b>${t.width}</b>`,
+  `\u{1F3AF} Pas turi: <b>${escapeHtml(footballTerm(t.passingStyle))}</b>`,
+  `\u2694\uFE0F Hujum yo\u2018nalishi: <b>${escapeHtml(footballTerm(t.attackFocus))}</b>`,
+  `\u{1F6E1} Kurashuvchanlik: <b>${escapeHtml(footballTerm(t.tackling))}</b>`
 ].join("\n");
 function formatStartingXi(clubName, formation, players) {
   const avgStrength = (players.reduce((sum, p) => sum + p.effectiveRating, 0) / Math.max(players.length, 1)).toFixed(1);
   const lines = [
-    `\u{1F525} ${clubName.toUpperCase()} \u2014 ASOSIY XI`,
-    `\u{1F4D0} Sxema: ${formation}`,
-    `\u2B50 Jamoaviy kuch: ${avgStrength}`,
+    `\u{1F525} <b>${escapeHtml(clubName.toUpperCase())} \u2014 ASOSIY XI</b>`,
+    `<i>Formation: ${escapeHtml(formation)}</i>`,
     ""
   ];
-  const gkList = players.filter((p) => p.slotPosition === "GK");
-  const defList = players.filter((p) => ["LB", "LWB", "CB", "RB", "RWB"].includes(p.slotPosition));
-  const midList = players.filter((p) => ["LM", "CDM", "CM", "CAM", "RM"].includes(p.slotPosition));
-  const attList = players.filter((p) => ["LW", "ST", "RW", "CF"].includes(p.slotPosition));
-  const sections = [
-    { title: "\u{1F9E4} DARVOZABON", list: gkList },
-    { title: "\u{1F6E1} HIMOYACHILAR", list: defList },
-    { title: "\u{1F3AF} YARIM HIMOYACHILAR", list: midList },
-    { title: "\u26A1 HUJUMCHILAR", list: attList }
-  ];
-  for (const sec of sections) {
-    if (sec.list.length > 0) {
-      lines.push(sec.title);
-      for (const p of sec.list) {
-        lines.push(`${p.slotKey}: \u2705 ${p.shortName} \u2014 \u2B50${p.overall}`);
-      }
-      lines.push("");
-    }
+  for (const p of players) {
+    const slotLabel = p.slotPosition || p.slotKey;
+    lines.push(
+      slotLabel,
+      `${escapeHtml(p.shortName)} \u2014 \u2B50<b>${p.overall}</b>`,
+      ""
+    );
   }
+  lines.push(`\u2B50 Jamoa kuchi: <b>${avgStrength}</b>`);
   return lines.join("\n").trim();
 }
 
 // src/fixtures/presentation.ts
-var dateTime = new Intl.DateTimeFormat("uz-UZ", {
-  timeZone: "Asia/Tashkent",
-  day: "2-digit",
-  month: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  hourCycle: "h23"
-});
 function formatFixtureLine(fixture) {
-  const venue = fixture.isHome ? "UY" : "SAFAR";
-  return `${fixture.round}-tur \xB7 ${dateTime.format(new Date(fixture.scheduledAt))}
-${fixture.homeClub} \u2014 ${fixture.awayClub} \xB7 ${venue}`;
+  const opponent = fixture.isHome ? fixture.awayClub : fixture.homeClub;
+  const prefix = fixture.isHome ? "vs" : "@";
+  const dateStr = formatFixtureDate(fixture.scheduledAt);
+  return `<b>${prefix} ${escapeHtml(opponent)}</b>
+<i>${dateStr}</i>`;
 }
 function formatUpcomingFixtures(fixtures) {
-  if (fixtures.length === 0) return "MATCHLAR\n\nRejalashtirilgan o\u2018yin topilmadi.";
-  return ["KEYINGI MATCHLAR", "", ...fixtures.flatMap((fixture, index) => [formatFixtureLine(fixture), ...index < fixtures.length - 1 ? [""] : []])].join("\n");
+  if (fixtures.length === 0) {
+    return "\u{1F4C5} <b>O\u2018YINLAR</b>\n\n<i>Rejalashtirilgan o\u2018yin topilmadi.</i>";
+  }
+  const lines = ["\u{1F4C5} <b>KEYINGI O\u2018YINLAR</b>", ""];
+  fixtures.forEach((f, idx) => {
+    const opponent = f.isHome ? f.awayClub : f.homeClub;
+    const prefix = f.isHome ? "vs" : "@";
+    const dateStr = formatFixtureDate(f.scheduledAt);
+    lines.push(
+      `<b>${f.round}-tur</b> \xB7 ${prefix} <b>${escapeHtml(opponent)}</b>`,
+      `<i>${dateStr}</i>`
+    );
+    if (idx < fixtures.length - 1) {
+      lines.push("");
+    }
+  });
+  return lines.join("\n");
 }
 
 // src/matches/presentation.ts
 function formatResults(results) {
-  if (!results.length) return "NATIJALAR\n\nHali o\u2018yin o\u2018tkazilmagan.";
-  return ["\u26BD SO\u2018NGGI NATIJALAR", "", ...results.map((r) => `${r.round}-tur \xB7 ${r.homeClub} ${r.homeGoals}:${r.awayGoals} ${r.awayClub}`)].join("\n");
+  if (!results.length) {
+    return "\u26BD <b>NATIJALAR</b>\n\n<i>Hali o\u2018yin o\u2018tkazilmagan.</i>";
+  }
+  return [
+    "\u26BD <b>SO\u2018NGGI NATIJALAR</b>",
+    "",
+    ...results.map(
+      (r) => `<b>${r.round}-tur</b> \xB7 ${escapeHtml(r.homeClub)} <b>${r.homeGoals}:${r.awayGoals}</b> ${escapeHtml(r.awayClub)}`
+    )
+  ].join("\n");
 }
-function formatTable(rows) {
-  const club = (name) => name.length > 17 ? `${name.slice(0, 16)}\u2026` : name.padEnd(17, " ");
-  return ["\u{1F3C6} TURNIR JADVALI", "", "#  Klub               O\u2018  G\u2018  D  M  TF   P", "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500", ...rows.map((r) => `${String(r.position).padStart(2, " ")} ${club(r.club)} ${String(r.played).padStart(2, " ")}  ${String(r.wins).padStart(2, " ")}  ${String(r.draws).padStart(2, " ")}  ${String(r.losses).padStart(2, " ")} ${String(r.goalDifference).padStart(3, " ")} ${String(r.points).padStart(3, " ")}`), "", "O\u2018: o\u2018yin \xB7 G\u2018: g\u2018alaba \xB7 D: durang \xB7 M: mag\u2018lubiyat \xB7 TF: to\u2018plar farqi"].join("\n");
+function formatTable(rows, userClubName, leagueTitle = "LALIGA \u2014 JADVAL") {
+  if (!rows.length) {
+    return `\u{1F3C6} <b>${escapeHtml(leagueTitle)}</b>
+
+<i>Hali o\u2018yinlar o\u2018tkazilmagan.</i>`;
+  }
+  const lines = [`\u{1F3C6} <b>${escapeHtml(leagueTitle)}</b>`, ""];
+  for (const r of rows) {
+    const isUser = userClubName && r.club.toLowerCase().trim() === userClubName.toLowerCase().trim();
+    const prefix = isUser ? "\u{1F449} " : "";
+    lines.push(`${prefix}${r.position}. ${escapeHtml(r.club)} \u2014 <b>${r.points}</b>`);
+  }
+  return lines.join("\n");
 }
 function formatLeaders(title, leaders, unit) {
-  return leaders.length ? [title, "", ...leaders.map((leader, index) => `${index + 1}. ${leader.name} \xB7 ${leader.club}
-   ${leader.total} ${unit}`)].join("\n") : [title, "", "Hali o\u2018yin statistikasi shakllanmagan."].join("\n");
+  const icon = unit === "gol" || unit === "goals" ? "\u26BD" : "\u{1F3AF}";
+  const cleanTitle = title.replace(/[🥅🎯⚽]/g, "").trim();
+  const header = `${icon} <b>${escapeHtml(cleanTitle)}</b>`;
+  if (!leaders.length) {
+    return `${header}
+
+<i>Hali o\u2018yin statistikasi shakllanmagan.</i>`;
+  }
+  const medals = ["\u{1F947}", "\u{1F948}", "\u{1F949}"];
+  const lines = [header, ""];
+  leaders.slice(0, 10).forEach((l, index) => {
+    const medal = medals[index] ?? `${index + 1}.`;
+    lines.push(`${medal} ${escapeHtml(l.name)} \u2014 <b>${l.total}</b>`);
+  });
+  return lines.join("\n");
 }
 function formatFinances(summary) {
-  const money2 = (value) => `\u20AC${(value / 1e6).toFixed(2)}M`;
-  return ["\u{1F4B0} KLUB MOLIYASI", "", `Hisobdagi mablag\u2018: ${money2(summary.cashBalance)}`, `Transfer budjeti: ${money2(summary.transferBudget)}`, "", "\u{1F9FE} SO\u2018NGGI OPERATSIYALAR", ...summary.transactions.length ? summary.transactions.map((t) => `${t.amount >= 0 ? "+" : ""}${money2(t.amount)} \xB7 ${t.description}`) : ["Hozircha moliyaviy operatsiya yo\u2018q."]].join("\n");
+  return [
+    "\u{1F4B0} <b>KLUB MOLIYASI</b>",
+    "",
+    `\u{1F3E6} Hisobdagi mablag\u2018: <b>${formatMoney(summary.cashBalance)}</b>`,
+    `\u{1F4B0} Transfer budjeti: <b>${formatMoney(summary.transferBudget)}</b>`,
+    "",
+    "\u{1F9FE} <b>SO\u2018NGGI OPERATSIYALAR</b>",
+    ...summary.transactions.length ? summary.transactions.map(
+      (t) => `${t.amount >= 0 ? "\u{1F7E2} +" : "\u{1F534} -"}${formatMoney(Math.abs(t.amount))} \xB7 <i>${escapeHtml(t.description)}</i>`
+    ) : ["<i>Hozircha moliyaviy operatsiya yo\u2018q.</i>"]
+  ].join("\n");
 }
-var reportDate = new Intl.DateTimeFormat("uz-UZ", { timeZone: "Asia/Tashkent", day: "2-digit", month: "long", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 
 // src/transfers/presentation.ts
-var transferMoney = (n) => `\u20AC${(n / 1e6).toFixed(1)}M`;
+var transferMoney = formatMoney;
 function formatTransferHub(clubName, budget, cash, reservedBudget = 0) {
   const available = Math.max(0, budget - reservedBudget);
   return [
-    `\u{1F501} ${clubName.toUpperCase()} \u2014 TRANSFER`,
+    `\u{1F501} <b>${escapeHtml(clubName.toUpperCase())} \u2014 TRANSFER</b>`,
     "",
-    `\u{1F4B0} Transfer budjeti: ${transferMoney(budget)}`,
-    `\u{1F512} Band qilingan: ${transferMoney(reservedBudget)}`,
-    `\u2705 Mavjud: ${transferMoney(available)}`,
-    `\u{1F3E6} G\u2018azna: ${transferMoney(cash)}`,
+    `\u{1F4B0} Budjet: <b>${formatMoney(budget)}</b>`,
+    `\u{1F512} Band: <b>${formatMoney(reservedBudget)}</b>`,
+    `\u2705 Mavjud: <b>${formatMoney(available)}</b>`,
     "",
-    "Kerakli bo\u2018limni tanlang:"
+    "<i>Kerakli bo\u2018limni tanlang.</i>"
   ].join("\n");
 }
 function formatClubPlayers(clubName, players, page = 0, total = players.length) {
   if (!players.length) {
-    return `\u{1F3DF} ${clubName.toUpperCase()} \u2014 FUTBOLCHILAR
+    return `\u{1F3DF} <b>${escapeHtml(clubName.toUpperCase())} \u2014 FUTBOLCHILAR</b>
 
-Bu klubda transferga ochiq futbolchi topilmadi.`;
+<i>Bu klubda transferga ochiq futbolchi topilmadi.</i>`;
   }
   const lines = [
-    `\u{1F3DF} ${clubName.toUpperCase()} \u2014 FUTBOLCHILAR`,
-    `\u{1F4CB} ${total} nafar futbolchi`,
+    `\u{1F3DF} <b>${escapeHtml(clubName.toUpperCase())} \u2014 FUTBOLCHILAR</b>`,
+    `\u{1F4CB} <b>${total}</b> futbolchi`,
     ""
   ];
   players.forEach((p, idx) => {
-    lines.push(`${idx + 1}. ${p.name} \u2014 ${p.position} \u2014 \u2B50${p.overall} \u2014 ${transferMoney(p.marketValue)}`);
+    lines.push(
+      `${idx + 1}. <b>${escapeHtml(p.name)}</b>`,
+      `${escapeHtml(p.position)} \xB7 \u2B50${p.overall} \xB7 ${formatMoney(p.marketValue)}`,
+      ""
+    );
   });
-  return lines.join("\n");
+  return lines.join("\n").trim();
 }
 function formatPlayerProfile(p) {
-  return [
-    "\u{1F464} FUTBOLCHI PROFILI",
+  const lines = [
+    `\u{1F464} <b>${escapeHtml(p.name.toUpperCase())}</b>`,
     "",
-    `\u26BD ${p.name}`,
-    `\u{1F3DF} Joriy klub: ${p.clubName}`,
-    `\u2B50 Overall: ${p.overall}`,
-    `\u{1F4CD} Amplua: ${p.position}`,
-    p.age ? `\u{1F382} Yoshi: ${p.age} yosh` : "",
-    p.nationality ? `\u{1F30D} Millati: ${p.nationality}` : "",
-    `\u{1F4B0} Bozor qiymati: ${transferMoney(p.marketValue)}`,
+    `\u{1F3DF} ${escapeHtml(p.clubName)}`,
+    `\u{1F4CD} ${escapeHtml(p.position)}`,
+    `\u2B50 OVR: <b>${p.overall}</b>`,
+    p.age ? `\u{1F382} Yosh: <b>${p.age}</b>` : "",
+    p.nationality ? `\u{1F30D} Millati: <i>${escapeHtml(p.nationality)}</i>` : "",
+    `\u{1F4B6} Bozor qiymati: <b>${formatMoney(p.marketValue)}</b>`,
     "",
-    "Taklif summasini tanlang:"
-  ].filter(Boolean).join("\n");
+    `<i>Manager: ${escapeHtml(p.managerType ?? "AI")}</i>`
+  ].filter(Boolean);
+  if (p.activeNegotiationText) {
+    lines.push("", p.activeNegotiationText);
+  }
+  return lines.join("\n");
 }
 function formatMarket(players) {
-  return players.length ? [
-    "\u{1F30D} GLOBAL TRANSFER MARKET",
-    "",
-    ...players.map(
-      (p, i) => `${i + 1}. ${p.name} (${p.sellerName ?? "Global"}) \u2014 ${p.position} \u2014 \u2B50${p.overall} \u2014 ${transferMoney(p.askingPrice)}`
-    )
-  ].join("\n") : "\u{1F30D} GLOBAL TRANSFER MARKET\n\nHozir faol listing yo\u2018q.";
+  const header = "\u{1F30D} <b>GLOBAL TRANSFER BOZORI</b>";
+  if (!players.length) {
+    return `${header}
+
+<i>Bu bo\u2018limda hozircha futbolchilar yo\u2018q.</i>`;
+  }
+  const lines = [header, ""];
+  players.forEach((p, i) => {
+    lines.push(
+      `${i + 1}. <b>${escapeHtml(p.name)}</b>`,
+      `${escapeHtml(p.position)} \xB7 \u2B50${p.overall} \xB7 ${formatMoney(p.askingPrice)}`,
+      `<i>${escapeHtml(p.sellerName ?? "Global")}</i>`,
+      ""
+    );
+  });
+  return lines.join("\n").trim();
 }
-function formatLeagueMarket(players) {
-  return players.length ? [
-    "\u{1F6D2} LIGA TRANSFER BOZORI",
-    "",
-    ...players.map(
-      (p, i) => `${i + 1}. ${p.name} (${p.sellerName ?? "Klub"}) \u2014 ${p.position} \u2014 \u2B50${p.overall} \u2014 ${transferMoney(p.askingPrice)}${p.isOwnListing ? " \u{1F3F7} [Sizniki]" : ""}`
-    )
-  ].join("\n") : "\u{1F6D2} LIGA TRANSFER BOZORI\n\nHozirda ushbu ligada sotuvga qo\u2018yilgan futbolchilar yo\u2018q.\nKlubingiz futbolchisini sotuvga qo\u2018yish uchun \xAB\u{1F4E4} Futbolchi sotish\xBB bo\u2018limidan foydalaning.";
+function formatLeagueMarket(players, leagueName) {
+  const header = [
+    "\u{1F6D2} <b>TRANSFER BOZORI</b>",
+    leagueName ? `<i>${escapeHtml(leagueName)}</i>` : ""
+  ].filter(Boolean);
+  if (!players.length) {
+    return [...header, "", "<i>Bu bo\u2018limda hozircha futbolchilar yo\u2018q.</i>"].join("\n");
+  }
+  const lines = [...header, ""];
+  players.forEach((p, i) => {
+    lines.push(
+      `${i + 1}. <b>${escapeHtml(p.name)}</b>`,
+      `${escapeHtml(p.position)} \xB7 \u2B50${p.overall} \xB7 ${formatMoney(p.askingPrice)}`,
+      `<i>${escapeHtml(p.sellerName ?? "Klub")}</i>${p.isOwnListing ? " \u{1F3F7} <i>[Sizniki]</i>" : ""}`,
+      ""
+    );
+  });
+  return lines.join("\n").trim();
 }
 function formatListing(p) {
   return [
-    "\u{1F30D} GLOBAL TRANSFER",
+    "\u{1F30D} <b>GLOBAL TRANSFER</b>",
     "",
-    `\u26BD ${p.name}`,
-    `\u{1F3DF} Klub: ${p.sellerName ?? "Global Market"}`,
-    `\u{1F4CD} ${p.position} \xB7 \u2B50${p.overall} \xB7 ${p.age} yosh`,
-    `\u{1F4B0} Narxi: ${transferMoney(p.askingPrice)}`,
+    `\u26BD <b>${escapeHtml(p.name)}</b>`,
+    `\u{1F3DF} ${escapeHtml(p.sellerName ?? "Global Market")}`,
+    `\u{1F4CD} ${escapeHtml(p.position)} \xB7 \u2B50<b>${p.overall}</b> \xB7 ${p.age} yosh`,
+    `\u{1F4B0} Narxi: <b>${formatMoney(p.askingPrice)}</b>`,
     "",
-    "Xarid darhol amalga oshadi va futbolchi klubingiz tarkibiga qo\u2018shiladi."
+    "<i>Xarid darhol amalga oshadi va futbolchi klubingiz tarkibiga qo\u2018shiladi.</i>"
   ].join("\n");
 }
 function formatLeagueListing(p) {
   return [
-    "\u{1F6D2} LIGA TRANSFERI",
+    "\u{1F6D2} <b>LIGA TRANSFERI</b>",
     "",
-    `\u26BD ${p.name}`,
-    `\u{1F3DF} Sotuvchi klub: ${p.sellerName ?? "Liga klubi"}`,
-    `\u{1F4CD} Amplua: ${p.position}`,
-    `\u2B50 Mahorat: \u2B50${p.overall}`,
-    `\u{1F382} Yoshi: ${p.age} yosh`,
-    `\u{1F4B0} Narxi: ${transferMoney(p.askingPrice)}`,
+    `\u26BD <b>${escapeHtml(p.name)}</b>`,
+    `\u{1F3DF} ${escapeHtml(p.sellerName ?? "Liga klubi")}`,
+    `\u{1F4CD} Amplua: <b>${escapeHtml(p.position)}</b>`,
+    `\u2B50 OVR: <b>${p.overall}</b>`,
+    `\u{1F382} Yoshi: <b>${p.age} yosh</b>`,
+    `\u{1F4B0} Narxi: <b>${formatMoney(p.askingPrice)}</b>`,
     "",
-    p.isOwnListing ? "\u2139\uFE0F Bu sizning sotuvga qo\u2018ygan futbolchingiz." : "Xarid amalga oshgach, mablag\u2018 sotuvchi klubga o\u2018tkaziladi va futbolchi tarkibingizga qo\u2018shiladi."
+    p.isOwnListing ? "\u2139\uFE0F <i>Bu sizning sotuvga qo\u2018ygan futbolchingiz.</i>" : "<i>Xarid amalga oshgach, mablag\u2018 sotuvchi klubga o\u2018tkaziladi va futbolchi tarkibingizga qo\u2018shiladi.</i>"
   ].join("\n");
 }
 function formatTransferHistory(history) {
   if (!history.length) {
-    return "\u{1F4DC} TRANSFER TARIXI\n\nHozircha yakunlangan transferlar mavjud emas.";
+    return "\u{1F4DC} <b>TRANSFER TARIXI</b>\n\n<i>Hozircha yakunlangan transferlar mavjud emas.</i>";
   }
-  const lines = ["\u{1F4DC} TRANSFER TARIXI", ""];
+  const lines = ["\u{1F4DC} <b>TRANSFER TARIXI</b>", ""];
   for (const item of history) {
-    const icon = item.type === "INCOMING" ? "\u{1F7E2} Xarid" : "\u{1F534} Sotuv";
-    const dateStr = new Date(item.date).toLocaleDateString("uz-UZ");
-    lines.push(`${icon}: ${item.playerName} (${transferMoney(item.fee)})`);
-    lines.push(`   ${item.fromClub} \u2794 ${item.toClub} \xB7 ${dateStr}`);
+    const icon = item.type === "INCOMING" ? "\u{1F7E2}" : "\u{1F534}";
+    const action = item.type === "INCOMING" ? "Xarid" : "Sotuv";
+    const dateStr = formatDateTime(item.date);
+    lines.push(
+      `${icon} <b>${escapeHtml(item.playerName)}</b> \u2014 <b>${formatMoney(item.fee)}</b>`,
+      `<i>${action} \xB7 ${escapeHtml(item.fromClub)} \u2794 ${escapeHtml(item.toClub)} \xB7 ${dateStr}</i>`,
+      ""
+    );
   }
-  return lines.join("\n");
+  return lines.join("\n").trim();
 }
 
 // src/progression/presentation.ts
-var money = (n) => `\u20AC${(n / 1e6).toFixed(1)}M`;
 function formatProfile(p, clubs = []) {
-  return ["\u{1F464} MURABBIY PROFILI", `${p.username ? `@${p.username}` : p.name} \xB7 \u{1F3C5} Reyting ${p.rating}`, "", `\u{1F3C6} Mavsum: ${p.seasons} \xB7 Sovrin: ${p.titles}`, `\u26BD O\u2018yin: ${p.matches} \xB7 G\u2018alaba: ${p.wins} \xB7 Durang: ${p.draws} \xB7 Mag\u2018lubiyat: ${p.losses}`, "", `\u{1F504} Transfer xarajati: ${money(p.spend)}`, `\u{1F4B5} Transfer daromadi: ${money(p.income)}`, `\u{1F48E} Eng qimmat transfer: ${money(p.biggest)}`, "", `\u{1F3DF} KLUBLARIM (${clubs.length})`, ...clubs.length ? clubs.map((club, index) => `${index + 1}. ${club.clubName} \xB7 ${club.leagueName}
-   ${club.points} ochko \xB7 ${money(club.budget)}`) : ["Hali klub tanlanmagan."]].join("\n");
+  const managerName = p.username ? `@${p.username}` : p.name;
+  const totalMatches = p.matches || p.wins + p.draws + p.losses;
+  const winRate = totalMatches > 0 ? Math.round(p.wins / totalMatches * 100) : 0;
+  const lines = [
+    "\u{1F464} <b>MANAGER PROFILI</b>",
+    "",
+    `<b>${escapeHtml(managerName)}</b>`,
+    `\u2B50 Reyting: <b>${p.rating.toLocaleString("en-US")}</b>`,
+    "",
+    `\u{1F3AE} Mavsumlar: ${p.seasons}`,
+    `\u{1F3C6} Chempionlik: <b>${p.titles}</b>`,
+    "",
+    "\u{1F4CA} <b>KARYERA</b>",
+    `W ${p.wins} \xB7 D ${p.draws} \xB7 L ${p.losses}`,
+    `Win rate: <b>${winRate}%</b>`
+  ];
+  if (clubs.length > 0) {
+    lines.push("", "\u{1F3DF} <b>KLUBLARIM</b>");
+    for (const club of clubs) {
+      lines.push(
+        `\u26BD <b>${escapeHtml(club.clubName)}</b>`,
+        `<i>${escapeHtml(club.leagueName)} \xB7 ${club.points} ochko</i>`
+      );
+    }
+  }
+  return lines.join("\n");
 }
 function formatLeaderboard(rows) {
-  return ["GLOBAL MANAGER RANKING", "", ...rows.map((p, i) => `${i + 1}. ${p.username ? `@${p.username}` : p.name} \xB7 ${p.rating} \xB7 ${p.wins}W`)].join("\n");
+  if (!rows.length) {
+    return "\u{1F3C6} <b>GLOBAL REYTING</b>\n\n<i>Reyting yozuvlari topilmadi.</i>";
+  }
+  const medals = ["\u{1F947}", "\u{1F948}", "\u{1F949}"];
+  const lines = ["\u{1F3C6} <b>GLOBAL REYTING</b>", ""];
+  rows.slice(0, 10).forEach((p, i) => {
+    const medal = medals[i] ?? `${i + 1}.`;
+    const name = p.username ? `@${p.username}` : p.name;
+    lines.push(`${medal} <b>${escapeHtml(name)}</b> \u2014 \u2B50<b>${p.rating}</b> <i>(${p.wins}W)</i>`);
+  });
+  return lines.join("\n");
 }
 function formatSponsors(rows) {
-  return ["HOMIYLAR", "", ...rows.map((s, i) => `${i + 1}. ${s.name} \xB7 ${money(s.payment)}/match${s.channelId ? " \xB7 Kanal a\u2019zoligi kerak" : ""}`)].join("\n");
+  if (!rows.length) {
+    return "\u{1F4B0} <b>HOMIYLAR</b>\n\n<i>Mavjud homiylar yo\u2018q.</i>";
+  }
+  const lines = ["\u{1F4B0} <b>HOMIYLAR</b>", ""];
+  rows.forEach((s, i) => {
+    lines.push(
+      `${i + 1}. <b>${escapeHtml(s.name)}</b> \u2014 <b>${formatMoney(s.payment)}</b>/o\u2018yin`,
+      s.channelId ? "   <i>Kanal a\u2019zoligi talab qilinadi</i>" : "",
+      ""
+    );
+  });
+  return lines.join("\n").trim();
 }
 
 // src/admin/presentation.ts
-var formatAdminStats = (s) => ["ADMIN CONTROL CENTER", "", `Users: ${s.users} \xB7 Active: ${s.activeUsers} \xB7 Blocked: ${s.blockedUsers}`, `Clubs: ${s.humanClubs} human \xB7 ${s.aiClubs} AI`, `Matches: ${s.matches}`, `Transfer offers: ${s.offers}`, `Active listings: ${s.activeListings}`].join("\n");
-var formatAdminUsers = (rows) => ["FOYDALANUVCHILAR", "", ...rows.map((u, i) => `${i + 1}. ${u.username ? `@${u.username}` : u.name} \xB7 ${u.telegramId} \xB7 ${u.blocked ? "BLOCKED" : "ACTIVE"}`)].join("\n");
-var formatAdminSponsors = (rows) => ["HOMIYLAR", "", ...rows.map((s, i) => `${i + 1}. ${s.name} \xB7 \u20AC${(s.payment / 1e6).toFixed(1)}M \xB7 ${s.active ? "ACTIVE" : "PAUSED"}
-   Majburiy kanal: ${s.channel ?? (s.channelId ? String(s.channelId) : "sozlanmagan")}`)].join("\n");
+var formatAdminStats = (s) => [
+  "\u{1F6E0} <b>ADMIN BOSHQARUV PANELI</b>",
+  "",
+  `\u{1F464} Foydalanuvchilar: <b>${s.users}</b> \xB7 Faol: <b>${s.activeUsers}</b> \xB7 Blok: <b>${s.blockedUsers}</b>`,
+  `\u{1F3DF} Klublar: <b>${s.humanClubs}</b> manager \xB7 <b>${s.aiClubs}</b> AI`,
+  `\u26BD O\u2018yinlar: <b>${s.matches}</b>`,
+  `\u{1F504} Takliflar: <b>${s.offers}</b>`,
+  `\u{1F6D2} Faol listinglar: <b>${s.activeListings}</b>`
+].join("\n");
+var formatAdminUsers = (rows) => [
+  "\u{1F465} <b>FOYDALANUVCHILAR</b>",
+  "",
+  ...rows.map(
+    (u, i) => `${i + 1}. <b>${escapeHtml(u.username ? `@${u.username}` : u.name)}</b> \xB7 <code>${u.telegramId}</code> \xB7 <i>${u.blocked ? "BLOCKED" : "ACTIVE"}</i>`
+  )
+].join("\n");
+var formatAdminSponsors = (rows) => [
+  "\u{1F4B0} <b>HOMIYLAR</b>",
+  "",
+  ...rows.map(
+    (s, i) => `${i + 1}. <b>${escapeHtml(s.name)}</b> \u2014 <b>${formatMoney(s.payment)}</b> \xB7 <i>${s.active ? "ACTIVE" : "PAUSED"}</i>
+   Kanal: <i>${escapeHtml(s.channel ?? (s.channelId ? String(s.channelId) : "sozlanmagan"))}</i>`
+  )
+].join("\n");
 
 // src/bot/keyboards.ts
 import { Keyboard } from "grammy";
@@ -376,12 +576,12 @@ var PAGE_SIZE = 10;
 async function editOrReply(context, text, keyboard) {
   if (context.callbackQuery?.message) {
     try {
-      await context.editMessageText(text, { reply_markup: keyboard });
+      await context.editMessageText(text, { reply_markup: keyboard, parse_mode: "HTML" });
     } catch (error) {
       if (!(error instanceof Error) || !error.message.includes("message is not modified")) throw error;
     }
   } else {
-    await context.reply(text, { reply_markup: keyboard });
+    await context.reply(text, { reply_markup: keyboard, parse_mode: "HTML" });
   }
 }
 function clubListKeyboard(clubs, leagueId, page) {
@@ -389,13 +589,13 @@ function clubListKeyboard(clubs, leagueId, page) {
   for (const club of clubs.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)) {
     keyboard.text(club.clubName, `cf:${club.leagueClubId}`).row();
   }
-  if (page > 0) keyboard.text("\u2190 Oldingi", `lg:${leagueId}:${page - 1}`);
-  if ((page + 1) * PAGE_SIZE < clubs.length) keyboard.text("Keyingi \u2192", `lg:${leagueId}:${page + 1}`);
+  if (page > 0) keyboard.text("\u2B05\uFE0F", `lg:${leagueId}:${page - 1}`);
+  if ((page + 1) * PAGE_SIZE < clubs.length) keyboard.text("\u27A1\uFE0F", `lg:${leagueId}:${page + 1}`);
   if (page > 0 || (page + 1) * PAGE_SIZE < clubs.length) keyboard.row();
-  return keyboard.text("\u2190 Competitionlar", "join");
+  return keyboard.text("\u21A9\uFE0F Orqaga", "join");
 }
 function dashboardKeyboard(leagueClubId) {
-  return new InlineKeyboard().text("\u{1F465} Tarkib", `sq:${leagueClubId}`).text("\u{1F9E0} Taktika", `tc:${leagueClubId}`).row().text("\u{1F504} Transferlar", `tr:${leagueClubId}`).text("\u{1F4B0} Moliya", `fn:${leagueClubId}`).row().text("\u26BD Uchrashuvlar", `mt:${leagueClubId}`).text("\u{1F3C6} Liga jadvali", `tb:${leagueClubId}`).row().text("\u{1F945} To\u2018purarlar", `sc:${leagueClubId}`).text("\u{1F3AF} Assistentlar", `asst:${leagueClubId}`);
+  return new InlineKeyboard().text("\u{1F465} Jamoa", `sq:${leagueClubId}`).text("\u{1F525} Asosiy XI", `xi:${leagueClubId}`).row().text("\u{1F9E0} Taktika", `tc:${leagueClubId}`).text("\u{1F501} Transfer", `tr:${leagueClubId}`).row().text("\u{1F4C5} O\u2018yinlar", `mt:${leagueClubId}`).text("\u{1F4CA} Liga", `tb:${leagueClubId}`).row();
 }
 function createBot({ token, users, leagues, squads, tactics, fixtures, matches, transfers, progression, admin, adminTelegramIds, logger }) {
   const bot = new Bot(token);
@@ -433,7 +633,7 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
   const sendUpdate = async (telegramId, text, keyboard) => {
     if (!telegramId) return;
     try {
-      await bot.api.sendMessage(telegramId, text, { reply_markup: keyboard });
+      await bot.api.sendMessage(telegramId, text, { reply_markup: keyboard, parse_mode: "HTML" });
     } catch (error) {
       logger.warn({ event: "transfer_notification_failed", err: error }, "Transfer notification failed");
     }
@@ -544,13 +744,16 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
       profiler ? profiler.time("manager_profile", () => progression.profile(user.id)) : progression.profile(user.id),
       getContextManagedClubs(context, user.id)
     ]);
-    await context.reply(formatProfile(profile, clubs), { reply_markup: new InlineKeyboard().text("\u{1F3C5} Global reyting", "lb:0") });
+    await context.reply(formatProfile(profile, clubs), {
+      reply_markup: new InlineKeyboard().text("\u{1F3C5} Global reyting", "lb:0"),
+      parse_mode: "HTML"
+    });
   });
   bot.callbackQuery("lb:0", async (context) => {
     await context.answerCallbackQuery();
     const profiler = context.profiler;
     const leaders = profiler ? await profiler.time("manager_profile", () => progression.leaderboard()) : await progression.leaderboard();
-    await editOrReply(context, formatLeaderboard(leaders), new InlineKeyboard().text("\u2190 Profil", "pf:0"));
+    await editOrReply(context, formatLeaderboard(leaders), new InlineKeyboard().text("\u21A9\uFE0F Orqaga", "pf:0"));
   });
   bot.callbackQuery("pf:0", async (context) => {
     if (!context.from) return;
@@ -558,7 +761,7 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
     const user = await getContextUser(context);
     const profiler = context.profiler;
     const profile = profiler ? await profiler.time("manager_profile", () => progression.profile(user.id)) : await progression.profile(user.id);
-    await editOrReply(context, formatProfile(profile), new InlineKeyboard().text("Global reyting", "lb:0"));
+    await editOrReply(context, formatProfile(profile), new InlineKeyboard().text("\u{1F3C5} Global reyting", "lb:0"));
   });
   bot.callbackQuery("refresh:leagues", async (context) => {
     await context.answerCallbackQuery();
@@ -619,7 +822,7 @@ ${new Date(r.created_at).toLocaleString("uz-UZ")}`) : ["Hozircha audit yozuvlari
     const finances = await matches.finances(user.id, clubId);
     const owner = await transfers.ownerLeague(user.id, clubId, false);
     await transfers.saveInputSession(user.id, "ACTIVE_CLUB", { clubId });
-    const keyboard = new InlineKeyboard().text("\u{1F6D2} Transfer bozori", `lm:${clubId}:0:ALL`).text("\u{1F50E} Ligadan izlash", `tf:${clubId}:0`).row().text("\u{1F30D} Global Transfer", `gm:${clubId}:0:ALL`).text("\u{1F4E4} Futbolchi sotish", `ts:${clubId}`).row().text("\u{1F4E5} Takliflar", `io:${clubId}`).text("\u{1F4DC} Transfer tarixi", `th:${clubId}`).row().text("\u21A9\uFE0F Klubga qaytish", `db:${clubId}`);
+    const keyboard = new InlineKeyboard().text("\u{1F6D2} Transfer bozori", `lm:${clubId}:0:ALL`).text("\u{1F50E} Ligadan izlash", `tf:${clubId}:0`).row().text("\u{1F30D} Global Transfer", `gm:${clubId}:0:ALL`).text("\u{1F4E4} Futbolchi sotish", `ts:${clubId}`).row().text("\u{1F4E5} Takliflar", `io:${clubId}`).text("\u{1F4DC} Transfer tarixi", `th:${clubId}`).row().text("\u21A9\uFE0F Orqaga", `db:${clubId}`);
     let hubText = formatTransferHub(
       clubName,
       finances.transferBudget,
@@ -627,8 +830,8 @@ ${new Date(r.created_at).toLocaleString("uz-UZ")}`) : ["Hozircha audit yozuvlari
       finances.reservedTransferBudget ?? 0
     );
     if (owner.league_status === "OPEN") {
-      hubText = `\u23F3 DIQQAT: Liga hali boshlanmagan (Pre-season).
-Barcha transferlar liga startidan keyin ochiladi.
+      hubText = `\u23F3 <b>Liga hali boshlanmagan</b>
+<i>Transferlar liga startidan keyin ochiladi.</i>
 
 ${hubText}`;
     }
@@ -638,22 +841,22 @@ ${hubText}`;
     if (!context.from) return;
     const user = await getContextUser(context);
     await transfers.saveInputSession(user.id, "ACTIVE_CLUB", { clubId });
+    const clubs = await getContextManagedClubs(context, user.id);
+    const club = clubs.find((c) => c.leagueClubId === clubId);
     const items = await transfers.leagueMarket(user.id, clubId, page, 8, group);
     const keyboard = new InlineKeyboard();
     for (const item of items) {
       keyboard.text(
-        `\u26BD ${item.name} (${item.sellerName ?? "Klub"}) \xB7 \u2B50${item.overall} \xB7 ${transferMoney(item.askingPrice)}${item.isOwnListing ? " \u{1F3F7}" : ""}`,
+        `${item.name} \xB7 ${item.position} \xB7 \u2B50${item.overall} \xB7 ${transferMoney(item.askingPrice)}${item.isOwnListing ? " \u{1F3F7}" : ""}`,
         `lb:${item.listingId}`
       ).row();
     }
-    keyboard.text(group === "ALL" ? "\u2705 Barchasi" : "\u{1F31F} Barchasi", `lm:${clubId}:0:ALL`).text(group === "GK" ? "\u2705 Darvozabon" : "\u{1F945} Darvozabon", `lm:${clubId}:0:GK`).row().text(group === "DEF" ? "\u2705 Himoyachi" : "\u{1F6E1} Himoyachi", `lm:${clubId}:0:DEF`).text(group === "MID" ? "\u2705 Yarimhimoya" : "\u{1F9E0} Yarimhimoya", `lm:${clubId}:0:MID`).row().text(group === "ATT" ? "\u2705 Hujumchi" : "\u26A1 Hujumchi", `lm:${clubId}:0:ATT`);
-    if (page > 0) keyboard.row().text("\u2190 Oldingi", `lm:${clubId}:${page - 1}:${group}`);
-    if (items.length === 8) keyboard.text("Keyingi \u2192", `lm:${clubId}:${page + 1}:${group}`);
-    keyboard.row().text("\u2190 Transfer markazi", `tr:${clubId}`);
-    const groupTitle = group === "ALL" ? "BARCHASI" : group === "GK" ? "DARVOZABONLAR" : group === "DEF" ? "HIMOYACHILAR" : group === "MID" ? "YARIMHIMOYACHILAR" : "HUJUMCHILAR";
-    await editOrReply(context, `\u{1F6D2} LIGA TRANSFER BOZORI \xB7 ${groupTitle}
-
-${formatLeagueMarket(items)}`, keyboard);
+    keyboard.text(group === "ALL" ? "ALL \u2705" : "ALL", `lm:${clubId}:0:ALL`).row().text(group === "GK" ? "GK \u2705" : "GK", `lm:${clubId}:0:GK`).text(group === "DEF" ? "DEF \u2705" : "DEF", `lm:${clubId}:0:DEF`).row().text(group === "MID" ? "MID \u2705" : "MID", `lm:${clubId}:0:MID`).text(group === "ATT" ? "ATT \u2705" : "ATT", `lm:${clubId}:0:ATT`).row();
+    if (page > 0) keyboard.text("\u2B05\uFE0F", `lm:${clubId}:${page - 1}:${group}`);
+    keyboard.text(`${page + 1}`, `lm:${clubId}:${page}:${group}`);
+    if (items.length === 8) keyboard.text("\u27A1\uFE0F", `lm:${clubId}:${page + 1}:${group}`);
+    keyboard.row().text("\u21A9\uFE0F Orqaga", `tr:${clubId}`);
+    await editOrReply(context, formatLeagueMarket(items, club?.leagueName), keyboard);
   };
   const showMarket = async (context, clubId, page, group = "ALL") => {
     if (!context.from) return;
@@ -662,16 +865,14 @@ ${formatLeagueMarket(items)}`, keyboard);
     const items = await transfers.market(user.id, clubId, page, 8, group);
     const keyboard = new InlineKeyboard();
     for (const item of items) {
-      keyboard.text(`\u26BD ${item.name} \xB7 \u2B50${item.overall} \xB7 ${transferMoney(item.askingPrice)}`, `gb:${item.listingId}`).row();
+      keyboard.text(`${item.name} \xB7 ${item.position} \xB7 \u2B50${item.overall} \xB7 ${transferMoney(item.askingPrice)}`, `gb:${item.listingId}`).row();
     }
-    keyboard.text(group === "ALL" ? "\u2705 Barchasi" : "\u{1F31F} Barchasi", `gm:${clubId}:0:ALL`).text(group === "GK" ? "\u2705 Darvozabon" : "\u{1F945} Darvozabon", `gm:${clubId}:0:GK`).row().text(group === "DEF" ? "\u2705 Himoyachi" : "\u{1F6E1} Himoyachi", `gm:${clubId}:0:DEF`).text(group === "MID" ? "\u2705 Yarimhimoya" : "\u{1F9E0} Yarimhimoya", `gm:${clubId}:0:MID`).row().text(group === "ATT" ? "\u2705 Hujumchi" : "\u26A1 Hujumchi", `gm:${clubId}:0:ATT`);
-    if (page > 0) keyboard.row().text("\u2190 Oldingi", `gm:${clubId}:${page - 1}:${group}`);
-    if (items.length === 8) keyboard.text("Keyingi \u2192", `gm:${clubId}:${page + 1}:${group}`);
-    keyboard.row().text("\u2190 Transfer markazi", `tr:${clubId}`);
-    const groupTitle = group === "ALL" ? "YULDUZLAR" : group === "GK" ? "DARVOZABONLAR" : group === "DEF" ? "HIMOYACHILAR" : group === "MID" ? "YARIMHIMOYACHILAR" : "HUJUMCHILAR";
-    await editOrReply(context, `\u{1F30D} GLOBAL TRANSFER \xB7 ${groupTitle}
-
-${formatMarket(items)}`, keyboard);
+    keyboard.text(group === "ALL" ? "ALL \u2705" : "ALL", `gm:${clubId}:0:ALL`).row().text(group === "GK" ? "GK \u2705" : "GK", `gm:${clubId}:0:GK`).text(group === "DEF" ? "DEF \u2705" : "DEF", `gm:${clubId}:0:DEF`).row().text(group === "MID" ? "MID \u2705" : "MID", `gm:${clubId}:0:MID`).text(group === "ATT" ? "ATT \u2705" : "ATT", `gm:${clubId}:0:ATT`).row();
+    if (page > 0) keyboard.text("\u2B05\uFE0F", `gm:${clubId}:${page - 1}:${group}`);
+    keyboard.text(`${page + 1}`, `gm:${clubId}:${page}:${group}`);
+    if (items.length === 8) keyboard.text("\u27A1\uFE0F", `gm:${clubId}:${page + 1}:${group}`);
+    keyboard.row().text("\u21A9\uFE0F Orqaga", `tr:${clubId}`);
+    await editOrReply(context, formatMarket(items), keyboard);
   };
   bot.callbackQuery(/^tr:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
@@ -695,7 +896,7 @@ ${formatMarket(items)}`, keyboard);
     if (!clubId) return context.reply("Transfer markaziga qaytib, klubni qayta tanlang.");
     const item = await transfers.listing(user.id, clubId, context.match[1]);
     if (!item) {
-      return editOrReply(context, "Bu futbolchi transfer bozorida faol emas.", new InlineKeyboard().text("\u2190 Bozor", `lm:${clubId}:0:ALL`));
+      return editOrReply(context, "<i>Bu futbolchi transfer bozorida faol emas.</i>", new InlineKeyboard().text("\u21A9\uFE0F Orqaga", `lm:${clubId}:0:ALL`));
     }
     const kb = new InlineKeyboard();
     if (item.isOwnListing) {
@@ -703,7 +904,7 @@ ${formatMarket(items)}`, keyboard);
     } else {
       kb.text("\u2705 Xaridni tasdiqlash", `lc:${item.listingId}`).row();
     }
-    kb.text("\u2190 Liga bozori", `lm:${clubId}:0:ALL`);
+    kb.text("\u21A9\uFE0F Orqaga", `lm:${clubId}:0:ALL`);
     await editOrReply(context, formatLeagueListing(item), kb);
   });
   bot.callbackQuery(/^lc:([0-9a-f-]{36})$/, async (context) => {
@@ -717,14 +918,23 @@ ${formatMarket(items)}`, keyboard);
       await transfers.buy(user.id, clubId, context.match[1]);
       await editOrReply(
         context,
-        "\u2705 TRANSFER YAKUNLANDI\n\nFutbolchi klubingizga muvaffaqiyatli qo\u2018shildi!",
-        new InlineKeyboard().text("\u2190 Liga bozori", `lm:${clubId}:0:ALL`).text("\u{1F3DF} Klub", `db:${clubId}`)
+        "\u2705 <b>Transfer yakunlandi!</b>\n\n<i>Futbolchi klubingizga muvaffaqiyatli qo\u2018shildi.</i>",
+        new InlineKeyboard().text("\u21A9\uFE0F Orqaga", `lm:${clubId}:0:ALL`).text("\u{1F3DF} Klub", `db:${clubId}`)
       );
     } catch (error) {
       logger.warn({ event: "league_transfer_failed", err: error }, "League transfer failed");
       const err = error?.message ?? "";
-      const text = err === "INSUFFICIENT_BUDGET" ? "\u274C Klub budjetida mablag\u2018 yetarli emas." : err === "SQUAD_LIMIT_REACHED" ? "\u274C Tarkibda bo\u2018sh joy yo\u2018q (maksimal 30 futbolchi)." : err === "LISTING_NOT_AVAILABLE" || err === "LISTING_EXPIRED" ? "\u274C Ushbu futbolchi allaqachon sotilgan yoki listing muddati tugagan." : `\u274C Transfer amalga oshmadi: ${err || "qayta urinib ko\u2018ring"}`;
-      await editOrReply(context, text, new InlineKeyboard().text("\u2190 Liga bozori", `lm:${clubId}:0:ALL`));
+      let text = "\u274C <b>Transfer amalga oshmadi</b>\n<i>Qayta urinib ko\u2018ring.</i>";
+      if (err.includes("INSUFFICIENT_BUDGET")) {
+        text = "\u274C <b>Transfer amalga oshmadi</b>\n<i>Klub budjetida yetarli mablag\u2018 yo\u2018q.</i>";
+      } else if (err.includes("SQUAD_LIMIT_REACHED")) {
+        text = "\u274C <b>Transfer amalga oshmadi</b>\n<i>Tarkibda bo\u2018sh joy yo\u2018q (maksimal 30 futbolchi).</i>";
+      } else if (err.includes("LISTING_NOT_AVAILABLE") || err.includes("LISTING_EXPIRED")) {
+        text = "\u274C <b>Transfer amalga oshmadi</b>\n<i>Ushbu futbolchi allaqachon sotilgan yoki listing muddati tugagan.</i>";
+      } else if (err.includes("LEAGUE_PRE_SEASON_LOCKED")) {
+        text = "\u23F3 <b>Liga hali boshlanmagan</b>\n<i>Transferlar liga startidan keyin ochiladi.</i>";
+      }
+      await editOrReply(context, text, new InlineKeyboard().text("\u21A9\uFE0F Orqaga", `lm:${clubId}:0:ALL`));
     }
   });
   bot.callbackQuery(/^ld:([0-9a-f-]{36})$/, async (context) => {
@@ -842,14 +1052,19 @@ Baribir sotuvga qo\u2018ymoqchimisiz?`,
       await transfers.listForSale(user.id, clubId, clubPlayerId, askingPrice);
       await editOrReply(
         context,
-        `\u2705 ${player.name} ${transferMoney(askingPrice)} narxida liga transfer bozoriga qo\u2018yildi!`,
-        new InlineKeyboard().text("\u{1F6D2} Transfer bozorini ko\u2018rish", `lm:${clubId}:0:ALL`).row().text("\u2190 Sotuv bo\u2018limi", `ts:${clubId}`)
+        `\u2705 <b>${escapeHtml(player.name)}</b> <b>${formatMoney(askingPrice)}</b> narxida transfer bozoriga qo\u2018yildi!`,
+        new InlineKeyboard().text("\u{1F6D2} Transfer bozorini ko\u2018rish", `lm:${clubId}:0:ALL`).row().text("\u21A9\uFE0F Orqaga", `ts:${clubId}`)
       );
     } catch (error) {
+      const err = error?.message ?? "";
+      let text = "\u274C <b>Futbolchini sotuvga qo\u2018yib bo\u2018lmadi</b>\n<i>Qayta urinib ko\u2018ring.</i>";
+      if (err.includes("LEAGUE_PRE_SEASON_LOCKED")) {
+        text = "\u23F3 <b>Liga hali boshlanmagan</b>\n<i>Transferlar liga startidan keyin ochiladi.</i>";
+      }
       await editOrReply(
         context,
-        `\u274C Xatolik: ${error?.message ?? "Futbolchini sotuvga qo\u2018yib bo\u2018lmadi."}`,
-        new InlineKeyboard().text("\u2190 Orqaga", `ts:${clubId}`)
+        text,
+        new InlineKeyboard().text("\u21A9\uFE0F Orqaga", `ts:${clubId}`)
       );
     }
   });
@@ -873,11 +1088,11 @@ Baribir sotuvga qo\u2018ymoqchimisiz?`,
     });
     await editOrReply(
       context,
-      `\u{1F4B0} ${player.name} uchun sotuv narxini yuboring.
+      `\u{1F4B0} <b>${escapeHtml(player.name)}</b> uchun sotuv narxini yuboring.
 
-Minimal narx: ${transferMoney(minimum)}
-Misol: 45M yoki 45000000`,
-      new InlineKeyboard().text("\u2190 Bekor qilish", `ts:${clubId}`)
+Minimal narx: <b>${formatMoney(minimum)}</b>
+<i>Misol: 45M yoki 45000000</i>`,
+      new InlineKeyboard().text("\u21A9\uFE0F Orqaga", `ts:${clubId}`)
     );
   });
   bot.callbackQuery(/^tf:([0-9a-f-]{36}):(\d+)$/, async (context) => {
@@ -891,13 +1106,13 @@ Misol: 45M yoki 45000000`,
     for (const club of clubs.slice(page * 10, (page + 1) * 10)) {
       kb.text(`\u{1F3DF} ${club.clubName}`, `tk:${club.leagueClubId}:0`).row();
     }
-    if (page > 0) kb.text("\u2190 Oldingi", `tf:${clubId}:${page - 1}`);
-    if ((page + 1) * 10 < clubs.length) kb.text("Keyingi \u2192", `tf:${clubId}:${page + 1}`);
+    if (page > 0) kb.text("\u2B05\uFE0F", `tf:${clubId}:${page - 1}`);
+    if ((page + 1) * 10 < clubs.length) kb.text("\u27A1\uFE0F", `tf:${clubId}:${page + 1}`);
     if (page > 0 || (page + 1) * 10 < clubs.length) kb.row();
-    kb.text("\u2190 Transfer markazi", `tr:${clubId}`);
+    kb.text("\u21A9\uFE0F Orqaga", `tr:${clubId}`);
     await editOrReply(
       context,
-      clubs.length ? "\u{1F50E} LIGADAN IZLASH\n\nRaqib klubni tanlang va uning futbolchilariga taklif yuboring:" : "Bu ligada boshqa raqib klublar topilmadi.",
+      clubs.length ? "\u{1F50E} <b>LIGADAN IZLASH</b>\n\n<i>Raqib klubni tanlang va uning futbolchilariga taklif yuboring:</i>" : "\u{1F50E} <b>LIGADAN IZLASH</b>\n\n<i>Bu ligada boshqa raqib klublar topilmadi.</i>",
       kb
     );
   });
@@ -918,10 +1133,10 @@ Misol: 45M yoki 45000000`,
     for (const player of players) {
       kb.text(`\u26BD ${player.name} \xB7 ${player.position} \xB7 \u2B50${player.overall}`, `tp:${player.clubPlayerId}`).row();
     }
-    if (page > 0) kb.text("\u2190 Oldingi", `tk:${targetClubId}:${page - 1}`);
-    if (players.length === 15) kb.text("Keyingi \u2192", `tk:${targetClubId}:${page + 1}`);
+    if (page > 0) kb.text("\u2B05\uFE0F", `tk:${targetClubId}:${page - 1}`);
+    if (players.length === 15) kb.text("\u27A1\uFE0F", `tk:${targetClubId}:${page + 1}`);
     if (page > 0 || players.length === 15) kb.row();
-    kb.text("\u2190 Klublar", `tf:${buyerClubId}:0`).text("\u2190 Transfer", `tr:${buyerClubId}`);
+    kb.text("\u21A9\uFE0F Orqaga", `tf:${buyerClubId}:0`);
     await editOrReply(context, formatClubPlayers(targetClubName, players), kb);
   });
   bot.callbackQuery(/^tp:([0-9a-f-]{36})$/, async (context) => {
@@ -940,29 +1155,29 @@ Misol: 45M yoki 45000000`,
       if (player.activeNegotiation.status === "COUNTERED") {
         kb2.text("\u2705 Qabul qilish", `ia:${player.activeNegotiation.offerId}`).text("\u274C Rad etish", `ir:${player.activeNegotiation.offerId}`).row();
       }
-      kb2.text("\u2190 Tarkib", player.targetClubId ? `tk:${player.targetClubId}:0` : "home:club");
+      kb2.text("\u21A9\uFE0F Orqaga", player.targetClubId ? `tk:${player.targetClubId}:0` : "home:club");
       const negText = [
-        "\u23F3 MUZOKARA DAVOM ETMOQDA",
+        "\u23F3 <b>Muzokara davom etmoqda</b>",
         "",
-        `\u26BD ${player.name} (${player.position}, \u2B50${player.overall})`,
-        `\u{1F3DF} Klub: ${player.clubName}`,
+        `\u{1F464} <b>${escapeHtml(player.name.toUpperCase())}</b>`,
+        `\u{1F3DF} ${escapeHtml(player.clubName)}`,
+        `\u{1F4CD} ${escapeHtml(player.position)} \xB7 \u2B50<b>${player.overall}</b>`,
         "",
-        player.activeNegotiation.status === "COUNTERED" ? `${player.clubName} qarshi taklifi:
-\u{1F4B0} ${transferMoney(player.activeNegotiation.counterAmount)}` : `Yuborilgan taklifingiz: ${transferMoney(player.activeNegotiation.amount)} ko\u2018rib chiqilmoqda\u2026`
+        player.activeNegotiation.status === "COUNTERED" ? `<b>${escapeHtml(player.clubName)}</b> qarshi taklifi: <b>${formatMoney(player.activeNegotiation.counterAmount)}</b>` : `<i>Yuborilgan taklifingiz (${formatMoney(player.activeNegotiation.amount)}) ko\u2018rib chiqilmoqda\u2026</i>`
       ].join("\n");
       return editOrReply(context, negText, kb2);
     }
     if (player.isResaleLocked) {
-      const kb2 = new InlineKeyboard().text("\u2190 Tarkib", player.targetClubId ? `tk:${player.targetClubId}:0` : "home:club");
+      const kb2 = new InlineKeyboard().text("\u21A9\uFE0F Orqaga", player.targetClubId ? `tk:${player.targetClubId}:0` : "home:club");
       return editOrReply(
         context,
-        `\u{1F464} ${player.name} (${player.position}, \u2B50${player.overall})
+        `\u{1F464} <b>${escapeHtml(player.name.toUpperCase())}</b>
 
-\u{1F512} Bu futbolchi yaqinda transfer qilingan va qayta sotilishi vaqtincha cheklangan.`,
+\u{1F512} <i>Bu futbolchi yaqinda transfer qilingan va qayta sotilishi vaqtincha cheklangan.</i>`,
         kb2
       );
     }
-    const kb = new InlineKeyboard().text(`120% (${transferMoney(Math.round(player.marketValue * 1.2))})`, `of:${player.clubPlayerId}:120`).text(`130% (${transferMoney(Math.round(player.marketValue * 1.3))})`, `of:${player.clubPlayerId}:130`).row().text(`140% (${transferMoney(Math.round(player.marketValue * 1.4))})`, `of:${player.clubPlayerId}:140`).text(`150% (${transferMoney(Math.round(player.marketValue * 1.5))})`, `of:${player.clubPlayerId}:150`).row().text("\u270D\uFE0F Boshqa summa kiritish", `oc:${player.clubPlayerId}`).row().text("\u2190 Tarkib", player.targetClubId ? `tk:${player.targetClubId}:0` : "home:club");
+    const kb = new InlineKeyboard().text(`120% (${transferMoney(Math.round(player.marketValue * 1.2))})`, `of:${player.clubPlayerId}:120`).text(`130% (${transferMoney(Math.round(player.marketValue * 1.3))})`, `of:${player.clubPlayerId}:130`).row().text(`140% (${transferMoney(Math.round(player.marketValue * 1.4))})`, `of:${player.clubPlayerId}:140`).text(`150% (${transferMoney(Math.round(player.marketValue * 1.5))})`, `of:${player.clubPlayerId}:150`).row().text("\u270D\uFE0F Boshqa summa kiritish", `oc:${player.clubPlayerId}`).row().text("\u21A9\uFE0F Orqaga", player.targetClubId ? `tk:${player.targetClubId}:0` : "home:club");
     await editOrReply(context, formatPlayerProfile(player), kb);
   });
   bot.callbackQuery(/^of:([0-9a-f-]{36}):(\d+)$/, async (context) => {
@@ -988,24 +1203,35 @@ Misol: 45M yoki 45000000`,
       if (result.status === "PENDING" && offer?.sellerTelegramId) {
         await sendUpdate(
           offer.sellerTelegramId,
-          `\u{1F4E9} YANGI TRANSFER TAKLIFI
-
-\u26BD ${player.name}
-\u{1F3DF} Xaridor: ${offer.buyerClub}
-\u{1F4B0} Taklif: ${transferMoney(amount)}`,
-          new InlineKeyboard().text("\u2705 Qabul qilish", `ia:${result.offerId}`).text("\u274C Rad etish", `ir:${result.offerId}`).row().text("\u{1F4AC} Qarshi taklif", `ic:${result.offerId}`)
+          [
+            "\u{1F4E5} <b>TRANSFER TAKLIFI</b>",
+            "",
+            `<b>${escapeHtml(offer.buyerClub)}</b>`,
+            `sizning <b>${escapeHtml(player.name)}</b> futbolchingiz uchun`,
+            "",
+            `\u{1F4B6} <b>${formatMoney(amount)}</b> taklif qildi.`
+          ].join("\n"),
+          new InlineKeyboard().text("\u2705 Qabul qilish", `ia:${result.offerId}`).text("\u274C Rad etish", `ir:${result.offerId}`).row().text("\u2194\uFE0F Counter", `ic:${result.offerId}`)
         );
       }
-      const text = result.status === "ACCEPTED" ? `\u2705 ${player.name} transferi muvaffaqiyatli yakunlandi! Futbolchi klubingizga qo\u2018shildi.` : result.status === "COUNTERED" ? `\u{1F91D} AI qarshi taklif bildirdi: ${transferMoney(result.counterAmount)}` : result.status === "PENDING" ? `\u23F3 Taklif ${player.clubName} murabbiyiga yuborildi.` : `\u274C ${player.clubName} taklifni rad etdi.`;
+      const text = result.status === "ACCEPTED" ? `\u2705 <b>Transfer yakunlandi!</b>
+
+<b>${escapeHtml(player.name)}</b> klubingiz safiga qo\u2018shildi.` : result.status === "COUNTERED" ? `\u23F3 <b>Muzokara davom etmoqda</b>
+
+<b>${escapeHtml(player.clubName)}</b> qarshi taklifi: <b>${formatMoney(result.counterAmount)}</b>` : result.status === "PENDING" ? `\u23F3 <b>Taklif yuborildi</b>
+
+<i>Taklif ${escapeHtml(player.clubName)} murabbiyiga yuborildi.</i>` : `\u274C <b>Taklif rad etildi</b>
+
+<i>${escapeHtml(player.clubName)} taklifni rad etdi.</i>`;
       await editOrReply(
         context,
         text,
-        new InlineKeyboard().text("\u2190 Klub tarkibi", player.targetClubId ? `tk:${player.targetClubId}:0` : `tr:${buyerClubId}`).text("\u2190 Transfer markazi", `tr:${buyerClubId}`)
+        new InlineKeyboard().text("\u21A9\uFE0F Orqaga", player.targetClubId ? `tk:${player.targetClubId}:0` : `tr:${buyerClubId}`)
       );
     } catch (error) {
       const code = error?.message ?? "";
-      const msg = code === "INSUFFICIENT_BUDGET" ? "\u274C Klub budjetida mablag\u2018 yetarli emas." : code === "PLAYER_NOT_AVAILABLE" ? "\u274C Futbolchi transfer uchun ochiq emas yoki yaqinda sotib olingan." : "\u274C Taklifni yuborib bo\u2018lmadi. Qayta urinib ko\u2018ring.";
-      await context.reply(msg);
+      const msg = code === "INSUFFICIENT_BUDGET" ? "\u274C <b>Taklif yuborilmadi</b>\n<i>Klub budjetida yetarli mablag\u2018 yo\u2018q.</i>" : code === "PLAYER_NOT_AVAILABLE" ? "\u274C <b>Transfer cheklangan</b>\n<i>Futbolchi transfer uchun ochiq emas yoki yaqinda sotib olingan.</i>" : code === "LEAGUE_PRE_SEASON_LOCKED" ? "\u23F3 <b>Liga hali boshlanmagan</b>\n<i>Transferlar liga startidan keyin ochiladi.</i>" : "\u274C <b>Taklif yuborilmadi</b>\n<i>Qayta urinib ko\u2018ring.</i>";
+      await context.reply(msg, { parse_mode: "HTML" });
     }
   });
   bot.callbackQuery(/^oc:([0-9a-f-]{36})$/, async (context) => {
@@ -1050,10 +1276,10 @@ Misol: 55M yoki 55000000`,
     for (const offer of offers) {
       kb.text(`${offer.playerName} \xB7 ${offer.buyerClub} \xB7 ${transferMoney(offer.amount)}`, `iv:${offer.offerId}`).row();
     }
-    kb.text("\u2190 Transfer markazi", `tr:${clubId}`);
+    kb.text("\u21A9\uFE0F Orqaga", `tr:${clubId}`);
     await editOrReply(
       context,
-      offers.length ? "\u{1F4E9} KELGAN TAKLIFLAR\n\nTaklifni ochib qabul qiling yoki rad eting:" : "\u{1F4E9} Hozircha sizning klubingizga kelgan faol taklif yo\u2018q.",
+      offers.length ? "\u{1F4E5} <b>TAKLIFLAR</b>\n\n<i>Taklifni ochib qabul qiling yoki rad eting:</i>" : "\u{1F4E5} <b>TAKLIFLAR</b>\n\n<i>Hozircha aktiv takliflar yo\u2018q.</i>",
       kb
     );
   });
@@ -1063,14 +1289,18 @@ Misol: 55M yoki 55000000`,
     const offerId = context.match[1];
     const offer = await transfers.notification(offerId);
     if (!offer) return context.answerCallbackQuery({ text: "Taklif endi faol emas" });
+    const text = [
+      "\u{1F4E5} <b>TRANSFER TAKLIFI</b>",
+      "",
+      `<b>${escapeHtml(offer.buyerClub)}</b>`,
+      `sizning <b>${escapeHtml(offer.playerName)}</b> futbolchingiz uchun`,
+      "",
+      `\u{1F4B6} <b>${formatMoney(offer.amount)}</b> taklif qildi.`
+    ].join("\n");
     await editOrReply(
       context,
-      `\u{1F4E9} TAKLIF
-
-\u26BD ${offer.playerName}
-\u{1F3DF} Xaridor: ${offer.buyerClub}
-\u{1F4B0} Taklif: ${transferMoney(offer.amount)}`,
-      new InlineKeyboard().text("\u2705 Qabul qilish", `ia:${offer.offerId}`).text("\u274C Rad etish", `ir:${offer.offerId}`).row().text("\u{1F4AC} Qarshi taklif", `ic:${offer.offerId}`).row().text("\u2190 Takliflar", `io:${offer.sellerClubId}`)
+      text,
+      new InlineKeyboard().text("\u2705 Qabul qilish", `ia:${offer.offerId}`).text("\u274C Rad etish", `ir:${offer.offerId}`).row().text("\u2194\uFE0F Counter", `ic:${offer.offerId}`).row().text("\u21A9\uFE0F Orqaga", `io:${offer.sellerClubId}`)
     );
   });
   bot.callbackQuery(/^ic:([0-9a-f-]{36})$/, async (context) => {
@@ -1089,11 +1319,11 @@ Misol: 55M yoki 55000000`,
     });
     await editOrReply(
       context,
-      `\u{1F4AC} ${offer.playerName} uchun qarshi taklif summasini yuboring.
+      `\u2194\uFE0F <b>${escapeHtml(offer.playerName)}</b> uchun qarshi taklif summasini yuboring.
 
-Asl taklif: ${transferMoney(offer.amount)}
-Minimal: ${transferMoney(minimum)}`,
-      new InlineKeyboard().text("\u2190 Taklif", `iv:${offer.offerId}`)
+Asl taklif: <b>${formatMoney(offer.amount)}</b>
+Minimal: <b>${formatMoney(minimum)}</b>`,
+      new InlineKeyboard().text("\u21A9\uFE0F Orqaga", `iv:${offer.offerId}`)
     );
   });
   bot.callbackQuery(/^ac:([0-9a-f-]{36})$/, async (context) => {
@@ -1163,12 +1393,12 @@ Minimal: ${transferMoney(minimum)}`,
     if (!clubId) return context.reply("Transfer markaziga qaytib, klubni qayta tanlang.");
     const item = await transfers.listing(user.id, clubId, context.match[1]);
     if (!item) {
-      return editOrReply(context, "Bu futbolchi Global Transfer bozorida faol emas.", new InlineKeyboard().text("\u2190 Bozor", `gm:${clubId}:0`));
+      return editOrReply(context, "<i>Bu futbolchi Global Transfer bozorida faol emas.</i>", new InlineKeyboard().text("\u21A9\uFE0F Orqaga", `gm:${clubId}:0:ALL`));
     }
     await editOrReply(
       context,
       formatListing(item),
-      new InlineKeyboard().text("\u2705 Xaridni tasdiqlash", `gc:${item.listingId}`).row().text("\u2190 Bozor", `gm:${clubId}:0`)
+      new InlineKeyboard().text("\u2705 Xaridni tasdiqlash", `gc:${item.listingId}`).row().text("\u21A9\uFE0F Orqaga", `gm:${clubId}:0:ALL`)
     );
   });
   bot.callbackQuery(/^gc:([0-9a-f-]{36})$/, async (context) => {
@@ -1182,14 +1412,23 @@ Minimal: ${transferMoney(minimum)}`,
       await transfers.buy(user.id, clubId, context.match[1]);
       await editOrReply(
         context,
-        "\u2705 TRANSFER YAKUNLANDI\n\nFutbolchi klubingizga qo\u2018shildi va asosiy tarkibingizga kiritildi.",
-        new InlineKeyboard().text("\u2190 Bozor", `gm:${clubId}:0`).text("\u{1F3DF} Klub", `db:${clubId}`)
+        "\u2705 <b>Transfer yakunlandi!</b>\n\n<i>Futbolchi klubingizga qo\u2018shildi va asosiy tarkibingizga kiritildi.</i>",
+        new InlineKeyboard().text("\u21A9\uFE0F Orqaga", `gm:${clubId}:0:ALL`).text("\u{1F3DF} Klub", `db:${clubId}`)
       );
     } catch (error) {
       logger.warn({ event: "global_transfer_failed", err: error }, "Global transfer failed");
       const err = error?.message ?? "";
-      const text = err === "INSUFFICIENT_BUDGET" ? "\u274C Klub budjetida mablag\u2018 yetarli emas." : err === "SQUAD_LIMIT_REACHED" ? "\u274C Tarkibda bo\u2018sh joy yo\u2018q (maksimal 30 futbolchi)." : err === "LISTING_NOT_ACTIVE" ? "\u274C Ushbu futbolchi allaqachon sotilgan yoki listing muddati tugagan." : "\u274C Transfer amalga oshmadi: budjet, tarkib limiti yoki listing holatini tekshiring.";
-      await context.reply(text);
+      let text = "\u274C <b>Transfer amalga oshmadi</b>\n<i>Qayta urinib ko\u2018ring.</i>";
+      if (err.includes("INSUFFICIENT_BUDGET")) {
+        text = "\u274C <b>Transfer amalga oshmadi</b>\n<i>Klub budjetida yetarli mablag\u2018 yo\u2018q.</i>";
+      } else if (err.includes("SQUAD_LIMIT_REACHED")) {
+        text = "\u274C <b>Transfer amalga oshmadi</b>\n<i>Tarkibda bo\u2018sh joy yo\u2018q (maksimal 30 futbolchi).</i>";
+      } else if (err.includes("LISTING_NOT_ACTIVE") || err.includes("LISTING_NOT_AVAILABLE") || err.includes("LISTING_EXPIRED")) {
+        text = "\u274C <b>Transfer amalga oshmadi</b>\n<i>Ushbu futbolchi allaqachon sotilgan yoki listing muddati tugagan.</i>";
+      } else if (err.includes("LEAGUE_PRE_SEASON_LOCKED")) {
+        text = "\u23F3 <b>Liga hali boshlanmagan</b>\n<i>Transferlar liga startidan keyin ochiladi.</i>";
+      }
+      await editOrReply(context, text, new InlineKeyboard().text("\u21A9\uFE0F Orqaga", `gm:${clubId}:0:ALL`));
     }
   });
   bot.on("message:text", async (context, next) => {
@@ -1336,13 +1575,13 @@ Kodni do\u2018stlaringizga yuboring. Ular \u201CKod bilan qo\u2018shilish\u201D 
     const competitionId = context.match[1];
     const leagueList = await leagues.listJoinableLeagues(competitionId);
     if (leagueList.length === 0) {
-      await editOrReply(context, "Hozir bo\u2018sh public liga yo\u2018q. Keyinroq qayta urinib ko\u2018ring.", new InlineKeyboard().text("\u2190 Orqaga", "join"));
+      await editOrReply(context, "<i>Hozir bo\u2018sh public liga yo\u2018q. Keyinroq qayta urinib ko\u2018ring.</i>", new InlineKeyboard().text("\u21A9\uFE0F Orqaga", "join"));
       return;
     }
     const keyboard = new InlineKeyboard();
     for (const league of leagueList) keyboard.text(`${league.name} \xB7 ${league.availableClubs} klub`, `lg:${league.id}:0`).row();
-    keyboard.text("\u2190 Orqaga", "join");
-    await editOrReply(context, "\u{1F3DF} OCHIQ LIGALAR\n\nKlub olish uchun ligani tanlang:", keyboard);
+    keyboard.text("\u21A9\uFE0F Orqaga", "join");
+    await editOrReply(context, "\u{1F3DF} <b>OCHIQ LIGALAR</b>\n\n<i>Klub olish uchun ligani tanlang:</i>", keyboard);
   });
   bot.callbackQuery(/^lg:([0-9a-f-]{36}):(\d+)$/, async (context) => {
     await context.answerCallbackQuery();
@@ -1350,25 +1589,25 @@ Kodni do\u2018stlaringizga yuboring. Ular \u201CKod bilan qo\u2018shilish\u201D 
     const requestedPage = Number(context.match[2]);
     const clubs = await leagues.listAvailableClubs(leagueId);
     if (clubs.length === 0) {
-      await editOrReply(context, "Bu ligadagi barcha klublar band bo\u2018ldi.", new InlineKeyboard().text("\u2190 Competitionlar", "join"));
+      await editOrReply(context, "<i>Bu ligadagi barcha klublar band bo\u2018ldi.</i>", new InlineKeyboard().text("\u21A9\uFE0F Orqaga", "join"));
       return;
     }
     const lastPage = Math.max(0, Math.ceil(clubs.length / PAGE_SIZE) - 1);
     const page = Math.min(requestedPage, lastPage);
-    await editOrReply(context, `Klub tanlang (${clubs.length} ta mavjud):`, clubListKeyboard(clubs, leagueId, page));
+    await editOrReply(context, `<b>Klub tanlang</b> (${clubs.length} ta mavjud):`, clubListKeyboard(clubs, leagueId, page));
   });
   bot.callbackQuery(/^cf:([0-9a-f-]{36})$/, async (context) => {
     await context.answerCallbackQuery();
     const leagueClubId = context.match[1];
     const club = await leagues.getAvailableClub(leagueClubId);
     if (!club) {
-      await editOrReply(context, "Bu klub endi mavjud emas. Ro\u2018yxatdan boshqa klub tanlang.", new InlineKeyboard().text("\u2190 Competitionlar", "join"));
+      await editOrReply(context, "<i>Bu klub endi mavjud emas. Ro\u2018yxatdan boshqa klub tanlang.</i>", new InlineKeyboard().text("\u21A9\uFE0F Orqaga", "join"));
       return;
     }
-    const keyboard = new InlineKeyboard().text("Tasdiqlash", `cl:${club.leagueClubId}`).row().text("\u2190 Orqaga", "join");
-    await editOrReply(context, `${club.clubName} klubini boshqarishni tasdiqlaysizmi?
+    const keyboard = new InlineKeyboard().text("\u2705 Tasdiqlash", `cl:${club.leagueClubId}`).row().text("\u21A9\uFE0F Orqaga", "join");
+    await editOrReply(context, `<b>${escapeHtml(club.clubName)}</b> klubini boshqarishni tasdiqlaysizmi?
 
-Klubning mavjud holati saqlanadi.`, keyboard);
+<i>Klubning mavjud holati saqlanadi.</i>`, keyboard);
   });
   bot.callbackQuery(/^cl:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
@@ -1382,7 +1621,7 @@ Klubning mavjud holati saqlanadi.`, keyboard);
       await showDashboard(context, club);
     } catch (error) {
       logger.warn({ event: "club_claim_failed", err: error, userId: user.id }, "Club claim failed");
-      await editOrReply(context, claimErrorMessage(error), new InlineKeyboard().text("\u2190 Boshqa klub", "join"));
+      await editOrReply(context, claimErrorMessage(error), new InlineKeyboard().text("\u21A9\uFE0F Orqaga", "join"));
     }
   });
   bot.callbackQuery(/^db:([0-9a-f-]{36})$/, async (context) => {
@@ -1419,53 +1658,87 @@ Klubning mavjud holati saqlanadi.`, keyboard);
     const user = await getContextUser(context);
     const leagueClubId = context.match[1];
     const upcoming = await fixtures.listUpcoming(user.id, leagueClubId);
-    await editOrReply(context, formatUpcomingFixtures(upcoming), new InlineKeyboard().text("Natijalar", `rs:${leagueClubId}`).text("Liga jadvali", `tb:${leagueClubId}`).row().text("\u2190 Klub", `db:${leagueClubId}`));
+    await editOrReply(
+      context,
+      formatUpcomingFixtures(upcoming),
+      new InlineKeyboard().text("\u26BD Natijalar", `rs:${leagueClubId}`).text("\u{1F4CA} Liga jadvali", `tb:${leagueClubId}`).row().text("\u21A9\uFE0F Orqaga", `db:${leagueClubId}`)
+    );
   });
   bot.callbackQuery(/^rs:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
     const user = await getContextUser(context);
     const club = context.match[1];
-    await editOrReply(context, formatResults(await matches.history(user.id, club)), new InlineKeyboard().text("Keyingi matchlar", `mt:${club}`).text("\u2190 Klub", `db:${club}`));
+    await editOrReply(
+      context,
+      formatResults(await matches.history(user.id, club)),
+      new InlineKeyboard().text("\u{1F4C5} Keyingi o\u2018yinlar", `mt:${club}`).row().text("\u21A9\uFE0F Orqaga", `db:${club}`)
+    );
   });
   bot.callbackQuery(/^tb:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
     const user = await getContextUser(context);
     const club = context.match[1];
-    await editOrReply(context, formatTable(await matches.table(user.id, club)), new InlineKeyboard().text("\u2190 Klub", `db:${club}`));
+    const clubs = await getContextManagedClubs(context, user.id);
+    const clubObj = clubs.find((c) => c.leagueClubId === club);
+    const leagueTitle = clubObj?.competitionName ? `${clubObj.competitionName.toUpperCase()} \u2014 JADVAL` : "LALIGA \u2014 JADVAL";
+    await editOrReply(
+      context,
+      formatTable(await matches.table(user.id, club), clubObj?.clubName, leagueTitle),
+      new InlineKeyboard().text("\u{1F945} To\u2018purarlar", `sc:${club}`).text("\u{1F3AF} Assistentlar", `asst:${club}`).row().text("\u21A9\uFE0F Orqaga", `db:${club}`)
+    );
   });
   bot.callbackQuery(/^sc:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await getContextUser(context), club = context.match[1];
-    await editOrReply(context, formatLeaders("\u{1F945} LIGA TO\u2018PURARLARI", await matches.leaders(user.id, club, "goals"), "gol"), new InlineKeyboard().text("\u{1F3AF} Assistentlar", `asst:${club}`).row().text("\u2190 Klub", `db:${club}`));
+    const user = await getContextUser(context);
+    const club = context.match[1];
+    await editOrReply(
+      context,
+      formatLeaders("TO\u2018PURARLAR", await matches.leaders(user.id, club, "goals"), "gol"),
+      new InlineKeyboard().text("\u{1F3AF} Assistentlar", `asst:${club}`).text("\u{1F4CA} Liga jadvali", `tb:${club}`).row().text("\u21A9\uFE0F Orqaga", `db:${club}`)
+    );
   });
   bot.callbackQuery(/^asst:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await getContextUser(context), club = context.match[1];
-    await editOrReply(context, formatLeaders("\u{1F3AF} LIGA ASSISTENTLARI", await matches.leaders(user.id, club, "assists"), "assist"), new InlineKeyboard().text("\u{1F945} To\u2018purarlar", `sc:${club}`).row().text("\u2190 Klub", `db:${club}`));
+    const user = await getContextUser(context);
+    const club = context.match[1];
+    await editOrReply(
+      context,
+      formatLeaders("ASSISTLAR", await matches.leaders(user.id, club, "assists"), "assist"),
+      new InlineKeyboard().text("\u{1F945} To\u2018purarlar", `sc:${club}`).text("\u{1F4CA} Liga jadvali", `tb:${club}`).row().text("\u21A9\uFE0F Orqaga", `db:${club}`)
+    );
   });
   bot.callbackQuery(/^fn:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
     const user = await getContextUser(context);
     const club = context.match[1];
-    await editOrReply(context, formatFinances(await matches.finances(user.id, club)), new InlineKeyboard().text("Homiylar", `sp:${club}`).row().text("\u2190 Klub", `db:${club}`));
+    await editOrReply(
+      context,
+      formatFinances(await matches.finances(user.id, club)),
+      new InlineKeyboard().text("\u{1F4B0} Homiylar", `sp:${club}`).row().text("\u21A9\uFE0F Orqaga", `db:${club}`)
+    );
   });
   bot.callbackQuery(/^sp:([0-9a-f-]{36})$/, async (context) => {
     await context.answerCallbackQuery();
-    const club = context.match[1], rows = await progression.sponsors();
+    const club = context.match[1];
+    const rows = await progression.sponsors();
     const keyboard = new InlineKeyboard();
-    for (const s of rows) keyboard.text(`${s.name} \xB7 ${transferMoney(s.payment)}`, `sa:${s.id}`).row();
-    keyboard.text("\u2190 Moliya", `fn:${club}`);
+    for (const s of rows) {
+      keyboard.text(`${s.name} \xB7 ${transferMoney(s.payment)}`, `sa:${s.id}`).row();
+    }
+    keyboard.text("\u21A9\uFE0F Orqaga", `fn:${club}`);
     await editOrReply(context, formatSponsors(rows), keyboard);
   });
   bot.callbackQuery(/^sa:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
     await context.answerCallbackQuery();
-    const user = await getContextUser(context), club = (await getContextManagedClubs(context, user.id))[0]?.leagueClubId, sponsor = context.match[1];
+    const user = await getContextUser(context);
+    const club = (await getContextManagedClubs(context, user.id))[0]?.leagueClubId;
+    const sponsor = context.match[1];
     if (!club) return;
     await progression.acceptSponsor(user.id, club, sponsor);
     const selected = (await progression.sponsors()).find((s) => s.id === sponsor);
@@ -1478,10 +1751,15 @@ Klubning mavjud holati saqlanadi.`, keyboard);
         logger.warn({ event: "sponsor_membership_check_failed", err: error }, "Membership check failed");
       }
       await progression.setEligibility(user.id, club, eligible);
-      await context.reply(eligible ? "Homiy faol. Kanal a\u2019zoligi tasdiqlandi." : "Homiy tanlandi, ammo kanal a\u2019zoligi tasdiqlanmadi.");
-    } else await context.reply("Homiy shartnomasi faol qilindi.");
+      await context.reply(
+        eligible ? "\u2705 <b>Homiy shartnomasi faol!</b>\n<i>Kanal a\u2019zoligi tasdiqlandi.</i>" : "\u26A0\uFE0F <b>Homiy tanlandi</b>\n<i>Kanal a\u2019zoligi tasdiqlanmadi. Mukofot olish uchun kanalga a\u2019zo bo\u2018ling.</i>",
+        { parse_mode: "HTML" }
+      );
+    } else {
+      await context.reply("\u2705 <b>Homiy shartnomasi faol qilindi.</b>", { parse_mode: "HTML" });
+    }
   });
-  const tacticKeyboard = (clubId, tactic) => new InlineKeyboard().text(`\u{1F4D0} Sxema: ${tactic.formationName}`, `fm:${clubId}`).row().text(`\u2696\uFE0F Uslub: ${footballTerm(tactic.mentality)} [\u2705]`, `cy:${clubId}:mentality`).row().text(`\u{1F525} Pressing: ${tactic.pressing}`, `tc:${clubId}`).text("\u221210", `nu:${clubId}:pressing:-`).text("+10", `nu:${clubId}:pressing:+`).row().text(`\u26A1 Sur\u2019at: ${tactic.tempo}`, `tc:${clubId}`).text("\u221210", `nu:${clubId}:tempo:-`).text("+10", `nu:${clubId}:tempo:+`).row().text(`\u{1F6E1} Himoya: ${tactic.defensiveLine}`, `tc:${clubId}`).text("\u221210", `nu:${clubId}:defensiveLine:-`).text("+10", `nu:${clubId}:defensiveLine:+`).row().text(`\u2194\uFE0F Kenglik: ${tactic.width}`, `tc:${clubId}`).text("\u221210", `nu:${clubId}:width:-`).text("+10", `nu:${clubId}:width:+`).row().text(`\u{1F3AF} Pas: ${footballTerm(tactic.passingStyle)} [\u2705]`, `cy:${clubId}:passingStyle`).row().text(`\u{1F680} Hujum: ${footballTerm(tactic.attackFocus)} [\u2705]`, `cy:${clubId}:attackFocus`).row().text(`\u{1F9B5} Kurash: ${footballTerm(tactic.tackling)} [\u2705]`, `cy:${clubId}:tackling`).row().text("\u{1F525} Asosiy XI", `xi:${clubId}`).text("\u2190 Klub", `db:${clubId}`);
+  const tacticKeyboard = (clubId, tactic) => new InlineKeyboard().text(`\u{1F9E9} Formation: ${tactic.formationName}`, `fm:${clubId}`).row().text(`\u{1F3AF} Mentalitet: ${footballTerm(tactic.mentality)} [\u2705]`, `cy:${clubId}:mentality`).row().text(`\u26A1 Pressing: ${tactic.pressing}`, `tc:${clubId}`).text("\u221210", `nu:${clubId}:pressing:-`).text("+10", `nu:${clubId}:pressing:+`).row().text(`\u23F1 Temp: ${tactic.tempo}`, `tc:${clubId}`).text("\u221210", `nu:${clubId}:tempo:-`).text("+10", `nu:${clubId}:tempo:+`).row().text(`\u{1F4CF} Himoya: ${tactic.defensiveLine}`, `tc:${clubId}`).text("\u221210", `nu:${clubId}:defensiveLine:-`).text("+10", `nu:${clubId}:defensiveLine:+`).row().text(`\u2194\uFE0F Kenglik: ${tactic.width}`, `tc:${clubId}`).text("\u221210", `nu:${clubId}:width:-`).text("+10", `nu:${clubId}:width:+`).row().text(`\u{1F3AF} Pas: ${footballTerm(tactic.passingStyle)} [\u2705]`, `cy:${clubId}:passingStyle`).row().text(`\u2694\uFE0F Hujum: ${footballTerm(tactic.attackFocus)} [\u2705]`, `cy:${clubId}:attackFocus`).row().text(`\u{1F6E1} Kurash: ${footballTerm(tactic.tackling)} [\u2705]`, `cy:${clubId}:tackling`).row().text("\u{1F525} Asosiy XI", `xi:${clubId}`).text("\u21A9\uFE0F Orqaga", `db:${clubId}`);
   const showTactics = async (context, userId, clubId) => {
     const tactic = await tactics.get(userId, clubId);
     await editOrReply(context, formatTactics(tactic), tacticKeyboard(clubId, tactic));
@@ -1519,7 +1797,7 @@ Klubning mavjud holati saqlanadi.`, keyboard);
     const club = clubs.find((c) => c.leagueClubId === clubId);
     const clubName = club?.clubName ?? "Klub";
     const lineup = await tactics.lineup(user.id, clubId);
-    const keyboard = new InlineKeyboard().text("\u{1F504} O\u2018yinchini almashtirish", `xsl:${clubId}`).text("\u{1F916} Avtomatik tanlash", `xa:${clubId}`).row().text("\u{1F4D0} Sxemani o\u2018zgartirish", `fm:${clubId}`).row().text("\u2190 Jamoa", `sq:${clubId}`).text("\u2190 Klub", `db:${clubId}`);
+    const keyboard = new InlineKeyboard().text("\u{1F504} O\u2018yinchini almashtirish", `xsl:${clubId}`).text("\u{1F916} Avtomatik tanlash", `xa:${clubId}`).row().text("\u{1F9E9} Formation", `fm:${clubId}`).row().text("\u21A9\uFE0F Orqaga", `db:${clubId}`);
     const text = formatStartingXi(clubName, lineup.formation, lineup.players) + (alertText ? `
 
 ${alertText}` : "");
@@ -1652,8 +1930,8 @@ ${alertText}` : "");
     const club = context.match[1], field = context.match[2];
     const current = await tactics.get(user.id, club);
     const value = Math.max(0, Math.min(100, current[field] + (context.match[3] === "+" ? 10 : -10)));
-    const updated = await tactics.update(user.id, club, { [field]: value });
-    await context.answerCallbackQuery({ text: `\u2705 ${field === "tempo" ? "Sur\u2019at" : field === "defensiveLine" ? "Himoya chizig\u2018i" : field === "width" ? "Kenglik" : "Pressing"}: ${updated[field]}` });
+    await tactics.update(user.id, club, { [field]: value });
+    await context.answerCallbackQuery({ text: "\u2705 Saqlandi" });
     await showTactics(context, user.id, club);
   });
   bot.callbackQuery(/^cy:([0-9a-f-]{36}):(mentality|passingStyle|attackFocus|tackling)$/, async (context) => {
@@ -1670,7 +1948,7 @@ ${alertText}` : "");
     }[field];
     const next = options[(options.indexOf(current[field]) + 1) % options.length];
     await tactics.update(user.id, club, { [field]: next });
-    await context.answerCallbackQuery({ text: `\u2705 ${footballTerm(next)} tanlandi!` });
+    await context.answerCallbackQuery({ text: "\u2705 Saqlandi" });
     await showTactics(context, user.id, club);
   });
   bot.callbackQuery(/^soon:/, async (context) => {

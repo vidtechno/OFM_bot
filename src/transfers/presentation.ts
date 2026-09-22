@@ -1,6 +1,7 @@
 import type { MarketPlayer, TransferTarget, TransferHistoryItem } from "./transfer.repository.js";
+import { escapeHtml, formatMoney, formatDateTime } from "../lib/html.js";
 
-export const transferMoney = (n: number) => `€${(n / 1_000_000).toFixed(1)}M`;
+export const transferMoney = formatMoney;
 
 export function formatTransferHub(
   clubName: string,
@@ -10,14 +11,13 @@ export function formatTransferHub(
 ): string {
   const available = Math.max(0, budget - reservedBudget);
   return [
-    `🔁 ${clubName.toUpperCase()} — TRANSFER`,
+    `🔁 <b>${escapeHtml(clubName.toUpperCase())} — TRANSFER</b>`,
     "",
-    `💰 Transfer budjeti: ${transferMoney(budget)}`,
-    `🔒 Band qilingan: ${transferMoney(reservedBudget)}`,
-    `✅ Mavjud: ${transferMoney(available)}`,
-    `🏦 G‘azna: ${transferMoney(cash)}`,
+    `💰 Budjet: <b>${formatMoney(budget)}</b>`,
+    `🔒 Band: <b>${formatMoney(reservedBudget)}</b>`,
+    `✅ Mavjud: <b>${formatMoney(available)}</b>`,
     "",
-    "Kerakli bo‘limni tanlang:",
+    "<i>Kerakli bo‘limni tanlang.</i>",
   ].join("\n");
 }
 
@@ -28,101 +28,141 @@ export function formatClubPlayers(
   total = players.length
 ): string {
   if (!players.length) {
-    return `🏟 ${clubName.toUpperCase()} — FUTBOLCHILAR\n\nBu klubda transferga ochiq futbolchi topilmadi.`;
+    return `🏟 <b>${escapeHtml(clubName.toUpperCase())} — FUTBOLCHILAR</b>\n\n<i>Bu klubda transferga ochiq futbolchi topilmadi.</i>`;
   }
   const lines = [
-    `🏟 ${clubName.toUpperCase()} — FUTBOLCHILAR`,
-    `📋 ${total} nafar futbolchi`,
+    `🏟 <b>${escapeHtml(clubName.toUpperCase())} — FUTBOLCHILAR</b>`,
+    `📋 <b>${total}</b> futbolchi`,
     "",
   ];
   players.forEach((p, idx) => {
-    lines.push(`${idx + 1}. ${p.name} — ${p.position} — ⭐${p.overall} — ${transferMoney(p.marketValue)}`);
+    lines.push(
+      `${idx + 1}. <b>${escapeHtml(p.name)}</b>`,
+      `${escapeHtml(p.position)} · ⭐${p.overall} · ${formatMoney(p.marketValue)}`,
+      ""
+    );
   });
+  return lines.join("\n").trim();
+}
+
+export function formatPlayerProfile(
+  p: TransferTarget & { age?: number; nationality?: string; managerType?: string; activeNegotiationText?: string }
+): string {
+  const lines: string[] = [
+    `👤 <b>${escapeHtml(p.name.toUpperCase())}</b>`,
+    "",
+    `🏟 ${escapeHtml(p.clubName)}`,
+    `📍 ${escapeHtml(p.position)}`,
+    `⭐ OVR: <b>${p.overall}</b>`,
+    p.age ? `🎂 Yosh: <b>${p.age}</b>` : "",
+    p.nationality ? `🌍 Millati: <i>${escapeHtml(p.nationality)}</i>` : "",
+    `💶 Bozor qiymati: <b>${formatMoney(p.marketValue)}</b>`,
+    "",
+    `<i>Manager: ${escapeHtml(p.managerType ?? "AI")}</i>`,
+  ].filter(Boolean);
+
+  if (p.activeNegotiationText) {
+    lines.push("", p.activeNegotiationText);
+  }
+
   return lines.join("\n");
 }
 
-export function formatPlayerProfile(p: TransferTarget & { age?: number; nationality?: string }): string {
+export function formatIncomingOffer(buyerClub: string, playerName: string, offerAmount: number): string {
   return [
-    "👤 FUTBOLCHI PROFILI",
+    "📥 <b>TRANSFER TAKLIFI</b>",
     "",
-    `⚽ ${p.name}`,
-    `🏟 Joriy klub: ${p.clubName}`,
-    `⭐ Overall: ${p.overall}`,
-    `📍 Amplua: ${p.position}`,
-    p.age ? `🎂 Yoshi: ${p.age} yosh` : "",
-    p.nationality ? `🌍 Millati: ${p.nationality}` : "",
-    `💰 Bozor qiymati: ${transferMoney(p.marketValue)}`,
+    `<b>${escapeHtml(buyerClub)}</b>`,
+    `sizning <b>${escapeHtml(playerName)}</b> futbolchingiz uchun`,
     "",
-    "Taklif summasini tanlang:",
-  ].filter(Boolean).join("\n");
+    `💶 <b>${formatMoney(offerAmount)}</b> taklif qildi.`,
+  ].join("\n");
 }
 
 export function formatMarket(players: MarketPlayer[]): string {
-  return players.length
-    ? [
-        "🌍 GLOBAL TRANSFER MARKET",
-        "",
-        ...players.map(
-          (p, i) =>
-            `${i + 1}. ${p.name} (${p.sellerName ?? "Global"}) — ${p.position} — ⭐${p.overall} — ${transferMoney(p.askingPrice)}`
-        ),
-      ].join("\n")
-    : "🌍 GLOBAL TRANSFER MARKET\n\nHozir faol listing yo‘q.";
+  const header = "🌍 <b>GLOBAL TRANSFER BOZORI</b>";
+  if (!players.length) {
+    return `${header}\n\n<i>Bu bo‘limda hozircha futbolchilar yo‘q.</i>`;
+  }
+
+  const lines = [header, ""];
+  players.forEach((p, i) => {
+    lines.push(
+      `${i + 1}. <b>${escapeHtml(p.name)}</b>`,
+      `${escapeHtml(p.position)} · ⭐${p.overall} · ${formatMoney(p.askingPrice)}`,
+      `<i>${escapeHtml(p.sellerName ?? "Global")}</i>`,
+      ""
+    );
+  });
+  return lines.join("\n").trim();
 }
 
-export function formatLeagueMarket(players: MarketPlayer[]): string {
-  return players.length
-    ? [
-        "🛒 LIGA TRANSFER BOZORI",
-        "",
-        ...players.map(
-          (p, i) =>
-            `${i + 1}. ${p.name} (${p.sellerName ?? "Klub"}) — ${p.position} — ⭐${p.overall} — ${transferMoney(p.askingPrice)}${p.isOwnListing ? " 🏷 [Sizniki]" : ""}`
-        ),
-      ].join("\n")
-    : "🛒 LIGA TRANSFER BOZORI\n\nHozirda ushbu ligada sotuvga qo‘yilgan futbolchilar yo‘q.\nKlubingiz futbolchisini sotuvga qo‘yish uchun «📤 Futbolchi sotish» bo‘limidan foydalaning.";
+export function formatLeagueMarket(players: MarketPlayer[], leagueName?: string): string {
+  const header = [
+    "🛒 <b>TRANSFER BOZORI</b>",
+    leagueName ? `<i>${escapeHtml(leagueName)}</i>` : "",
+  ].filter(Boolean);
+
+  if (!players.length) {
+    return [...header, "", "<i>Bu bo‘limda hozircha futbolchilar yo‘q.</i>"].join("\n");
+  }
+
+  const lines = [...header, ""];
+  players.forEach((p, i) => {
+    lines.push(
+      `${i + 1}. <b>${escapeHtml(p.name)}</b>`,
+      `${escapeHtml(p.position)} · ⭐${p.overall} · ${formatMoney(p.askingPrice)}`,
+      `<i>${escapeHtml(p.sellerName ?? "Klub")}</i>${p.isOwnListing ? " 🏷 <i>[Sizniki]</i>" : ""}`,
+      ""
+    );
+  });
+  return lines.join("\n").trim();
 }
 
 export function formatListing(p: MarketPlayer): string {
   return [
-    "🌍 GLOBAL TRANSFER",
+    "🌍 <b>GLOBAL TRANSFER</b>",
     "",
-    `⚽ ${p.name}`,
-    `🏟 Klub: ${p.sellerName ?? "Global Market"}`,
-    `📍 ${p.position} · ⭐${p.overall} · ${p.age} yosh`,
-    `💰 Narxi: ${transferMoney(p.askingPrice)}`,
+    `⚽ <b>${escapeHtml(p.name)}</b>`,
+    `🏟 ${escapeHtml(p.sellerName ?? "Global Market")}`,
+    `📍 ${escapeHtml(p.position)} · ⭐<b>${p.overall}</b> · ${p.age} yosh`,
+    `💰 Narxi: <b>${formatMoney(p.askingPrice)}</b>`,
     "",
-    "Xarid darhol amalga oshadi va futbolchi klubingiz tarkibiga qo‘shiladi.",
+    "<i>Xarid darhol amalga oshadi va futbolchi klubingiz tarkibiga qo‘shiladi.</i>",
   ].join("\n");
 }
 
 export function formatLeagueListing(p: MarketPlayer): string {
   return [
-    "🛒 LIGA TRANSFERI",
+    "🛒 <b>LIGA TRANSFERI</b>",
     "",
-    `⚽ ${p.name}`,
-    `🏟 Sotuvchi klub: ${p.sellerName ?? "Liga klubi"}`,
-    `📍 Amplua: ${p.position}`,
-    `⭐ Mahorat: ⭐${p.overall}`,
-    `🎂 Yoshi: ${p.age} yosh`,
-    `💰 Narxi: ${transferMoney(p.askingPrice)}`,
+    `⚽ <b>${escapeHtml(p.name)}</b>`,
+    `🏟 ${escapeHtml(p.sellerName ?? "Liga klubi")}`,
+    `📍 Amplua: <b>${escapeHtml(p.position)}</b>`,
+    `⭐ OVR: <b>${p.overall}</b>`,
+    `🎂 Yoshi: <b>${p.age} yosh</b>`,
+    `💰 Narxi: <b>${formatMoney(p.askingPrice)}</b>`,
     "",
     p.isOwnListing
-      ? "ℹ️ Bu sizning sotuvga qo‘ygan futbolchingiz."
-      : "Xarid amalga oshgach, mablag‘ sotuvchi klubga o‘tkaziladi va futbolchi tarkibingizga qo‘shiladi.",
+      ? "ℹ️ <i>Bu sizning sotuvga qo‘ygan futbolchingiz.</i>"
+      : "<i>Xarid amalga oshgach, mablag‘ sotuvchi klubga o‘tkaziladi va futbolchi tarkibingizga qo‘shiladi.</i>",
   ].join("\n");
 }
 
 export function formatTransferHistory(history: TransferHistoryItem[]): string {
   if (!history.length) {
-    return "📜 TRANSFER TARIXI\n\nHozircha yakunlangan transferlar mavjud emas.";
+    return "📜 <b>TRANSFER TARIXI</b>\n\n<i>Hozircha yakunlangan transferlar mavjud emas.</i>";
   }
-  const lines = ["📜 TRANSFER TARIXI", ""];
+  const lines = ["📜 <b>TRANSFER TARIXI</b>", ""];
   for (const item of history) {
-    const icon = item.type === "INCOMING" ? "🟢 Xarid" : "🔴 Sotuv";
-    const dateStr = new Date(item.date).toLocaleDateString("uz-UZ");
-    lines.push(`${icon}: ${item.playerName} (${transferMoney(item.fee)})`);
-    lines.push(`   ${item.fromClub} ➔ ${item.toClub} · ${dateStr}`);
+    const icon = item.type === "INCOMING" ? "🟢" : "🔴";
+    const action = item.type === "INCOMING" ? "Xarid" : "Sotuv";
+    const dateStr = formatDateTime(item.date);
+    lines.push(
+      `${icon} <b>${escapeHtml(item.playerName)}</b> — <b>${formatMoney(item.fee)}</b>`,
+      `<i>${action} · ${escapeHtml(item.fromClub)} ➔ ${escapeHtml(item.toClub)} · ${dateStr}</i>`,
+      ""
+    );
   }
-  return lines.join("\n");
+  return lines.join("\n").trim();
 }

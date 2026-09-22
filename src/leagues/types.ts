@@ -24,6 +24,8 @@ export interface ManagedClub {
   position: number;
   points: number;
   budget: number;
+  teamOvr?: number;
+  cash?: number;
 }
 
 export interface ClaimResult {

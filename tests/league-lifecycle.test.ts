@@ -5,7 +5,8 @@ describe("League Lifecycle & Open Lobbies UI", () => {
   it("formats lobby countdown correctly for future target time", () => {
     const future = new Date(Date.now() + (8 * 3600 + 24 * 60) * 1000).toISOString();
     const countdown = formatLobbyCountdown(future);
-    expect(countdown).toMatch(/^08:2[3-5]$/);
+    expect(countdown).toContain("<b>8</b> soat");
+    expect(countdown).toContain("daqiqa qoldi");
   });
 
   it("formats open lobbies presentation according to specification", () => {
@@ -45,15 +46,16 @@ describe("League Lifecycle & Open Lobbies UI", () => {
 
     const text = formatOpenLobbies(lobbies, managedClubs);
 
-    expect(text).toContain("🏆 LIGALAR");
-    expect(text).toContain("🇪🇸 LaLiga");
-    expect(text).toContain("🟢 Qabul ochiq");
+    expect(text).toContain("🏆 <b>LIGALAR</b>");
+    expect(text).toContain("🇪🇸 <b>LaLiga</b>");
+    expect(text).toContain("🟢 <i>Qabul ochiq</i>");
     expect(text).toContain("👤 4/20 manager");
-    expect(text).toContain("⏳ Boshlanishiga: 08:2");
-    expect(text).toContain("🏴󠁧󠁢󠁥󠁮󠁧󠁿 Premier League");
+    expect(text).toContain("⏳ Boshlanishiga: <b>8</b> soat");
+    expect(text).toContain("🏴 <b>Premier League</b>");
     expect(text).toContain("👤 7/20 manager");
-    expect(text).toContain("📌 MENING LIGALARIM");
-    expect(text).toContain("Real Madrid — LaLiga #0015");
+    expect(text).toContain("📌 <b>MENING LIGALARIM</b>");
+    expect(text).toContain("⚽ <b>Real Madrid</b>");
+    expect(text).toContain("<i>LaLiga #0015</i>");
 
     // Must NOT contain private league references
     expect(text).not.toContain("Private");

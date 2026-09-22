@@ -1,21 +1,22 @@
 import type { LineupEntry, Tactic } from "./tactics.repository.js";
+import { escapeHtml } from "../lib/html.js";
 
 const terms: Record<string, string> = {
   VERY_DEFENSIVE: "Juda himoyaviy",
   DEFENSIVE: "Himoyaviy",
-  BALANCED: "Muvozanatli",
+  BALANCED: "Balansli",
   ATTACKING: "Hujumkor",
   VERY_ATTACKING: "Juda hujumkor",
-  SHORT: "Qisqa pas",
-  MIXED: "Aralash",
-  DIRECT: "To‘g‘ridan-to‘g‘ri",
-  LEFT: "Chap qanot",
-  CENTRE: "Markaz",
-  RIGHT: "O‘ng qanot",
-  BOTH_WINGS: "Ikki qanot",
-  CAUTIOUS: "Ehtiyotkor",
-  NORMAL: "Me’yorida",
-  AGGRESSIVE: "Keskin",
+  SHORT: "Short",
+  MIXED: "Mixed",
+  DIRECT: "Direct",
+  LEFT: "Left Wing",
+  CENTRE: "Centre",
+  RIGHT: "Right Wing",
+  BOTH_WINGS: "Both Wings",
+  CAUTIOUS: "Cautious",
+  NORMAL: "Normal",
+  AGGRESSIVE: "Aggressive",
 };
 
 export const footballTerm = (value: string) => terms[value] ?? value;
@@ -40,58 +41,51 @@ export const positionName = (value: string) =>
 
 export const formatTactics = (t: Tactic) =>
   [
-    "🧠 TAKTIK REJA",
+    "🧠 <b>TAKTIKA</b>",
     "",
-    `📐 Sxema: ${t.formationName}`,
-    `⚖️ O‘yin uslubi: ${footballTerm(t.mentality)}`,
-    `🔥 Pressing: ${t.pressing}/100`,
-    `⚡ Sur’at: ${t.tempo}/100`,
-    `🛡 Himoya chizig‘i: ${t.defensiveLine}/100`,
-    `↔️ Maydon kengligi: ${t.width}/100`,
-    `🎯 Pas uslubi: ${footballTerm(t.passingStyle)}`,
-    `🚀 Hujum yo‘nalishi: ${footballTerm(t.attackFocus)}`,
-    `🦵 To‘p uchun kurash: ${footballTerm(t.tackling)}`,
+    `🧩 Formation: <b>${escapeHtml(t.formationName)}</b>`,
+    `🎯 Mentalitet: <b>${escapeHtml(footballTerm(t.mentality))}</b>`,
+    `⚡ Pressing: <b>${t.pressing}</b>`,
+    `⏱ Temp: <b>${t.tempo}</b>`,
+    `📏 Himoya chizig‘i: <b>${t.defensiveLine}</b>`,
+    `↔️ Kenglik: <b>${t.width}</b>`,
+    `🎯 Pas turi: <b>${escapeHtml(footballTerm(t.passingStyle))}</b>`,
+    `⚔️ Hujum yo‘nalishi: <b>${escapeHtml(footballTerm(t.attackFocus))}</b>`,
+    `🛡 Kurashuvchanlik: <b>${escapeHtml(footballTerm(t.tackling))}</b>`,
   ].join("\n");
 
-export const formatLineup = (formation: string, players: LineupEntry[]) => [
-  "👥 BOSHLANG‘ICH 11 TALIK",
-  `📐 Sxema: ${formation}`,
-  "",
-  ...players.map((p) => `${p.slotKey} · ${p.shortName}  ⭐ ${p.overall}`),
-  "",
-  `Jamoaviy kuch: ${(players.reduce((sum, p) => sum + p.effectiveRating, 0) / Math.max(players.length, 1)).toFixed(1)}`,
-].join("\n");
+export const formatLineup = (formation: string, players: LineupEntry[]) => {
+  const avgStrength = (players.reduce((sum, p) => sum + p.effectiveRating, 0) / Math.max(players.length, 1)).toFixed(1);
+  const lines: string[] = [
+    "🔥 <b>ASOSIY XI</b>",
+    `<i>Formation: ${escapeHtml(formation)}</i>`,
+    "",
+  ];
+  for (const p of players) {
+    const slotLabel = p.slotPosition || p.slotKey;
+    lines.push(slotLabel, `${escapeHtml(p.shortName)} — ⭐<b>${p.overall}</b>`, "");
+  }
+  lines.push(`⭐ Jamoa kuchi: <b>${avgStrength}</b>`);
+  return lines.join("\n").trim();
+};
 
 export function formatStartingXi(clubName: string, formation: string, players: LineupEntry[]): string {
   const avgStrength = (players.reduce((sum, p) => sum + p.effectiveRating, 0) / Math.max(players.length, 1)).toFixed(1);
   const lines: string[] = [
-    `🔥 ${clubName.toUpperCase()} — ASOSIY XI`,
-    `📐 Sxema: ${formation}`,
-    `⭐ Jamoaviy kuch: ${avgStrength}`,
+    `🔥 <b>${escapeHtml(clubName.toUpperCase())} — ASOSIY XI</b>`,
+    `<i>Formation: ${escapeHtml(formation)}</i>`,
     "",
   ];
 
-  const gkList = players.filter((p) => p.slotPosition === "GK");
-  const defList = players.filter((p) => ["LB", "LWB", "CB", "RB", "RWB"].includes(p.slotPosition));
-  const midList = players.filter((p) => ["LM", "CDM", "CM", "CAM", "RM"].includes(p.slotPosition));
-  const attList = players.filter((p) => ["LW", "ST", "RW", "CF"].includes(p.slotPosition));
-
-  const sections: Array<{ title: string; list: LineupEntry[] }> = [
-    { title: "🧤 DARVOZABON", list: gkList },
-    { title: "🛡 HIMOYACHILAR", list: defList },
-    { title: "🎯 YARIM HIMOYACHILAR", list: midList },
-    { title: "⚡ HUJUMCHILAR", list: attList },
-  ];
-
-  for (const sec of sections) {
-    if (sec.list.length > 0) {
-      lines.push(sec.title);
-      for (const p of sec.list) {
-        lines.push(`${p.slotKey}: ✅ ${p.shortName} — ⭐${p.overall}`);
-      }
-      lines.push("");
-    }
+  for (const p of players) {
+    const slotLabel = p.slotPosition || p.slotKey;
+    lines.push(
+      slotLabel,
+      `${escapeHtml(p.shortName)} — ⭐<b>${p.overall}</b>`,
+      ""
+    );
   }
 
+  lines.push(`⭐ Jamoa kuchi: <b>${avgStrength}</b>`);
   return lines.join("\n").trim();
 }

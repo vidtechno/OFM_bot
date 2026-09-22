@@ -29,10 +29,15 @@ describe("Transfer Market & League Market Presentation", () => {
       },
     ];
 
-    const formatted = formatLeagueMarket(players);
-    expect(formatted).toContain("🛒 LIGA TRANSFER BOZORI");
-    expect(formatted).toContain("1. L. Modrić (Real Madrid) — CM — ⭐86 — €15.0M 🏷 [Sizniki]");
-    expect(formatted).toContain("2. Pedri (Barcelona) — CM — ⭐88 — €75.0M");
+    const formatted = formatLeagueMarket(players, "LaLiga #0001");
+    expect(formatted).toContain("🛒 <b>TRANSFER BOZORI</b>");
+    expect(formatted).toContain("<i>LaLiga #0001</i>");
+    expect(formatted).toContain("1. <b>L. Modrić</b>");
+    expect(formatted).toContain("CM · ⭐86 · €15M");
+    expect(formatted).toContain("<i>Real Madrid</i> 🏷 <i>[Sizniki]</i>");
+    expect(formatted).toContain("2. <b>Pedri</b>");
+    expect(formatted).toContain("CM · ⭐88 · €75M");
+    expect(formatted).toContain("<i>Barcelona</i>");
   });
 
   it("formatLeagueListing yagona futbolchi tafsilotlarini va sotuvchi holatini ko'rsatadi", () => {
@@ -49,11 +54,11 @@ describe("Transfer Market & League Market Presentation", () => {
     };
 
     const formatted = formatLeagueListing(player);
-    expect(formatted).toContain("🛒 LIGA TRANSFERI");
-    expect(formatted).toContain("⚽ Vinícius Jr.");
-    expect(formatted).toContain("🏟 Sotuvchi klub: Real Madrid");
-    expect(formatted).toContain("⭐ Mahorat: ⭐90");
-    expect(formatted).toContain("💰 Narxi: €150.0M");
-    expect(formatted).toContain("ℹ️ Bu sizning sotuvga qo‘ygan futbolchingiz.");
+    expect(formatted).toContain("🛒 <b>LIGA TRANSFERI</b>");
+    expect(formatted).toContain("⚽ <b>Vinícius Jr.</b>");
+    expect(formatted).toContain("🏟 Real Madrid");
+    expect(formatted).toContain("⭐ OVR: <b>90</b>");
+    expect(formatted).toContain("💰 Narxi: <b>€150M</b>");
+    expect(formatted).toContain("ℹ️ <i>Bu sizning sotuvga qo‘ygan futbolchingiz.</i>");
   });
 });
