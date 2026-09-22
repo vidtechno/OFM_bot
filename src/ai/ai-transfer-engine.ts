@@ -137,24 +137,40 @@ export class AiTransferEngine {
     const outgoingOffers: AiOutgoingOffer[] = [];
     let aiAiTransfers = 0;
 
-    // 0. Proactive AI listings on the In-League Transfer Market
+    // 0. Proactive AI listings on the In-League Transfer Market (only ACTIVE leagues)
     const { data: listingAiClubs } = await this.database
       .from("league_clubs")
-      .select("id, league_instance_id, clubs!inner(name)")
+      .select("id, league_instance_id, clubs!inner(name), league_instances!inner(status, current_round)")
       .eq("manager_type", "AI")
+      .eq("league_instances.status", "ACTIVE")
       .limit(8);
 
     for (const aiClub of listingAiClubs ?? []) {
-      const { data: squad } = await this.database
-        .from("club_players")
-        .select("id, player_id, is_starting, resale_locked_until, players!inner(short_name, market_value, primary_position, player_attributes!inner(overall))")
-        .eq("league_club_id", aiClub.id);
+      const [{ data: squad }, { data: startingData }] = await Promise.all([
+        this.database
+          .from("club_players")
+          .select("id, player_id, resale_locked_until, players!inner(short_name, market_value, primary_position, player_attributes!inner(overall))")
+          .eq("league_club_id", aiClub.id),
+        this.database
+          .from("lineup_players")
+          .select("club_player_id, lineups!inner(league_club_id)")
+          .eq("lineups.league_club_id", aiClub.id),
+      ]);
 
       if (!squad || squad.length <= 18) continue;
 
-      const candidates = squad.filter(
-        (cp) => !cp.is_starting && (!cp.resale_locked_until || new Date(cp.resale_locked_until) <= new Date())
-      );
+      const startingSet = new Set((startingData ?? []).map((s: any) => s.club_player_id));
+      const currentRound = (aiClub as any).league_instances?.current_round ?? 0;
+      const isEarlySeason = currentRound <= 2;
+
+      const candidates = squad.filter((cp) => {
+        if (startingSet.has(cp.id)) return false;
+        if (cp.resale_locked_until && new Date(cp.resale_locked_until) > new Date()) return false;
+        const ovr = (cp.players as any)?.player_attributes?.[0]?.overall ?? (cp.players as any)?.player_attributes?.overall ?? 75;
+        // Early season protection: never list 85+ OVR stars in first 2 rounds
+        if (isEarlySeason && ovr >= 85) return false;
+        return true;
+      });
       if (!candidates.length) continue;
 
       const candidateIds = candidates.map((c) => c.id);
@@ -202,11 +218,12 @@ export class AiTransferEngine {
       }
     }
 
-    // 1. Fetch active AI clubs for buyer activity
+    // 1. Fetch active AI clubs for buyer activity (only in ACTIVE leagues)
     const { data: aiClubs } = await this.database
       .from("league_clubs")
-      .select("id, league_instance_id, transfer_budget, cash_balance, clubs!inner(name)")
+      .select("id, league_instance_id, transfer_budget, cash_balance, clubs!inner(name), league_instances!inner(status)")
       .eq("manager_type", "AI")
+      .eq("league_instances.status", "ACTIVE")
       .gt("transfer_budget", 20_000_000)
       .limit(6);
 

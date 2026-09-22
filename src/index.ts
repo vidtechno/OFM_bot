@@ -119,8 +119,27 @@ async function main(): Promise<void> {
     }
   };
   const transferTimer=setInterval(()=>void maintainTransfers(),15*60_000);transferTimer.unref();void maintainTransfers();
-  let globalLeagueSchedulerReady=true;
-  const maintainGlobalLeagues=async():Promise<void>=>{if(!globalLeagueSchedulerReady)return;try{const created=await leagues.releaseScheduledGlobalLeagues();if(created)logger.info({event:"global_leagues_released",count:created},"Scheduled global leagues released");}catch(error:unknown){if((error as {code?:string}).code==="PGRST202"){globalLeagueSchedulerReady=false;logger.warn({event:"global_league_scheduler_waiting_for_migration"},"Global league scheduler is waiting for its database migration");return;}logger.error({event:"global_league_release_failed",err:error},"Scheduled global league release failed");}};
+  let globalLeagueSchedulerReady = true;
+  const maintainGlobalLeagues = async (): Promise<void> => {
+    if (!globalLeagueSchedulerReady) return;
+    try {
+      const scheduled = await leagues.releaseScheduledGlobalLeagues();
+      const { activated, created } = await leagues.maintainLobbies();
+      if (scheduled || activated || created) {
+        logger.info(
+          { event: "global_leagues_maintained", scheduled, activated, created },
+          "Global leagues maintained"
+        );
+      }
+    } catch (error: unknown) {
+      if ((error as { code?: string }).code === "PGRST202") {
+        globalLeagueSchedulerReady = false;
+        logger.warn({ event: "global_league_scheduler_waiting_for_migration" }, "Global league scheduler is waiting for its database migration");
+        return;
+      }
+      logger.error({ event: "global_league_release_failed", err: error }, "Scheduled global league release failed");
+    }
+  };
   const globalLeagueTimer=setInterval(()=>void maintainGlobalLeagues(),60_000);globalLeagueTimer.unref();void maintainGlobalLeagues();
 
   if (config.BOT_MODE === "webhook") {

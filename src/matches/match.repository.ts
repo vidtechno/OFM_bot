@@ -4,7 +4,7 @@ import type { MatchSimulation, MatchTeamInput } from "./match-engine.js";
 export interface DueMatch { fixtureId: string; home: MatchTeamInput; away: MatchTeamInput; }
 export interface MatchResult { id: string; round: number; playedAt: string; homeClub: string; awayClub: string; homeGoals: number; awayGoals: number; }
 export interface TableRow { position: number; club: string; played: number; wins: number; draws: number; losses: number; goalDifference: number; points: number; }
-export interface FinanceSummary { cashBalance: number; transferBudget: number; transactions: { kind: string; amount: number; description: string; createdAt: string }[]; }
+export interface FinanceSummary { cashBalance: number; transferBudget: number; reservedTransferBudget?: number; transactions: { kind: string; amount: number; description: string; createdAt: string }[]; }
 export interface PlayerLeader { name:string; club:string; total:number; }
 export interface MatchOwnerReport { telegramId:number;clubId:string;club:string;opponent:string;isHome:boolean;homeGoals:number;awayGoals:number;goals:Array<{minute:number;player:string;assist:string|null}>;possession:[number,number];shots:[number,number];onTarget:[number,number];corners:[number,number];position:number;points:number;played:number;wins:number;draws:number;losses:number;income:number;balance:number;next:{home:string;away:string;scheduledAt:string}|null;leagueName:string; }
 
@@ -172,8 +172,8 @@ export class MatchRepository {
   }
 
   async finances(userId:string,leagueClubId:string):Promise<FinanceSummary>{
-    const {data:club,error:clubError}=await this.database.from("league_clubs").select("cash_balance,transfer_budget").eq("id",leagueClubId).eq("manager_user_id",userId).maybeSingle();if(clubError)throw clubError;if(!club)throw new Error("CLUB_NOT_OWNED");
+    const {data:club,error:clubError}=await this.database.from("league_clubs").select("cash_balance,transfer_budget,reserved_transfer_budget").eq("id",leagueClubId).eq("manager_user_id",userId).maybeSingle();if(clubError)throw clubError;if(!club)throw new Error("CLUB_NOT_OWNED");
     const {data,error}=await this.database.from("finance_transactions").select("kind,amount,description,created_at").eq("league_club_id",leagueClubId).order("created_at",{ascending:false}).limit(10);if(error)throw error;
-    return {cashBalance:Number(club.cash_balance),transferBudget:Number(club.transfer_budget),transactions:(data??[]).map((row:any)=>({kind:row.kind,amount:Number(row.amount),description:row.description,createdAt:row.created_at}))};
+    return {cashBalance:Number(club.cash_balance),transferBudget:Number(club.transfer_budget),reservedTransferBudget:Number(club.reserved_transfer_budget??0),transactions:(data??[]).map((row:any)=>({kind:row.kind,amount:Number(row.amount),description:row.description,createdAt:row.created_at}))};
   }
 }

@@ -2,11 +2,19 @@ import type { MarketPlayer, TransferTarget, TransferHistoryItem } from "./transf
 
 export const transferMoney = (n: number) => `€${(n / 1_000_000).toFixed(1)}M`;
 
-export function formatTransferHub(clubName: string, budget: number, cash: number): string {
+export function formatTransferHub(
+  clubName: string,
+  budget: number,
+  cash: number,
+  reservedBudget = 0
+): string {
+  const available = Math.max(0, budget - reservedBudget);
   return [
     `🔁 ${clubName.toUpperCase()} — TRANSFER`,
     "",
     `💰 Transfer budjeti: ${transferMoney(budget)}`,
+    `🔒 Band qilingan: ${transferMoney(reservedBudget)}`,
+    `✅ Mavjud: ${transferMoney(available)}`,
     `🏦 G‘azna: ${transferMoney(cash)}`,
     "",
     "Kerakli bo‘limni tanlang:",
