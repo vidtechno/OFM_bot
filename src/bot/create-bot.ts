@@ -76,7 +76,8 @@ function dashboardKeyboard(leagueClubId: string): InlineKeyboard {
   return new InlineKeyboard()
     .text("👥 Jamoa", `sq:${leagueClubId}`).text("🔥 Asosiy XI", `xi:${leagueClubId}`).row()
     .text("🧠 Taktika", `tc:${leagueClubId}`).text("🔁 Transfer", `tr:${leagueClubId}`).row()
-    .text("📅 O‘yinlar", `mt:${leagueClubId}`).text("📊 Liga", `tb:${leagueClubId}`).row();
+    .text("📅 O‘yinlar", `mt:${leagueClubId}`).text("📊 Liga", `tb:${leagueClubId}`).row()
+    .text("🚪 Ligadan chiqish", `lx:${leagueClubId}`).row();
 }
 
 export function createBot({ token, users, leagues, squads, tactics, fixtures, matches, transfers, progression, admin, adminTelegramIds, logger }: BotDependencies): Bot {
@@ -176,8 +177,14 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
 
     const keyboard = new InlineKeyboard();
     for (const lobby of lobbies) {
-      const flag = lobby.competitionCode === "LALIGA" ? "🇪🇸" : "🏴󠁧󠁢󠁥󠁮󠁧󠁿";
+      const flag = lobby.competitionCode === "UZB" ? "🇺🇿" : "🌍";
       keyboard.text(`${flag} ${lobby.competitionName} — Klub tanlash`, `lg:${lobby.leagueId}`).row();
+    }
+    if (managedClubs.length > 0) {
+      for (const mc of managedClubs) {
+        keyboard.text(`⚽ ${mc.clubName} — Boshqarish`, `db:${mc.leagueClubId}`)
+                .text(`🚪 Chiqish`, `lx:${mc.leagueClubId}`).row();
+      }
     }
     keyboard.text("🔄 Yangilash", "refresh:leagues");
 
@@ -1209,6 +1216,17 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
 
   bot.callbackQuery(/^cf:([0-9a-f-]{36})$/, async (context) => {
     await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const managed = await getContextManagedClubs(context, user.id);
+    if (managed.length >= 2) {
+      await editOrReply(
+        context,
+        "❌ <b>Turnir limiti to‘lgan</b>\n\n<i>Siz allaqachon maksimal 2 ta turnirda ishtirok etmoqdasiz. Yangi klub tanlash uchun avval mavjud ligalaringizdan biridan chiqing.</i>",
+        new InlineKeyboard().text("🏆 Ligalar", "menu:leagues")
+      );
+      return;
+    }
+
     const leagueClubId = context.match[1]!;
     const club = await leagues.getAvailableClub(leagueClubId);
     if (!club) {
@@ -1226,12 +1244,81 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     try {
       const result = await leagues.claimClub(user.id, context.match[1]!);
       logger.info({ event: "club_claimed", userId: user.id, leagueClubId: result.leagueClubId }, "Club claimed");
+      delete (context as any).managedClubs;
       const club = (await leagues.listManagedClubs(user.id)).find((item) => item.leagueClubId === result.leagueClubId);
       if (!club) throw new Error("CLAIMED_CLUB_NOT_FOUND");
       await showDashboard(context, club);
     } catch (error: unknown) {
       logger.warn({ event: "club_claim_failed", err: error, userId: user.id }, "Club claim failed");
       await editOrReply(context, claimErrorMessage(error), new InlineKeyboard().text("↩️ Orqaga", "join"));
+    }
+  });
+
+  bot.callbackQuery(/^lx:([0-9a-f-]{36})$/, async (context) => {
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const leagueClubId = context.match[1]!;
+    const clubs = await leagues.listManagedClubs(user.id);
+    const club = clubs.find((c) => c.leagueClubId === leagueClubId);
+    if (!club) {
+      await editOrReply(context, "<i>Klub topilmadi yoki sizga tegishli emas.</i>", new InlineKeyboard().text("↩️ Orqaga", "menu:leagues"));
+      return;
+    }
+
+    const isPending = club.status === "OPEN";
+    const statusNote = isPending
+      ? "• Ushbu liga hali boshlanmagan (OPEN). Chiqsangiz, klub darhol boshqa managerlar uchun bo‘shaydi."
+      : "• Ushbu liga allaqachon FAOL (ACTIVE). Chiqsangiz, klub AI boshqaruviga o‘tkaziladi (tarkib, ochkolar va byudjet saqlanadi). Siz ushbu mavsumda bu ligaga qayta kira olmaysiz.";
+
+    const text = [
+      `⚠️ <b>Ligadan chiqishni tasdiqlaysizmi?</b>`,
+      "",
+      `🏟 Klub: <b>${escapeHtml(club.clubName)}</b>`,
+      `🏆 Liga: <i>${escapeHtml(club.leagueName)}</i>`,
+      "",
+      statusNote,
+      "",
+      `<i>Rostdan ham ushbu ligani tark etmoqchimisiz?</i>`,
+    ].join("\n");
+
+    const keyboard = new InlineKeyboard()
+      .text("✅ Ha, chiqish", `lxc:${club.leagueClubId}`)
+      .row()
+      .text("❌ Bekor qilish", `db:${club.leagueClubId}`);
+
+    await editOrReply(context, text, keyboard);
+  });
+
+  bot.callbackQuery(/^lxc:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery({ text: "Ligadan chiqilmoqda…" });
+    const user = await getContextUser(context);
+    const leagueClubId = context.match[1]!;
+    try {
+      const result = await leagues.exitLeagueClub(user.id, leagueClubId);
+      logger.info({ event: "league_exited", userId: user.id, leagueClubId, result }, "User exited league");
+      delete (context as any).managedClubs;
+
+      const message = [
+        "✅ <b>Siz ligadan muvaffaqiyatli chiqdingiz!</b>",
+        "",
+        `🏟 Klub: <b>${escapeHtml(result.clubName)}</b>`,
+        `🏆 Liga: <i>${escapeHtml(result.leagueName)}</i>`,
+        "",
+        result.leagueStatus === "OPEN"
+          ? "<i>Klub boshqa managerlar uchun bo‘shatildi.</i>"
+          : "<i>Klub AI boshqaruviga o‘tkazildi.</i>",
+      ].join("\n");
+
+      const keyboard = new InlineKeyboard().text("🏆 Ligalar ro‘yxati", "menu:leagues");
+      await editOrReply(context, message, keyboard);
+    } catch (error: unknown) {
+      logger.warn({ event: "league_exit_failed", err: error, userId: user.id }, "League exit failed");
+      await editOrReply(
+        context,
+        "❌ <b>Xatolik yuz berdi</b>\n<i>Ligadan chiqishda xatolik yuz berdi yoki ruxsat berilmadi.</i>",
+        new InlineKeyboard().text("↩️ Orqaga", "menu:leagues")
+      );
     }
   });
 

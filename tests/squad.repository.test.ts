@@ -11,7 +11,9 @@ describe("SquadRepository Live Test", () => {
 
     // Diyorbek - Real Madrid manager in Frankfurt
     const userId = "18440ffe-693d-4845-a14f-ee4aed6ba50e";
-    const leagueClubId = "cf906880-24a9-4e6e-867b-231c3a7d61db";
+    const { data: rmClub } = await db.from("league_clubs").select("id, clubs!inner(name)").eq("clubs.name", "Real Madrid").limit(1).single();
+    const leagueClubId = rmClub!.id;
+    await db.from("league_clubs").update({ manager_user_id: userId, manager_type: "HUMAN" }).eq("id", leagueClubId);
 
     const squad = await repo.listOwnedClubSquad(userId, leagueClubId);
     expect(squad.length).toBeGreaterThanOrEqual(30);

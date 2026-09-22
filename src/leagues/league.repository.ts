@@ -128,10 +128,26 @@ export class LeagueRepository {
     return { leagueClubId: result.league_club_id, clubName: result.club_name, leagueName: result.league_name };
   }
 
+  async exitLeagueClub(userId: string, leagueClubId: string): Promise<import("./types.js").ExitLeagueResult> {
+    const { data, error } = await this.database.rpc("exit_league_club", {
+      p_user_id: userId,
+      p_league_club_id: leagueClubId,
+    });
+    if (error) throw new Error(error.message);
+    const result = data?.[0];
+    if (!result) throw new Error("EXIT_RESULT_MISSING");
+    return {
+      leagueClubId: result.league_club_id,
+      clubName: result.club_name,
+      leagueName: result.league_name,
+      leagueStatus: result.league_status,
+    };
+  }
+
   async listManagedClubs(userId: string): Promise<ManagedClub[]> {
     const { data, error } = await this.database
       .from("league_clubs")
-      .select("id, points, cash_balance, clubs!inner(name, starting_budget), league_instances!inner(instance_number, competitions!inner(name))")
+      .select("id, points, cash_balance, clubs!inner(name, starting_budget), league_instances!inner(id, instance_number, status, competitions!inner(name))")
       .eq("manager_user_id", userId)
       .order("created_at");
     if (error) throw new Error(`Manager klublarini olishda xato: ${error.message}`);
@@ -142,12 +158,14 @@ export class LeagueRepository {
       const competition = one<any>(league.competitions);
       return {
         leagueClubId: row.id,
+        leagueId: league.id,
         clubName: club.name,
         competitionName: competition.name,
         leagueName: `${competition.name} #${String(league.instance_number).padStart(4, "0")}`,
         position: 1,
         points: row.points,
         budget: Number(row.cash_balance ?? club.starting_budget),
+        status: league.status,
       };
     });
   }

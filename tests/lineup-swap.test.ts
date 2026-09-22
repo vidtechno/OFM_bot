@@ -33,7 +33,9 @@ describe("TacticsRepository swapOrAssignPlayer Live Test", () => {
     const tactics = new TacticsRepository(db, squads);
 
     const userId = "18440ffe-693d-4845-a14f-ee4aed6ba50e";
-    const clubId = "cf906880-24a9-4e6e-867b-231c3a7d61db";
+    const { data: rmClub } = await db.from("league_clubs").select("id, clubs!inner(name)").eq("clubs.name", "Real Madrid").limit(1).single();
+    const clubId = rmClub!.id;
+    await db.from("league_clubs").update({ manager_user_id: userId, manager_type: "HUMAN" }).eq("id", clubId);
 
     const squad = await squads.listOwnedClubSquad(userId, clubId);
     const courtois = squad.find((p) => p.shortName.includes("Courtois"))!;

@@ -163,6 +163,7 @@ export class TransferRepository {
       )
       .eq("status", "ACTIVE")
       .is("club_player_id", null)
+      .eq("league_instance_id", owner.league_instance_id)
       .gt("available_until", new Date().toISOString())
       .order("asking_price", { ascending: false });
 

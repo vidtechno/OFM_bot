@@ -36,8 +36,14 @@ export function claimErrorMessage(error: unknown): string {
   if (message.includes("CLUB_ALREADY_CLAIMED")) {
     return "❌ <b>Klub band qilingan</b>\n<i>Bu klubni boshqa manager olib bo‘ldi. Boshqa klub tanlang.</i>";
   }
-  if (message.includes("COMPETITION_LIMIT_REACHED")) {
-    return "❌ <b>Cheklov mavjud</b>\n<i>Siz bu ligada allaqachon klub boshqaryapsiz.</i>";
+  if (message.includes("MAX_TOURNAMENT_LIMIT_REACHED")) {
+    return "❌ <b>Turnir limiti to‘lgan</b>\n<i>Siz allaqachon maksimal 2 ta turnirda ishtirok etyapsiz. Yangi klub tanlash uchun mavjud ligalaringizdan biridan chiqing.</i>";
+  }
+  if (message.includes("ALREADY_IN_THIS_LEAGUE") || message.includes("COMPETITION_LIMIT_REACHED")) {
+    return "❌ <b>Cheklov mavjud</b>\n<i>Siz ushbu liga instansiyasida allaqachon klub boshqaryapsiz.</i>";
+  }
+  if (message.includes("PREVIOUSLY_DEPARTED_THIS_LEAGUE")) {
+    return "❌ <b>Qayta kirish taqiqlangan</b>\n<i>Siz ushbu faol ligadan avvalroq chiqqansiz. Qayta qo‘shilish imkonsiz. Yangi mavsumni kuting.</i>";
   }
   if (message.includes("LEAGUE_NOT_ACTIVE")) {
     return "❌ <b>Liga faol emas</b>\n<i>Ushbu liga hozirda faol emas.</i>";
@@ -62,8 +68,13 @@ export function formatOpenLobbies(
 ): string {
   const lines: string[] = ["🏆 <b>LIGALAR</b>", ""];
 
+  lines.push(`🎮 Faol turnirlar: <b>${managedClubs.length}/2</b>`, "");
+  if (managedClubs.length >= 2) {
+    lines.push("⚠️ <i>Siz maksimal 2 ta turnirda ishtirok etyapsiz. Yangi klub tanlash uchun joriy klublaringizdan biridan chiqishingiz lozim.</i>", "");
+  }
+
   for (const lobby of lobbies) {
-    const flag = lobby.competitionCode === "LALIGA" ? "🇪🇸" : "🏴";
+    const flag = lobby.competitionCode === "UZB" ? "🇺🇿" : (lobby.competitionCode === "LALIGA" ? "🇪🇸" : (lobby.competitionCode === "PL" ? "🏴" : "🌍"));
     const statusText = lobby.status === "OPEN" ? "🟢 <i>Qabul ochiq</i>" : "⚡ <i>Faol liga</i>";
     const countdown = formatLobbyCountdown(lobby.registrationClosesAt);
 
