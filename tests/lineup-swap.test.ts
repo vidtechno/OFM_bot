@@ -52,5 +52,5 @@ describe("TacticsRepository swapOrAssignPlayer Live Test", () => {
     const gkEntry2 = lineup2.players.find((p) => p.slotKey === "GK")!;
     expect(gkEntry2.shortName).toContain("Courtois");
     expect(lineup2.players).toHaveLength(11);
-  });
+  }, 15000);
 });
