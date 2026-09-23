@@ -27,9 +27,9 @@ describe("match presentation", () => {
     ];
     const text = formatLeaders("TO‘PURARLAR", scorers, "gol");
     expect(text).toContain("⚽ <b>TO‘PURARLAR</b>");
-    expect(text).toContain("🥇 Mbappé — <b>17</b>");
-    expect(text).toContain("🥈 Haaland — <b>15</b>");
-    expect(text).toContain("🥉 Salah — <b>13</b>");
+    expect(text).toContain("🥇 Mbappé <i>(Real Madrid)</i> — <b>17</b>");
+    expect(text).toContain("🥈 Haaland <i>(Man City)</i> — <b>15</b>");
+    expect(text).toContain("🥉 Salah <i>(Liverpool)</i> — <b>13</b>");
   });
 
   it("match reportni to'liq statistika va g'alaba bilan chiqaradi", () => {

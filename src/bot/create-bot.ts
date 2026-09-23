@@ -39,14 +39,19 @@ import type { ProgressionRepository } from "../progression/progression.repositor
 import {
   formatGlobalLeaderboard,
   formatHonours,
+  formatLeaderboardHub,
   formatLeaderboard,
+  formatPeriodLeaderboard,
   formatProfile,
+  formatSeasonDetail,
+  formatSeasonHistory,
   formatSponsors,
+  formatTrophyCabinet,
 } from "../progression/presentation.js";
 import type { SetPieceRole } from "../tactics/tactics.repository.js";
 import { NewsService } from "../leagues/news.service.js";
 import type { AdminRepository } from "../admin/admin.repository.js";
-import { formatAdminSponsors, formatAdminStats, formatAdminUsers } from "../admin/presentation.js";
+import { formatAdminSponsors, formatAdminStats, formatAdminUsers, formatLaunchDashboard } from "../admin/presentation.js";
 import { LegendRepository } from "../legends/legend.repository.js";
 import type { LegendCategory } from "../legends/legend.types.js";
 import {
@@ -169,14 +174,15 @@ function buildTransferMarketKeyboard(
   return keyboard;
 }
 
-function dashboardKeyboard(leagueClubId: string): InlineKeyboard {
-  return new InlineKeyboard()
+function dashboardKeyboard(leagueClubId: string, leagueId?: string, status?: string): InlineKeyboard {
+  const keyboard = new InlineKeyboard()
     .text("👥 Jamoa", `sq:${leagueClubId}`).text("🔥 Asosiy XI", `xi:${leagueClubId}`).row()
     .text("🧠 Taktika", `tc:${leagueClubId}`).text("🔁 Transfer", `tr:${leagueClubId}`).row()
     .text("📅 O‘yinlar", `mt:${leagueClubId}`).text("📊 Liga", `tb:${leagueClubId}`).row()
     .text("📊 Statistika", `cst:${leagueClubId}`).text("⚔️ Match preview", `mpv:${leagueClubId}`).row()
-    .text("📰 Liga yangiliklari", `lnw:${leagueClubId}:0`).row()
-    .text("🚪 Ligadan chiqish", `lx:${leagueClubId}`).row();
+    .text("📰 Liga yangiliklari", `lnw:${leagueClubId}:0`).row();
+  if (status === "OPEN" && leagueId) keyboard.text("👥 Do‘stni ligaga chaqirish", `inv:${leagueId}`).row();
+  return keyboard.text("🚪 Ligadan chiqish", `lx:${leagueClubId}`).row();
 }
 
 export function createBot({ token, users, leagues, squads, tactics, fixtures, matches, transfers, legends, progression, admin, adminTelegramIds, logger, news }: BotDependencies): Bot {
@@ -304,7 +310,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     ]);
     const next = upcoming[0];
     const teamOvr = liveOvr ?? club.teamOvr;
-    await editOrReply(context, formatClubDashboard(club, managerName, next ? formatFixtureLine(next) : undefined, teamOvr), dashboardKeyboard(club.leagueClubId));
+    await editOrReply(context, formatClubDashboard(club, managerName, next ? formatFixtureLine(next) : undefined, teamOvr), dashboardKeyboard(club.leagueClubId, club.leagueId, club.status));
   };
 
   bot.command("start", async (context) => {
@@ -326,6 +332,27 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     (context as any).managedClubs = managedClubs;
 
     logger.info({ event: "user_registered", userId: user.id, telegramId: user.telegram_id }, "User registered or updated");
+
+    const startPayload = String(context.match ?? "").trim();
+    if (/^league_[a-f0-9]{32}$/i.test(startPayload)) {
+      const invite = await leagues.resolveInvite(startPayload.slice(7), user.id);
+      if (invite) {
+        const title = `${invite.competitionName} #${String(invite.instanceNumber).padStart(4, "0")}`;
+        if (invite.status === "OPEN" && invite.remaining > 0 && invite.leagueId) {
+          await context.reply(
+            `🏆 <b>${escapeHtml(title)}</b>\n\n👥 ${invite.humanCount}/${invite.clubLimit} manager\n🎟 ${invite.remaining} ta klub bo‘sh\n\n<i>Do‘stingiz sizni shu ligaga taklif qildi.</i>`,
+            { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("⚽ Klub tanlash", `lg:${invite.leagueId}:0`).row().text("↩️ Boshqa ligalar", "join") }
+          );
+          return;
+        }
+        const fallback = invite.recommendedOpenLeagueId ? `lg:${invite.recommendedOpenLeagueId}:0` : "join";
+        await context.reply(
+          `⏰ <b>Kech qoldingiz</b>\n\nBu liga allaqachon boshlangan yoki bo‘sh klub qolmagan.\n\n<i>Yangi liga uchun joy mavjud.</i>`,
+          { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("🏆 Yangi ligaga qo‘shilish", fallback).row().text("📋 Barcha ochiq ligalar", "join") }
+        );
+        return;
+      }
+    }
 
     const firstName = escapeHtml(telegramUser.first_name);
     const welcomeText = [
@@ -352,35 +379,17 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
 
   bot.hears(MAIN_MENU.about, async (context) => {
     const text = [
-      "ℹ️ <b>OFM GAME HAQIDA</b>",
-      "",
-      "OFM Game — Telegram ichida ishlaydigan futbol manager o‘yini.",
-      "",
-      "<b>Qanday o‘ynaladi?</b>",
-      "",
+      "ℹ️ <b>OFM GAME QANDAY O‘YNALADI?</b>", "",
       "1. 🏆 Ligadan bo‘sh klub tanlang.",
       "2. 👥 Tarkibingizni boshqaring.",
       "3. 🔥 Asosiy XI tuzing.",
-      "4. 🧠 Taktikani moslang.",
-      "5. 🔁 Transferlar orqali jamoani kuchaytiring.",
-      "6. ⚽ Har kuni o‘yinlarda qatnashing.",
-      "7. 📊 Turnir jadvali va statistikani kuzating.",
-      "8. 🏆 Mavsum yakunida chempionlik uchun kurashing.",
-      "",
-      "<b>Muhim qoidalar:</b>",
-      "• Bir manager maksimal 2 ta faol turnirda qatnasha oladi.",
-      "• Liga boshlanguncha transferlar yopiq.",
-      "• Liga ACTIVE bo‘lgach AI va boshqa managerlar bilan transferlar ochiladi.",
-      "• ACTIVE ligadan chiqsangiz, klub AI boshqaruviga o‘tadi.",
-      "• Klub tarkibi, ochkolar va moliya saqlanadi.",
-      "",
-      "👨‍💻 <b>Muallif</b>",
-      '<a href="https://t.me/diyorbek_anorboyev">@diyorbek_anorboyev</a>',
-      "",
-      "🛟 <b>Support</b>",
-      '<a href="https://t.me/diyorbek_anorboyev">@diyorbek_anorboyev</a>',
+      "4. 🧠 Taktikani tanlang.",
+      "5. 🔁 Transfer qiling.",
+      "6. ⚽ Ochko to‘plab, chempion bo‘ling.", "",
+      "⭐ XP yig‘ing va global reytingda ko‘tariling.",
+      "👑 Legend futbolchilarni Stars orqali olishingiz mumkin.",
     ].join("\n");
-    await context.reply(text, { parse_mode: "HTML", link_preview_options: { is_disabled: true } });
+    await context.reply(text, { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("🏆 Ligalar", "join").text("👤 Profil", "pf:0").row().text("↩️ Orqaga", "home:club") });
   });
 
   bot.hears(MAIN_MENU.club, async (context) => {
@@ -407,8 +416,9 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
 
   const profileKeyboard = (): InlineKeyboard =>
     new InlineKeyboard()
-      .text("🌍 Global reyting", "lb:0")
-      .text("🏆 Sovrinlar", "pf:h");
+      .text("🌍 Reyting", "lb:hub")
+      .text("🏆 Sovrinlarim", "pf:t").row()
+      .text("📚 Mavsumlarim", "pf:s:0");
 
   bot.hears(MAIN_MENU.profile, async (context) => {
     if (!context.from) return;
@@ -441,6 +451,24 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     );
   });
 
+  bot.callbackQuery("lb:hub", async (context) => {
+    await context.answerCallbackQuery();
+    await editOrReply(context, formatLeaderboardHub(), new InlineKeyboard()
+      .text("📅 Bugungi TOP", "lb:d").text("📆 Haftalik TOP", "lb:w").row()
+      .text("🌍 All-time TOP", "lb:a").row().text("↩️ Orqaga", "pf:0"));
+  });
+
+  bot.callbackQuery(/^lb:([dwa])$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const period = context.match[1] === "d" ? "DAILY" : context.match[1] === "w" ? "WEEKLY" : "ALL_TIME";
+    const result = await progression.periodLeaderboard(period, user.id, 10);
+    if (period !== "ALL_TIME") await progression.logEvent(user.id, period === "DAILY" ? "leaderboard_daily_opened" : "leaderboard_weekly_opened").catch(() => {});
+    await editOrReply(context, formatPeriodLeaderboard(period, result.entries, result.userRank, result.userXp),
+      new InlineKeyboard().text("📅 Bugun", "lb:d").text("📆 Hafta", "lb:w").row().text("🌍 All-time", "lb:a").text("↩️ Orqaga", "lb:hub"));
+  });
+
   bot.callbackQuery("pf:h", async (context) => {
     await context.answerCallbackQuery();
     if (!context.from) return;
@@ -451,6 +479,40 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
       formatHonours(honours),
       new InlineKeyboard().text("↩️ Orqaga", "pf:0")
     );
+  });
+
+  bot.callbackQuery("pf:t", async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const summary = await progression.trophySummary(user.id);
+    await editOrReply(context, formatTrophyCabinet(summary), new InlineKeyboard()
+      .text("📚 Mavsumlarim", "pf:s:0").text("🌍 Reyting", "lb:hub").row().text("↩️ Orqaga", "pf:0"));
+  });
+
+  bot.callbackQuery(/^pf:s:(\d+)$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const page = Number(context.match[1]);
+    const history = await progression.seasonHistory(user.id, page, 5);
+    await progression.logEvent(user.id, "season_history_opened").catch(() => {});
+    const kb = new InlineKeyboard();
+    for (const row of history.rows) kb.text(`${row.finalPosition === 1 ? "🥇" : "📘"} ${row.clubName} #${String(row.instanceNumber).padStart(4,"0")}`, `pf:d:${row.id}`).row();
+    if (page > 0) kb.text("⬅️", `pf:s:${page - 1}`);
+    if (history.hasNext) kb.text("➡️", `pf:s:${page + 1}`);
+    if (page > 0 || history.hasNext) kb.row();
+    kb.text("🏆 Sovrinlarim", "pf:t").text("↩️ Profil", "pf:0");
+    await editOrReply(context, formatSeasonHistory(history.rows), kb);
+  });
+
+  bot.callbackQuery(/^pf:d:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const row = await progression.seasonDetail(user.id, context.match[1]!);
+    if (!row) return editOrReply(context, "<i>Mavsum topilmadi.</i>", new InlineKeyboard().text("↩️ Orqaga", "pf:s:0"));
+    await editOrReply(context, formatSeasonDetail(row), new InlineKeyboard().text("↩️ Mavsumlarim", "pf:s:0"));
   });
 
   bot.callbackQuery("pf:0", async (context) => {
@@ -472,11 +534,29 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     await showCompetitions(context);
   });
 
+  bot.callbackQuery(/^inv:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    try {
+      const invite = await leagues.createInvite(user.id, context.match[1]!);
+      const url = `https://t.me/ofmgame_bot?start=league_${invite.token}`;
+      await editOrReply(context,
+        `👥 <b>DO‘STNI LIGAGA CHAQIRISH</b>\n\n🏆 ${escapeHtml(invite.competitionName)} #${String(invite.instanceNumber).padStart(4,"0")}\n👥 ${invite.humanCount}/${invite.clubLimit} manager\n🎟 ${invite.remaining} ta klub qoldi\n\n<code>${url}</code>\n\n<i>Havolani do‘stingizga yuboring.</i>`,
+        new InlineKeyboard().url("📤 Havolani ulashish", `https://t.me/share/url?url=${encodeURIComponent(url)}`).row().text("↩️ Klub", "home:club")
+      );
+    } catch (error: any) {
+      const expired = String(error?.message ?? "").includes("INVITE_LEAGUE_NOT_OPEN");
+      await editOrReply(context, expired ? "⏰ <b>Taklif yopilgan</b>\n\nLiga allaqachon boshlangan." : "❌ <b>Taklif havolasi yaratilmadi.</b>", new InlineKeyboard().text("🏆 Ligalar", "join"));
+    }
+  });
+
   const adminHome = async (context: Context) => {
     await editOrReply(
       context,
       formatAdminStats(await admin.stats()),
       new InlineKeyboard()
+        .text("📊 Launch Dashboard", "ad:d").row()
         .text("Users", "ad:u")
         .text("Sponsors", "ad:s")
         .row()
@@ -492,7 +572,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     await admin.clearBroadcastSession(user.id);
     await adminHome(context);
   });
-  bot.callbackQuery(/^ad:([usahb])$/, async (context) => {
+  bot.callbackQuery(/^ad:([usahbd])$/, async (context) => {
     if (!context.from || !isAdmin(context.from.id)) return context.answerCallbackQuery({ text: "Ruxsat yo‘q" });
     await context.answerCallbackQuery();
     const section = context.match[1];
@@ -500,6 +580,9 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     if (section === "h") {
       await admin.clearBroadcastSession(user.id);
       return adminHome(context);
+    }
+    if (section === "d") {
+      return editOrReply(context, formatLaunchDashboard(await admin.launchDashboard()), new InlineKeyboard().text("🔄 Yangilash", "ad:d").text("↩️ Admin panel", "ad:h"));
     }
     if (section === "b") {
       await admin.setBroadcastSession(user.id);
@@ -1519,6 +1602,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     try {
       const user = await getContextUser(context);
       const intent = await legendRepo.createPurchaseIntent(user.id, clubId, legendIdentifier);
+      await progression.logEvent(user.id, "legend_payment_started", intent.purchaseId, { legend: intent.legendName, stars: intent.starsAmount }).catch(() => {});
 
       // Telegram invoice payload limit: 1-128 bytes.
       // Only store purchaseId (UUID = 36 bytes) — everything else fetched from DB at fulfillment.
@@ -1630,6 +1714,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
         }
 
         await context.reply(text, { parse_mode: "HTML", reply_markup: kb });
+        await progression.logEvent(user.id, "legend_payment_success", purchaseId, { legend: result.legendName }).catch(() => {});
         logger.info({ event: "legend_purchase_fulfilled", purchaseId });
       } catch (fulfillmentError: any) {
         logger.error({ event: "legend_fulfillment_conflict", err: fulfillmentError }, "Fulfillment conflict, attempting refund");

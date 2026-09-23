@@ -13,6 +13,11 @@ export interface AdminStats {
 }
 export interface AdminUser { id: string; telegramId: number; name: string; username: string | null; blocked: boolean; lastSeen: string; }
 export interface AdminSponsor { id: string; name: string; payment: number; active: boolean; channelId: number | null; channel: string | null; joinUrl: string | null; }
+export interface LaunchDashboardStats {
+  users:number; todayUsers:number; activeManagers:number; claimedClubs:number; activeLeagues:number;
+  completedMatches:number; transfers:number; starsAttempts:number; starsPending:number; starsPaid:number;
+  starsRefunded:number; starsFailed:number;
+}
 
 export class AdminRepository {
   constructor(private readonly database: SupabaseClient) {}
@@ -36,6 +41,19 @@ export class AdminRepository {
       matches: await count("matches"),
       offers: await count("transfer_offers"),
       activeListings: await count("global_market_listings", (q) => q.eq("status", "ACTIVE")),
+    };
+  }
+
+  async launchDashboard(): Promise<LaunchDashboardStats> {
+    const { data, error } = await this.database.rpc("launch_dashboard_stats");
+    if (error) throw error;
+    const d = data as any;
+    return {
+      users:Number(d.users??0), todayUsers:Number(d.todayUsers??0), activeManagers:Number(d.activeManagers??0),
+      claimedClubs:Number(d.claimedClubs??0), activeLeagues:Number(d.activeLeagues??0),
+      completedMatches:Number(d.completedMatches??0), transfers:Number(d.transfers??0),
+      starsAttempts:Number(d.starsAttempts??0), starsPending:Number(d.starsPending??0), starsPaid:Number(d.starsPaid??0),
+      starsRefunded:Number(d.starsRefunded??0), starsFailed:Number(d.starsFailed??0),
     };
   }
 
@@ -157,4 +175,3 @@ export class AdminRepository {
     return data ?? [];
   }
 }
-

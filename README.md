@@ -83,6 +83,18 @@ npm run build:webhook
 npx supabase functions deploy telegram-webhook --no-verify-jwt
 ```
 
+Match scheduler ham alohida Edge Function sifatida deploy qilinadi:
+
+```bash
+npm run build:match-scheduler
+npx supabase functions deploy match-scheduler --no-verify-jwt
+```
+
+`202609230049_match_scheduler_and_dynamic_rounds.sql` migratsiyasidagi cron so‘rovi uchun
+Supabase Vault’da `service_role_key` nomli secret project service-role key qiymatiga teng
+bo‘lishi kerak. Scheduler har 2 daqiqada overdue fixturelarni batchlarda qayta ishlaydi;
+5 daqiqalik DB claim lease parallel/duplicate simulationni bloklaydi.
+
 ### 3-qadam: Telegram Webhookni faollashtirish
 
 Telegramga webhook manzilini (`https://<PROJECT_REF>.supabase.co/functions/v1/telegram-webhook`) ro'yxatdan o'tkazing:
@@ -188,4 +200,3 @@ Har bir update uchun Supabase Logs bo'limida quyidagi structured JSON log yozila
 npm run check
 ```
 TypeScript tiplari va barcha Vitest unit testlarini to'liq tekshiradi.
-

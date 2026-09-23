@@ -59,13 +59,20 @@ describe("👑 Legend Transfers & Global Market Auto-Seeding Comprehensive Test 
     expect(ibra?.overall).toBe(91);
   });
 
-  it("2. Current TEST PRICING is exactly ⭐ 1 Star for all 41 legends", async () => {
+  it("2. Production pricing is 30-100 Stars with key legends fixed", async () => {
     const { data: legends, error } = await db
       .from("legend_players")
-      .select("stars_price");
+      .select("name,stars_price")
+      .eq("active", true);
 
     expect(error).toBeNull();
-    expect(legends?.every((l) => l.stars_price === 1)).toBe(true);
+    expect(legends?.every((l) => l.stars_price >= 30 && l.stars_price <= 100)).toBe(true);
+    const price = (name: string) => legends?.find((l) => l.name === name)?.stars_price;
+    expect(price("Lionel Messi")).toBe(100);
+    expect(price("Cristiano Ronaldo")).toBe(100);
+    expect(price("Toni Kroos")).toBe(50);
+    expect(price("Gareth Bale")).toBe(50);
+    expect(price("Marcelo")).toBe(50);
   });
 
   it("3. Legends have sensible OVR attributes (88 to 96) and match engine attributes", async () => {

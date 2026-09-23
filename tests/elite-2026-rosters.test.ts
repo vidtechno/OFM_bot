@@ -7,7 +7,7 @@ import { runEliteRosterImport } from "../src/data/import-elite-rosters.js";
 describe("OFM Elite League 2026/27 Rosters Comprehensive Test Suite", () => {
   const db = createDatabaseClient(loadConfig());
 
-  it("Uzbekistan Superliga is 100% unchanged (16 clubs, 410 players)", async () => {
+  it("Uzbekistan Superliga has 16 clubs and 403 reconciled canonical players", async () => {
     const { data: uzbComp } = await db.from("competitions").select("id").eq("code", "UZB").single();
     expect(uzbComp).toBeDefined();
 
@@ -15,7 +15,8 @@ describe("OFM Elite League 2026/27 Rosters Comprehensive Test Suite", () => {
     expect(clubs?.length).toBe(16);
 
     const { count } = await db.from("players").select("id", { count: "exact", head: true }).in("club_id", clubs!.map(c => c.id));
-    expect(count).toBe(410);
+    // Seven stale cross-club identity copies were merged into their canonical players.
+    expect(count).toBe(403);
   });
 
   it("All 20 Elite League clubs exist and have valid squad size between 18 and 30", async () => {

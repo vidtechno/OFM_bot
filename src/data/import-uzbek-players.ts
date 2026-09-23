@@ -49,6 +49,93 @@ export interface ParsedUzbekPlayer {
   marketValue: number;
 }
 
+/**
+ * The Wikipedia squad templates used by this legacy importer retain players
+ * after mid-season moves. These verified overrides make identity independent
+ * from the old club page and prevent the same real player being imported twice.
+ * Values were checked against current PFL/Sofascore/Transfermarkt profiles on
+ * 2026-09-23. The six FC-style attributes remain game balancing values.
+ */
+const VERIFIED_CURRENT_PLAYERS: Record<string, Partial<ParsedUzbekPlayer> & { clubName: string }> = {
+  "bilolkhon toshmirzaev": {
+    sourceId: "UZB_NEF_71_1194408092", clubName: "Neftchi Fergana", age: 29,
+    squadNumber: 71, positions: ["LW", "RW"], marketValue: 380_000,
+    overall: 67, pace: 72, shooting: 65, passing: 66, dribbling: 70, defending: 38, physical: 61,
+  },
+  "islom anvarov": {
+    sourceId: "UZB_BUN_27_2103623487", clubName: "Bunyodkor Tashkent", age: 20,
+    squadNumber: 60, positions: ["LB", "CB"], marketValue: 25_000,
+    overall: 58, pace: 65, shooting: 35, passing: 52, dribbling: 55, defending: 57, physical: 55,
+  },
+  "rustam turdimurodov": {
+    sourceId: "UZB_AND_99_1734188352", clubName: "FC Andijon", age: 22,
+    squadNumber: 14, positions: ["ST", "CF"], marketValue: 360_000,
+    overall: 68, pace: 75, shooting: 70, passing: 58, dribbling: 69, defending: 30, physical: 66,
+  },
+  "shakhzod ubaydullaev": {
+    sourceId: "UZB_BUX_10_310027586", clubName: "FC Buxoro", age: 28,
+    squadNumber: 10, positions: ["ST", "CF"], marketValue: 160_000,
+    overall: 65, pace: 70, shooting: 67, passing: 56, dribbling: 65, defending: 28, physical: 64,
+  },
+  "shokhmalik komilov": {
+    sourceId: "UZB_AND_8_1373629814", clubName: "FC Andijon", age: 26,
+    squadNumber: 24, positions: ["CAM", "CM"], marketValue: 260_000,
+    overall: 66, pace: 67, shooting: 62, passing: 69, dribbling: 68, defending: 52, physical: 62,
+  },
+  "stephen chinedu": {
+    sourceId: "UZB_PAK_90_288421521", clubName: "Pakhtakor Tashkent", age: 26,
+    squadNumber: 90, positions: ["ST", "CF"], marketValue: 370_000,
+    overall: 68, pace: 73, shooting: 70, passing: 57, dribbling: 66, defending: 29, physical: 72,
+  },
+  "zabikhillo urinboev": {
+    sourceId: "UZB_SOG_19_1659136881", clubName: "Sogdiana Jizzakh", age: 31,
+    squadNumber: 19, positions: ["ST", "CF"], marketValue: 170_000,
+    overall: 64, pace: 62, shooting: 67, passing: 55, dribbling: 63, defending: 28, physical: 69,
+  },
+};
+
+const VERIFIED_NAMESAKES: Record<string, Record<string, Partial<ParsedUzbekPlayer>>> = {
+  "dostonbek tursunov": {
+    "FC Qizilqum": {
+      age: 25, squadNumber: 3, positions: ["CB"], marketValue: 100_000,
+      overall: 62, pace: 64, shooting: 35, passing: 55, dribbling: 53, defending: 63, physical: 66,
+    },
+    "Surkhon Termiz": {
+      age: 25, squadNumber: 7, positions: ["RM", "LB", "RB"], marketValue: 360_000,
+      overall: 66, pace: 71, shooting: 58, passing: 65, dribbling: 67, defending: 61, physical: 64,
+    },
+  },
+};
+
+function applyVerifiedRoster(players: ParsedUzbekPlayer[]): ParsedUzbekPlayer[] {
+  const reconciled = players.flatMap((player) => {
+    const key = player.name.trim().toLowerCase();
+    const canonical = VERIFIED_CURRENT_PLAYERS[key];
+    if (canonical) {
+      if (player.clubName !== canonical.clubName) return [];
+      return [{ ...player, ...canonical } as ParsedUzbekPlayer];
+    }
+
+    const namesake = VERIFIED_NAMESAKES[key]?.[player.clubName];
+    return [{ ...player, ...(namesake ?? {}) }];
+  });
+
+  const duplicateNames = new Map<string, Set<string>>();
+  for (const player of reconciled) {
+    const key = player.name.trim().toLowerCase();
+    const clubs = duplicateNames.get(key) ?? new Set<string>();
+    clubs.add(player.clubName);
+    duplicateNames.set(key, clubs);
+  }
+
+  for (const [name, clubs] of duplicateNames) {
+    if (clubs.size > 1 && !VERIFIED_NAMESAKES[name]) {
+      throw new Error(`Unresolved cross-club player identity: ${name} (${[...clubs].join(", ")})`);
+    }
+  }
+  return reconciled;
+}
+
 function stringHash(str: string): number {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
@@ -322,7 +409,10 @@ export async function importUzbekPlayers(options: { dryRun?: boolean } = {}): Pr
     }
   }
 
-  console.log(`Total Uzbek players parsed: ${allPlayers.length}`);
+  const reconciledPlayers = applyVerifiedRoster(allPlayers);
+  allPlayers.splice(0, allPlayers.length, ...reconciledPlayers);
+
+  console.log(`Total Uzbek players parsed after identity reconciliation: ${allPlayers.length}`);
   console.log("Rating Distribution:", ratingDistribution);
 
   if (options.dryRun) {

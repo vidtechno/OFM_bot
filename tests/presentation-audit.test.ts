@@ -340,9 +340,9 @@ describe("UI/Presentation Design Audit & Consistency Tests", () => {
       );
 
       expect(scorers).toContain("⚽ <b>TO‘PURARLAR</b>");
-      expect(scorers).toContain("🥇 Mbappé — <b>17</b>");
-      expect(scorers).toContain("🥈 Haaland — <b>15</b>");
-      expect(scorers).toContain("🥉 Salah — <b>13</b>");
+      expect(scorers).toContain("🥇 Mbappé <i>(Real Madrid)</i> — <b>17</b>");
+      expect(scorers).toContain("🥈 Haaland <i>(Man City)</i> — <b>15</b>");
+      expect(scorers).toContain("🥉 Salah <i>(Liverpool)</i> — <b>13</b>");
 
       const assists = formatLeaders(
         "ASSISTLAR",
@@ -354,8 +354,8 @@ describe("UI/Presentation Design Audit & Consistency Tests", () => {
       );
 
       expect(assists).toContain("🎯 <b>ASSISTLAR</b>");
-      expect(assists).toContain("🥇 Bellingham — <b>10</b>");
-      expect(assists).toContain("🥈 Pedri — <b>9</b>");
+      expect(assists).toContain("🥇 Bellingham <i>(Real Madrid)</i> — <b>10</b>");
+      expect(assists).toContain("🥈 Pedri <i>(Barcelona)</i> — <b>9</b>");
     });
 
     it("renders manager profile with career stats and honours", () => {

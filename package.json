@@ -10,8 +10,9 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
-    "build": "npm run build:webhook && tsc -p tsconfig.json",
+    "build": "npm run build:webhook && npm run build:match-scheduler && tsc -p tsconfig.json",
     "build:webhook": "esbuild src/webhook/edge-entry.ts --bundle --platform=neutral --format=esm --target=esnext --packages=external --outfile=supabase/functions/telegram-webhook/index.ts",
+    "build:match-scheduler": "esbuild src/matches/match-scheduler-edge.ts --bundle --platform=neutral --format=esm --target=esnext --packages=external --outfile=supabase/functions/match-scheduler/index.ts",
     "webhook:set": "tsx src/scripts/manage-webhook.ts set",
     "webhook:info": "tsx src/scripts/manage-webhook.ts info",
     "webhook:delete": "tsx src/scripts/manage-webhook.ts delete",

@@ -33,6 +33,36 @@ export interface GlobalLeaderboardEntry {
   rank: number;
 }
 
+export type LeaderboardPeriod = "DAILY" | "WEEKLY" | "ALL_TIME";
+
+export interface SeasonHistoryEntry {
+  id: string;
+  leagueInstanceId: string;
+  competitionCode: string;
+  competitionName: string;
+  instanceNumber: number;
+  clubName: string;
+  finalPosition: number;
+  played: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  goalDifference: number;
+  points: number;
+  seasonXpEarned: number;
+  finishedAt: string;
+}
+
+export interface TrophySummary {
+  seasons: number;
+  champions: number;
+  runnerUps: number;
+  thirdPlaces: number;
+  byCompetition: Array<{ competitionName: string; champions: number }>;
+}
+
 export interface ManagerHonour {
   id: string;
   managerUserId: string;
@@ -57,6 +87,10 @@ const one = <T>(value: T | T[]): T => (Array.isArray(value) ? (value[0] as T) : 
 
 export class ProgressionRepository {
   constructor(private readonly database: SupabaseClient) {}
+
+  async logEvent(userId: string | null, eventName: string, dedupKey: string | null = null, metadata: Record<string, unknown> = {}): Promise<void> {
+    await this.database.rpc("log_analytics_event", { p_user_id: userId, p_event_name: eventName, p_dedup_key: dedupKey, p_metadata: metadata });
+  }
 
   async profile(userId: string): Promise<ManagerProfile> {
     // Ensure manager_profile exists
@@ -155,6 +189,89 @@ export class ProgressionRepository {
     }
 
     return { entries, userRank, userXp };
+  }
+
+  async periodLeaderboard(period: LeaderboardPeriod, currentUserId: string, limit = 10) {
+    if (period === "ALL_TIME") return this.globalLeaderboard(limit, currentUserId);
+    const { data, error } = await this.database.rpc("period_leaderboard", {
+      p_user_id: currentUserId,
+      p_period: period,
+      p_limit: limit,
+    });
+    if (error) throw error;
+    const rows = (data ?? []).map((r: any) => ({
+      userId: r.user_id,
+      name: r.display_name,
+      username: r.username,
+      xp: Number(r.xp ?? 0),
+      wins: Number(r.wins ?? 0),
+      matches: Number(r.matches ?? 0),
+      rank: Number(r.rank),
+    }));
+    const own = rows.find((r: GlobalLeaderboardEntry) => r.userId === currentUserId);
+    return {
+      entries: rows.filter((r: GlobalLeaderboardEntry) => r.rank <= limit),
+      userRank: own?.rank ?? 0,
+      userXp: own?.xp ?? 0,
+    };
+  }
+
+  async seasonHistory(userId: string, page = 0, pageSize = 5): Promise<{ rows: SeasonHistoryEntry[]; hasNext: boolean }> {
+    const from = Math.max(0, page) * pageSize;
+    const { data, error } = await this.database
+      .from("manager_season_history")
+      .select("id,league_instance_id,competition_code,competition_name,instance_number,club_name,final_position,played,wins,draws,losses,goals_for,goals_against,goal_difference,points,season_xp_earned,finished_at")
+      .eq("user_id", userId)
+      .order("finished_at", { ascending: false })
+      .range(from, from + pageSize);
+    if (error) throw error;
+    const all = data ?? [];
+    return {
+      rows: all.slice(0, pageSize).map((r: any) => ({
+        id: r.id, leagueInstanceId: r.league_instance_id, competitionCode: r.competition_code,
+        competitionName: r.competition_name, instanceNumber: Number(r.instance_number), clubName: r.club_name,
+        finalPosition: Number(r.final_position), played: Number(r.played), wins: Number(r.wins),
+        draws: Number(r.draws), losses: Number(r.losses), goalsFor: Number(r.goals_for),
+        goalsAgainst: Number(r.goals_against), goalDifference: Number(r.goal_difference), points: Number(r.points),
+        seasonXpEarned: Number(r.season_xp_earned), finishedAt: r.finished_at,
+      })),
+      hasNext: all.length > pageSize,
+    };
+  }
+
+  async seasonDetail(userId: string, id: string): Promise<SeasonHistoryEntry | null> {
+    const { data, error } = await this.database
+      .from("manager_season_history")
+      .select("id,league_instance_id,competition_code,competition_name,instance_number,club_name,final_position,played,wins,draws,losses,goals_for,goals_against,goal_difference,points,season_xp_earned,finished_at")
+      .eq("user_id", userId).eq("id", id).maybeSingle();
+    if (error) throw error;
+    if (!data) return null;
+    return {
+      id: data.id, leagueInstanceId: data.league_instance_id, competitionCode: data.competition_code,
+      competitionName: data.competition_name, instanceNumber: Number(data.instance_number), clubName: data.club_name,
+      finalPosition: Number(data.final_position), played: Number(data.played), wins: Number(data.wins),
+      draws: Number(data.draws), losses: Number(data.losses), goalsFor: Number(data.goals_for),
+      goalsAgainst: Number(data.goals_against), goalDifference: Number(data.goal_difference), points: Number(data.points),
+      seasonXpEarned: Number(data.season_xp_earned), finishedAt: data.finished_at,
+    };
+  }
+
+  async trophySummary(userId: string): Promise<TrophySummary> {
+    const { data, error } = await this.database
+      .from("manager_season_history")
+      .select("competition_name,final_position")
+      .eq("user_id", userId);
+    if (error) throw error;
+    const rows = data ?? [];
+    const grouped = new Map<string, number>();
+    for (const row of rows) if (row.final_position === 1) grouped.set(row.competition_name, (grouped.get(row.competition_name) ?? 0) + 1);
+    return {
+      seasons: rows.length,
+      champions: rows.filter((r: any) => r.final_position === 1).length,
+      runnerUps: rows.filter((r: any) => r.final_position === 2).length,
+      thirdPlaces: rows.filter((r: any) => r.final_position === 3).length,
+      byCompetition: [...grouped].map(([competitionName, champions]) => ({ competitionName, champions })),
+    };
   }
 
   // Legacy method compatibility

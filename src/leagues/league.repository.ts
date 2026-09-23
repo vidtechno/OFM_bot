@@ -3,6 +3,7 @@ import type { AvailableClub, ClaimResult, CompetitionSummary, LeagueClubListing,
 import { calculateTeamOvr } from "../game/team-ovr.js";
 
 export interface PrivateLeague { leagueId:string; inviteCode:string; }
+export interface LeagueInviteInfo { token:string; leagueId?:string; status?:string; competitionName:string; instanceNumber:number; humanCount:number; clubLimit:number; remaining:number; recommendedOpenLeagueId?:string|null; }
 export interface OpenLobbySummary {
   leagueId: string;
   competitionCode: string;
@@ -242,6 +243,16 @@ export class LeagueRepository {
   async privateLeagueByCode(code:string):Promise<PrivateLeague|null>{const{data,error}=await this.database.from("league_instances").select("id,join_code").eq("access_mode","PRIVATE").eq("join_code",code.toUpperCase()).maybeSingle();if(error)throw error;return data?{leagueId:data.id,inviteCode:data.join_code}:null;}
   async listPrivateAvailableClubs(leagueId:string):Promise<AvailableClub[]>{const{data,error}=await this.database.from("league_clubs").select("id,clubs!inner(name,code)").eq("league_instance_id",leagueId).eq("manager_type","AI").order("club_id");if(error)throw error;return(data??[]).map((row:any)=>({leagueClubId:row.id,clubName:one<any>(row.clubs).name,clubCode:one<any>(row.clubs).code})).sort((a,b)=>a.clubName.localeCompare(b.clubName));}
   async claimPrivateClub(userId:string,inviteCode:string,leagueClubId:string):Promise<ClaimResult>{const{data,error}=await this.database.rpc("claim_private_league_club",{p_user_id:userId,p_join_code:inviteCode.toUpperCase(),p_league_club_id:leagueClubId});if(error)throw new Error(error.message);const row=data?.[0];if(!row)throw new Error("PRIVATE_CLAIM_RESULT_MISSING");return{leagueClubId:row.league_club_id,clubName:row.club_name,leagueName:row.league_name};}
+  async createInvite(userId:string,leagueId:string):Promise<LeagueInviteInfo>{
+    const{data,error}=await this.database.rpc("create_league_invite",{p_user_id:userId,p_league_instance_id:leagueId});
+    if(error)throw new Error(error.message);const row=data?.[0];if(!row)throw new Error("INVITE_CREATE_FAILED");
+    return{token:row.token,leagueId,competitionName:row.competition_name,instanceNumber:Number(row.instance_number),humanCount:Number(row.human_count),clubLimit:Number(row.club_limit),remaining:Number(row.remaining)};
+  }
+  async resolveInvite(token:string,userId:string):Promise<LeagueInviteInfo|null>{
+    const{data,error}=await this.database.rpc("resolve_league_invite",{p_token:token,p_user_id:userId});
+    if(error)throw new Error(error.message);const row=data?.[0];if(!row)return null;
+    return{token,leagueId:row.league_instance_id,status:row.status,competitionName:row.competition_name,instanceNumber:Number(row.instance_number),humanCount:Number(row.human_count),clubLimit:Number(row.club_limit),remaining:Number(row.remaining),recommendedOpenLeagueId:row.recommended_open_league_id};
+  }
   async getClubTeamOvr(leagueClubId: string): Promise<number> {
     return calculateTeamOvr(this.database, leagueClubId);
   }

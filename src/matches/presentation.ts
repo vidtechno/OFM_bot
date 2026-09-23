@@ -88,7 +88,7 @@ export function formatLeaders(title: string, leaders: PlayerLeader[], unit: stri
   const lines: string[] = [header, ""];
   leaders.slice(0, 10).forEach((l, index) => {
     const medal = medals[index] ?? `${index + 1}.`;
-    lines.push(`${medal} ${escapeHtml(l.name)} — <b>${l.total}</b>`);
+    lines.push(`${medal} ${escapeHtml(l.name)} <i>(${escapeHtml(l.club)})</i> — <b>${l.total}</b>`);
   });
   return lines.join("\n");
 }
@@ -202,7 +202,11 @@ export function formatMatchReport(report: MatchOwnerReport): string {
 
   const goalsList = report.goals.length
     ? report.goals
-        .map((g) => `${g.minute}' ${escapeHtml(g.player)}${g.assist ? ` <i>(${escapeHtml(g.assist)})</i>` : ""}`)
+        .map((g) => {
+          const assist = g.assist ? ` <i>(${escapeHtml(g.assist)})</i>` : "";
+          const club = g.club ? ` · ${escapeHtml(g.club)}` : "";
+          return `${g.minute}' ${escapeHtml(g.player)}${assist}${club}`;
+        })
         .join("\n")
     : "<i>Gol bo‘lmadi</i>";
 
@@ -228,16 +232,23 @@ export function formatMatchReport(report: MatchOwnerReport): string {
     `Burchaklar: <b>${userCorners}</b> — ${oppCorners}`,
   ].join("\n");
 
+  const tableRows = (report.leagueTable ?? []).map((row) => {
+    const marker = row.club === report.club ? "👉 " : "";
+    const difference = row.goalDifference > 0 ? `+${row.goalDifference}` : String(row.goalDifference);
+    return `${marker}${row.position}. ${escapeHtml(row.club)} · ${row.played}O · ${difference} · <b>${row.points}</b>`;
+  });
   const leagueBlock = [
     "📈 <b>LIGA</b>",
+    `🏆 <b>${escapeHtml(report.leagueName)}</b>`,
     `<b>${report.position}-o‘rin</b>`,
     `${report.points} ochko · ${report.wins}W ${report.draws}D ${report.losses}L`,
+    ...(tableRows.length ? ["", ...tableRows] : []),
   ].join("\n");
 
   const incomeBlock = [
     "💰 <b>DAROMAD</b>",
     `Match: ${formatMoney(report.income)}`,
-    `Jami: <b>${formatMoney(report.income)}</b>`,
+    `Balans: <b>${formatMoney(report.balance)}</b>`,
   ].join("\n");
 
   let nextBlock = "⏭ <b>KEYINGI O‘YIN</b>\n<i>Rejalashtirilgan o‘yin yo‘q.</i>";

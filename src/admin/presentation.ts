@@ -1,4 +1,4 @@
-import type { AdminSponsor, AdminStats, AdminUser } from "./admin.repository.js";
+import type { AdminSponsor, AdminStats, AdminUser, LaunchDashboardStats } from "./admin.repository.js";
 import { escapeHtml, formatMoney } from "../lib/html.js";
 
 export const formatAdminStats = (s: AdminStats) => [
@@ -10,6 +10,23 @@ export const formatAdminStats = (s: AdminStats) => [
   `⚽ O‘yinlar: <b>${s.matches}</b>`,
   `🔄 Takliflar: <b>${s.offers}</b>`,
   `🛒 Faol listinglar: <b>${s.activeListings}</b>`,
+].join("\n");
+
+export const formatLaunchDashboard = (s: LaunchDashboardStats) => [
+  "📊 <b>LAUNCH DASHBOARD</b>", "",
+  `👥 Jami users: <b>${s.users.toLocaleString("en-US")}</b>`,
+  `🆕 Bugun: <b>+${s.todayUsers.toLocaleString("en-US")}</b>`, "",
+  `🎮 Active managers: <b>${s.activeManagers.toLocaleString("en-US")}</b>`,
+  `🏟 Claimed clubs: <b>${s.claimedClubs.toLocaleString("en-US")}</b>`,
+  `🏆 Active leagues: <b>${s.activeLeagues.toLocaleString("en-US")}</b>`, "",
+  `⚽ Completed matches: <b>${s.completedMatches.toLocaleString("en-US")}</b>`,
+  `🔁 Transfers: <b>${s.transfers.toLocaleString("en-US")}</b>`, "",
+  "⭐ <b>STARS</b>",
+  `Attempts: <b>${s.starsAttempts}</b>`,
+  `✅ Paid: <b>${s.starsPaid}</b>`,
+  `↩️ Refunded: <b>${s.starsRefunded}</b>`,
+  `⏳ Pending: <b>${s.starsPending}</b>`,
+  `❌ Failed/cancelled: <b>${s.starsFailed}</b>`,
 ].join("\n");
 
 export const formatAdminUsers = (rows: AdminUser[]) => [
