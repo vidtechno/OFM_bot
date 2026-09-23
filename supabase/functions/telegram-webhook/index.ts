@@ -3757,6 +3757,11 @@ var TransferRepository = class {
    */
   async leagueMarket(userId, clubId, page = 0, pageSize = 8, positionGroup = "ALL") {
     const owner = await this.ownerLeague(userId, clubId);
+    try {
+      await this.database.rpc("ensure_ai_market_listings", { p_league_instance_id: owner.league_instance_id });
+      await this.database.rpc("ai_market_buy_cycle", { p_league_instance_id: owner.league_instance_id });
+    } catch {
+    }
     let query = this.database.from("global_market_listings").select(
       "id, asking_price, available_until, seller_name, seller_club_id, club_player_id, players!inner(short_name, age, primary_position, player_attributes!inner(overall)), seller_club:league_clubs!seller_club_id!inner(league_instance_id)"
     ).eq("status", "ACTIVE").not("club_player_id", "is", null).eq("seller_club.league_instance_id", owner.league_instance_id).gt("available_until", (/* @__PURE__ */ new Date()).toISOString()).order("created_at", { ascending: false });

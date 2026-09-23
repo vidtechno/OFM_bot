@@ -214,6 +214,11 @@ export class TransferRepository {
   ): Promise<MarketPlayer[]> {
     const owner = await this.ownerLeague(userId, clubId);
 
+    try {
+      await this.database.rpc("ensure_ai_market_listings", { p_league_instance_id: owner.league_instance_id });
+      await this.database.rpc("ai_market_buy_cycle", { p_league_instance_id: owner.league_instance_id });
+    } catch {}
+
     let query = this.database
       .from("global_market_listings")
       .select(

@@ -164,8 +164,13 @@ export class AiTransferEngine {
     if (!aiClubs || aiClubs.length === 0) return 0;
 
     let seeded = 0;
+    try {
+      await this.database.rpc("ensure_ai_market_listings", { p_league_instance_id: leagueInstanceId });
+    } catch {}
+
     for (const aiClub of aiClubs) {
       const listed = await this.ensureMinListings(
+        leagueInstanceId,
         aiClub.id,
         (aiClub.clubs as any)?.name ?? "AI Club",
         false // fresh league — no early-season star protection
@@ -196,27 +201,40 @@ export class AiTransferEngine {
     // Fetch all AI clubs in ACTIVE leagues
     const { data: allAiClubs } = await this.database
       .from("league_clubs")
-      .select("id, league_instance_id, transfer_budget, cash_balance, clubs!inner(name), league_instances!inner(status, current_round)")
+      .select("id, league_instance_id, transfer_budget, cash_balance, clubs!inner(name), league_instances!inner(status, current_round, competition_id, competitions!inner(code))")
       .eq("manager_type", "AI")
       .eq("league_instances.status", "ACTIVE");
 
     if (!allAiClubs || allAiClubs.length === 0) return { outgoingOffers, aiAiTransfers };
 
-    // ── STEP 1: Ensure >= 2 active listings per AI club ──
+    const uniqueLeagueInstanceIds = Array.from(new Set(allAiClubs.map((c) => c.league_instance_id)));
+
+    // ── STEP 1: Ensure active listings per AI club across active leagues ──
+    for (const instId of uniqueLeagueInstanceIds) {
+      try {
+        await this.database.rpc("ensure_ai_market_listings", { p_league_instance_id: instId });
+      } catch {}
+    }
+
     for (const aiClub of allAiClubs) {
       const currentRound = (aiClub as any).league_instances?.current_round ?? 0;
       const isEarlySeason = currentRound <= 2;
       await this.ensureMinListings(
+        aiClub.league_instance_id,
         aiClub.id,
         (aiClub.clubs as any)?.name ?? "AI Club",
         isEarlySeason
       );
     }
 
-    // ── STEP 2: AI -> Human offers (up to 2 buyer clubs per cycle) ──
-    const buyerCandidates = allAiClubs.filter((c) => Number(c.transfer_budget) > 20_000_000);
+    // ── STEP 2: AI -> Human offers (dynamic budget threshold by league) ──
+    const buyerCandidates = allAiClubs.filter((c) => {
+      const budget = Number(c.transfer_budget);
+      const isUzbek = (c as any).league_instances?.competitions?.code === "UZB";
+      return isUzbek ? budget >= 2_000_000 : budget >= 15_000_000;
+    });
 
-    for (const buyer of buyerCandidates.slice(0, 2)) {
+    for (const buyer of buyerCandidates.slice(0, 3)) {
       const strategy = await this.strategyService.getClubStrategy(buyer.id);
       const neededPos = (strategy.priority_positions?.[0] as string | undefined) ?? "ST";
 
@@ -294,8 +312,10 @@ export class AiTransferEngine {
     if (allAiClubs.length >= 2) {
       const buyer = allAiClubs[allAiClubs.length - 1]!;
       const seller = allAiClubs[0]!;
+      const isUzbek = (buyer as any).league_instances?.competitions?.code === "UZB";
+      const minTradeBudget = isUzbek ? 2_500_000 : 25_000_000;
 
-      if (buyer.id !== seller.id && Number(buyer.transfer_budget) > 30_000_000) {
+      if (buyer.id !== seller.id && Number(buyer.transfer_budget) >= minTradeBudget) {
         const { data: surplus } = await this.database
           .from("club_players")
           .select("id, players!inner(short_name, market_value, player_attributes!inner(overall))")
@@ -338,6 +358,16 @@ export class AiTransferEngine {
       }
     }
 
+    // ── STEP 4: AI buys from market listings in each active league instance ──
+    for (const instId of uniqueLeagueInstanceIds) {
+      try {
+        const { data: boughtCount } = await this.database.rpc("ai_market_buy_cycle", { p_league_instance_id: instId });
+        if (boughtCount) {
+          aiAiTransfers += Number(boughtCount);
+        }
+      } catch {}
+    }
+
     return { outgoingOffers, aiAiTransfers };
   }
 
@@ -357,6 +387,7 @@ export class AiTransferEngine {
    *   - Cap at MAX_AI_LISTINGS (4) total active listings
    */
   private async ensureMinListings(
+    leagueInstanceId: string,
     leagueClubId: string,
     clubName: string,
     isEarlySeason: boolean
@@ -415,7 +446,7 @@ export class AiTransferEngine {
     if (lowTarget && listed < needed) {
       const p = first<any>(lowTarget.cp.players) as any;
       const price = Math.round((Number(p.market_value) * 1.10) / 100_000) * 100_000;
-      const ok = await this.insertListing(leagueClubId, lowTarget.cp, p, price, clubName, "LOW");
+      const ok = await this.insertListing(leagueInstanceId, leagueClubId, lowTarget.cp, p, price, clubName, "LOW");
       if (ok) {
         alreadyListedIds.add(lowTarget.cp.id);
         posCount.set(lowTarget.position, (posCount.get(lowTarget.position) ?? 1) - 1);
@@ -436,7 +467,7 @@ export class AiTransferEngine {
         const p = first<any>(midTarget.cp.players) as any;
         const premium = midTarget.ovr >= 85 ? (isEarlySeason ? 1.8 : 1.5) : 1.15;
         const price = Math.round((Number(p.market_value) * premium) / 100_000) * 100_000;
-        const ok = await this.insertListing(leagueClubId, midTarget.cp, p, price, clubName, "MID");
+        const ok = await this.insertListing(leagueInstanceId, leagueClubId, midTarget.cp, p, price, clubName, "MID");
         if (ok) listed++;
       }
     }
@@ -448,6 +479,7 @@ export class AiTransferEngine {
   // PRIVATE: Insert a single market listing and log to ai_decisions
   // ──────────────────────────────────────────────────────────────
   private async insertListing(
+    leagueInstanceId: string,
     leagueClubId: string,
     cp: any,
     player: any,
@@ -460,6 +492,7 @@ export class AiTransferEngine {
     const { data: inserted, error } = await this.database
       .from("global_market_listings")
       .insert({
+        league_instance_id: leagueInstanceId,
         club_player_id: cp.id,
         player_id: cp.player_id,
         seller_club_id: leagueClubId,
