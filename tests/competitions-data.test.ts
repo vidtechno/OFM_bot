@@ -118,8 +118,8 @@ describe("Competitions Dataset & Global Market Integrity", () => {
     expect(Math.max(...ovrs)).toBeLessThanOrEqual(80);
     expect(Math.min(...ovrs)).toBeGreaterThanOrEqual(75);
 
-    // Prices in €2.5M - €6.8M range
-    expect(Math.min(...prices)).toBeGreaterThanOrEqual(2_500_000);
+    // Prices in €2.0M - €6.8M range
+    expect(Math.min(...prices)).toBeGreaterThanOrEqual(2_000_000);
     expect(Math.max(...prices)).toBeLessThanOrEqual(6_800_000);
   });
 

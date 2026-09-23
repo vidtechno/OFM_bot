@@ -1,659 +1,108 @@
+import fs from "node:fs";
+import path from "node:path";
+
 /**
  * Authoritative 2026/27 European Elite Clubs Roster Definitions (20 Clubs).
- * Snapshot Date: 2026-09-22 / 2026-09-23.
+ * Loaded directly from ofm_elite_2026_27_full_squads.json.
+ * Snapshot Date: 2026-09-23.
  */
+
+export interface SquadPlayerJson {
+  id: string;
+  name: string;
+  primary_position: string;
+  secondary_positions: string[];
+  age: number;
+  overall: number;
+  potential: number;
+  pace: number;
+  shooting: number;
+  passing: number;
+  dribbling: number;
+  defending: number;
+  physical: number;
+  game_value_eur: number;
+}
+
+export interface ClubSquadJson {
+  code: string;
+  name: string;
+  country: string;
+  starting_transfer_budget_eur: number;
+  source_url: string;
+  players: SquadPlayerJson[];
+}
+
+export interface EliteSquadsJsonFile {
+  meta: {
+    snapshot_date: string;
+    competition: string;
+    season: string;
+    rating_edition: string;
+    primary_source: string;
+    validation_sources: string[];
+    value_semantics: string;
+    nationality_policy: string;
+    player_fields: string[];
+  };
+  clubs: ClubSquadJson[];
+}
+
+export const CLUB_CODE_TO_DB_NAME: Record<string, string> = {
+  RMA: "Real Madrid",
+  FCB: "Barcelona",
+  ATM: "Atlético Madrid",
+  MCI: "Manchester City",
+  LIV: "Liverpool",
+  ARS: "Arsenal",
+  MUN: "Manchester United",
+  CHE: "Chelsea",
+  TOT: "Tottenham Hotspur",
+  NEW: "Newcastle United",
+  BAY: "Bayern München",
+  BVB: "Borussia Dortmund",
+  B04: "Bayer Leverkusen",
+  PSG: "Paris Saint-Germain",
+  INT: "Inter",
+  MIL: "AC Milan",
+  JUV: "Juventus",
+  NAP: "Napoli",
+  SLB: "Benfica",
+  SCP: "Sporting CP",
+};
 
 export interface ClubRosterDef {
   clubName: string;
+  code: string;
   sourceDomain: string;
   sourceUrl: string;
   snapshotDate: string;
   players: string[];
+  fullPlayers: SquadPlayerJson[];
 }
 
-export const ELITE_2026_ROSTERS: ClubRosterDef[] = [
-  // 1. Real Madrid (25 players)
-  {
-    clubName: "Real Madrid",
-    sourceDomain: "realmadrid.com",
-    sourceUrl: "https://www.realmadrid.com/en-US/football/first-team/squad",
-    snapshotDate: "2026-09-22",
-    players: [
-      "T. Courtois",
-      "A. Lunin",
-      "Sergio Mestre",
-      "Asencio",
-      "Éder Militão",
-      "D. Huijsen",
-      "T. Alexander-Arnold",
-      "I. Konaté",
-      "Cucurella",
-      "Álvaro Carreras",
-      "A. Rüdiger",
-      "F. Mendy",
-      "D. Dumfries",
-      "J. Bellingham",
-      "E. Camavinga",
-      "F. Valverde",
-      "A. Tchouaméni",
-      "A. Güler",
-      "Bernardo Silva",
-      "Thiago Pitarch",
-      "Vini Jr.",
-      "Endrick",
-      "K. Mbappé",
-      "Rodrygo",
-      "Brahim",
-    ],
-  },
+// Load JSON file
+const jsonPath = path.resolve(process.cwd(), "ofm_elite_2026_27_full_squads.json");
+export const OFM_ELITE_JSON_DATA: EliteSquadsJsonFile = JSON.parse(
+  fs.readFileSync(jsonPath, "utf-8")
+);
 
-  // 2. FC Barcelona (25 players)
-  {
-    clubName: "Barcelona",
-    sourceDomain: "fcbarcelona.com",
-    sourceUrl: "https://www.fcbarcelona.com/en/football/first-team/squad",
-    snapshotDate: "2026-09-22",
-    players: [
-      "Joan García",
-      "W. Szczęsny",
-      "João Cancelo",
-      "Balde",
-      "Pau Cubarsí",
-      "A. Christensen",
-      "Gerard Martín",
-      "J. Koundé",
-      "Eric García",
-      "Gavi",
-      "Fermín",
-      "Pedri",
-      "Rodri",
-      "Dani Olmo",
-      "F. de Jong",
-      "Marc Bernal",
-      "Marc Casadó",
-      "Gabriel Jesus",
-      "Lamine Yamal",
-      "Raphinha",
-      "K. Adeyemi",
-      "A. Gordon",
-      "R. Bardghji",
-      "J. Bisiwu",
-      "H. Abdelkarim",
-    ],
-  },
+export const ELITE_2026_ROSTERS: ClubRosterDef[] = OFM_ELITE_JSON_DATA.clubs.map((c) => {
+  const dbName = CLUB_CODE_TO_DB_NAME[c.code] ?? c.name;
+  let domain = "futship.com";
+  try {
+    domain = new URL(c.source_url).hostname;
+  } catch {
+    // fallback domain
+  }
 
-  // 3. Atlético Madrid (20 players)
-  {
-    clubName: "Atlético Madrid",
-    sourceDomain: "atleticodemadrid.com",
-    sourceUrl: "https://en.atleticodemadrid.com/primer-equipo",
-    snapshotDate: "2026-09-22",
-    players: [
-      "J. Oblak",
-      "J. Musso",
-      "J. Giménez",
-      "R. Le Normand",
-      "C. Romero",
-      "Pubill",
-      "D. Hancko",
-      "Grimaldo",
-      "Marcos Llorente",
-      "Pablo Barrios",
-      "Álex Baena",
-      "C. Gallagher",
-      "Johnny Cardoso",
-      "Koke",
-      "Lee Kang In",
-      "J. Alvarez",
-      "A. Sørloth",
-      "A. Lookman",
-      "G. Simeone",
-      "Carlos Martín",
-    ],
-  },
-
-  // 4. Manchester City (19 players)
-  {
-    clubName: "Manchester City",
-    sourceDomain: "mancity.com",
-    sourceUrl: "https://www.mancity.com/players/mens",
-    snapshotDate: "2026-09-22",
-    players: [
-      "G. Donnarumma",
-      "M. Bettinelli",
-      "Rúben Dias",
-      "J. Gvardiol",
-      "R. Aït-Nouri",
-      "A. Khusanov",
-      "R. Lewis",
-      "P. Foden",
-      "R. Cherki",
-      "Matheus Nunes",
-      "M. Kovačić",
-      "N. O'Reilly",
-      "C. Echeverri",
-      "E. Haaland",
-      "J. Doku",
-      "J. Grealish",
-      "O. Marmoush",
-      "Nico González",
-      "Savinho",
-    ],
-  },
-
-  // 5. Liverpool (21 players)
-  {
-    clubName: "Liverpool",
-    sourceDomain: "liverpoolfc.com",
-    sourceUrl: "https://www.liverpoolfc.com/team/mens",
-    snapshotDate: "2026-09-22",
-    players: [
-      "Alisson Ramsés Becker",
-      "G. Mamardashvili",
-      "V. van Dijk",
-      "R. Araujo",
-      "J. Gomez",
-      "M. Kerkez",
-      "C. Bradley",
-      "G. Leoni",
-      "Stefan Bajcetic",
-      "D. Szoboszlai",
-      "A. Mac Allister",
-      "F. Wirtz",
-      "R. Gravenberch",
-      "W. Endo",
-      "J. Frimpong",
-      "T. Nyoni",
-      "A. Isak",
-      "H. Ekitiké",
-      "C. Gakpo",
-      "F. Chiesa",
-      "R. Ngumoha",
-    ],
-  },
-
-  // 6. Arsenal (22 players)
-  {
-    clubName: "Arsenal",
-    sourceDomain: "arsenal.com",
-    sourceUrl: "https://www.arsenal.com/men/players",
-    snapshotDate: "2026-09-22",
-    players: [
-      "David Raya",
-      "Kepa",
-      "W. Saliba",
-      "Gabriel",
-      "J. Timber",
-      "B. White",
-      "P. Hincapié",
-      "R. Calafiori",
-      "M. Lewis-Skelly",
-      "Mosquera",
-      "D. Rice",
-      "M. Ødegaard",
-      "Mikel Merino",
-      "Bruno Guimarães",
-      "Zubimendi",
-      "E. Eze",
-      "E. Nwaneri",
-      "B. Saka",
-      "K. Havertz",
-      "Gabriel Martinelli",
-      "L. Trossard",
-      "N. Madueke",
-    ],
-  },
-
-  // 7. Manchester United (23 players)
-  {
-    clubName: "Manchester United",
-    sourceDomain: "manutd.com",
-    sourceUrl: "https://www.manutd.com/en/players-and-staff/first-team",
-    snapshotDate: "2026-09-22",
-    players: [
-      "S. Lammens",
-      "T. Heaton",
-      "M. de Ligt",
-      "Lisandro Martínez",
-      "H. Maguire",
-      "L. Yoro",
-      "N. Mazraoui",
-      "L. Shaw",
-      "Diogo Dalot",
-      "P. Dorgu",
-      "A. Heaven",
-      "Bruno Fernandes",
-      "Y. Tielemans",
-      "K. Mainoo",
-      "M. Ugarte",
-      "M. Mount",
-      "Andrey Santos",
-      "M. Rashford",
-      "B. Mbeumo",
-      "Matheus Cunha",
-      "B. Šeško",
-      "Amad",
-      "J. Zirkzee",
-    ],
-  },
-
-  // 8. Chelsea (24 players)
-  {
-    clubName: "Chelsea",
-    sourceDomain: "chelseafc.com",
-    sourceUrl: "https://www.chelseafc.com/en/teams/men",
-    snapshotDate: "2026-09-22",
-    players: [
-      "Robert Sánchez",
-      "G. Slonina",
-      "R. James",
-      "M. Gusto",
-      "L. Colwill",
-      "W. Fofana",
-      "T. Adarabioyo",
-      "A. Disasi",
-      "J. Hato",
-      "A. Anselmino",
-      "J. Acheampong",
-      "M. Caicedo",
-      "Enzo Jeremías Fernández",
-      "C. Palmer",
-      "R. Lavia",
-      "Dário Essugo",
-      "Estêvão",
-      "Pedro Neto",
-      "C. Nkunku",
-      "J. Gittens",
-      "João Pedro",
-      "N. Jackson",
-      "L. Delap",
-      "Marc Guiu",
-    ],
-  },
-
-  // 9. Tottenham Hotspur (23 players)
-  {
-    clubName: "Tottenham Hotspur",
-    sourceDomain: "tottenhamhotspur.com",
-    sourceUrl: "https://www.tottenhamhotspur.com/teams/men/players",
-    snapshotDate: "2026-09-22",
-    players: [
-      "A. Kinský",
-      "B. Austin",
-      "Pedro Porro",
-      "M. van de Ven",
-      "D. Udogie",
-      "K. Danso",
-      "K. Takai",
-      "B. Davies",
-      "A. Robertson",
-      "S. Tonali",
-      "J. Maddison",
-      "P. Sarr",
-      "R. Bentancur",
-      "Y. Bissouma",
-      "L. Bergvall",
-      "A. Gray",
-      "X. Simons",
-      "D. Kulusevski",
-      "M. Kudus",
-      "D. Solanke",
-      "Richarlison",
-      "M. Tel",
-      "W. Odobert",
-    ],
-  },
-
-  // 10. Newcastle United (19 players)
-  {
-    clubName: "Newcastle United",
-    sourceDomain: "newcastleunited.com",
-    sourceUrl: "https://www.newcastleunited.com/teams/first-team",
-    snapshotDate: "2026-09-22",
-    players: [
-      "N. Pope",
-      "M. Gillespie",
-      "F. Schär",
-      "S. Botman",
-      "M. Thiaw",
-      "D. Burn",
-      "L. Hall",
-      "T. Livramento",
-      "A. Dedić",
-      "Joelinton",
-      "J. Ramsey",
-      "L. Miley",
-      "J. Willock",
-      "H. Barnes",
-      "J. Murphy",
-      "A. Elanga",
-      "Y. Wissa",
-      "N. Woltemade",
-      "W. Osula",
-    ],
-  },
-
-  // 11. Bayern München (21 players)
-  {
-    clubName: "Bayern München",
-    sourceDomain: "fcbayern.com",
-    sourceUrl: "https://fcbayern.com/de/teams/profis",
-    snapshotDate: "2026-09-22",
-    players: [
-      "M. Neuer",
-      "S. Ulreich",
-      "J. Urbig",
-      "D. Upamecano",
-      "Kim Min Jae",
-      "A. Davies",
-      "R. Guerreiro",
-      "H. Ito",
-      "S. Boey",
-      "J. Stanišić",
-      "J. Kimmich",
-      "L. Goretzka",
-      "Palhinha",
-      "A. Pavlović",
-      "J. Musiala",
-      "K. Laimer",
-      "M. Olise",
-      "H. Kane",
-      "S. Gnabry",
-      "T. Bischof",
-      "L. Karl",
-    ],
-  },
-
-  // 12. Borussia Dortmund (21 players)
-  {
-    clubName: "Borussia Dortmund",
-    sourceDomain: "bvb.de",
-    sourceUrl: "https://www.bvb.de/Mannschaften/Profis",
-    snapshotDate: "2026-09-22",
-    players: [
-      "G. Kobel",
-      "A. Meyer",
-      "P. Drewes",
-      "N. Schlotterbeck",
-      "W. Anton",
-      "N. Süle",
-      "R. Bensebaini",
-      "J. Ryerson",
-      "Yan Couto",
-      "A. Kabar",
-      "J. Brandt",
-      "M. Sabitzer",
-      "E. Can",
-      "P. Groß",
-      "F. Nmecha",
-      "S. Özcan",
-      "S. Guirassy",
-      "M. Beier",
-      "Fábio Silva",
-      "J. Duranville",
-      "C. Campbell",
-    ],
-  },
-
-  // 13. Bayer Leverkusen (21 players)
-  {
-    clubName: "Bayer Leverkusen",
-    sourceDomain: "bayer04.de",
-    sourceUrl: "https://www.bayer04.de/de-de/team/werkself",
-    snapshotDate: "2026-09-22",
-    players: [
-      "M. Flekken",
-      "J. Blaswich",
-      "N. Lomb",
-      "J. Tah",
-      "E. Tapsoba",
-      "J. Belocian",
-      "Arthur",
-      "L. Badé",
-      "J. Quansah",
-      "Aleix García",
-      "E. Palacios",
-      "R. Andrich",
-      "M. Tillman",
-      "Lucas Vázquez",
-      "J. Hofmann",
-      "Ignacio Ezequiél Agustín Fernández Carballo",
-      "E. Ben Seghir",
-      "P. Schick",
-      "M. Terrier",
-      "N. Tella",
-      "I. Maza",
-    ],
-  },
-
-  // 14. Paris Saint-Germain (20 players)
-  {
-    clubName: "Paris Saint-Germain",
-    sourceDomain: "psg.fr",
-    sourceUrl: "https://en.psg.fr/teams/first-team/squad",
-    snapshotDate: "2026-09-22",
-    players: [
-      "M. Safonov",
-      "Renato Marin",
-      "Marquinhos",
-      "W. Pacho",
-      "Nuno Mendes",
-      "A. Hakimi",
-      "L. Hernández",
-      "Lucas Beraldo",
-      "I. Zabarnyi",
-      "Vitinha",
-      "João Neves",
-      "Fabián Ruiz",
-      "W. Zaïre-Emery",
-      "S. Mayulu",
-      "D. Doué",
-      "O. Dembélé",
-      "B. Barcola",
-      "Gonçalo Ramos",
-      "R. Kolo Muani",
-      "I. Mbaye",
-    ],
-  },
-
-  // 15. Inter Milan (18 players)
-  {
-    clubName: "Inter",
-    sourceDomain: "inter.it",
-    sourceUrl: "https://www.inter.it/en/teams/first-team",
-    snapshotDate: "2026-09-22",
-    players: [
-      "Y. Sommer",
-      "Josep Martínez",
-      "R. Di Gennaro",
-      "A. Bastoni",
-      "F. Dimarco",
-      "Carlos Augusto",
-      "Y. Bisseck",
-      "F. Acerbi",
-      "S. de Vrij",
-      "M. Darmian",
-      "T. Palacios",
-      "N. Barella",
-      "H. Çalhanoğlu",
-      "P. Zieliński",
-      "D. Frattesi",
-      "H. Mkhitaryan",
-      "Lautaro Javier Martínez",
-      "M. Thuram",
-    ],
-  },
-
-  // 16. AC Milan (19 players)
-  {
-    clubName: "AC Milan",
-    sourceDomain: "acmilan.com",
-    sourceUrl: "https://www.acmilan.com/en/teams/men-first-team/roster",
-    snapshotDate: "2026-09-22",
-    players: [
-      "M. Maignan",
-      "L. Torriani",
-      "F. Tomori",
-      "S. Pavlović",
-      "M. Gabbia",
-      "T. Hernández",
-      "D. Bartesaghi",
-      "Z. Athekame",
-      "D. Odogu",
-      "T. Reijnders",
-      "Y. Fofana",
-      "R. Loftus-Cheek",
-      "I. Bennacer",
-      "A. Saelemaekers",
-      "C. Pulisic",
-      "Rafael Leão",
-      "T. Abraham",
-      "N. Okafor",
-      "S. Giménez",
-    ],
-  },
-
-  // 17. Juventus (23 players)
-  {
-    clubName: "Juventus",
-    sourceDomain: "juventus.com",
-    sourceUrl: "https://www.juventus.com/en/teams/first-team-men/squad",
-    snapshotDate: "2026-09-22",
-    players: [
-      "M. Di Gregorio",
-      "M. Perin",
-      "C. Pinsoglio",
-      "Bremer",
-      "F. Gatti",
-      "P. Kalulu",
-      "A. Cambiaso",
-      "J. Cabal",
-      "J. Rouhi",
-      "D. Rugani",
-      "L. Kelly",
-      "T. Koopmeiners",
-      "K. Thuram",
-      "M. Locatelli",
-      "W. McKennie",
-      "F. Miretti",
-      "João Mário",
-      "V. Adžić",
-      "D. Vlahović",
-      "K. Yıldız",
-      "Francisco Conceição",
-      "A. Milik",
-      "F. Kostić",
-    ],
-  },
-
-  // 18. SSC Napoli (22 players)
-  {
-    clubName: "Napoli",
-    sourceDomain: "sscnapoli.it",
-    sourceUrl: "https://sscnapoli.it/en/team/first-team",
-    snapshotDate: "2026-09-22",
-    players: [
-      "Alex Meret",
-      "N. Contini",
-      "G. Di Lorenzo",
-      "A. Buongiorno",
-      "A. Rrahmani",
-      "M. Olivera",
-      "L. Spinazzola",
-      "P. Mazzocchi",
-      "Juan Jesus",
-      "L. Marianucci",
-      "S. McTominay",
-      "B. Gilmour",
-      "S. Lobotka",
-      "A. Zambo Anguissa",
-      "E. Elmas",
-      "A. Vergara",
-      "R. Lukaku",
-      "K. Kvaratskhelia",
-      "David Neres",
-      "M. Politano",
-      "G. Raspadori",
-      "G. Ambrosino",
-    ],
-  },
-
-  // 19. SL Benfica (30 players)
-  {
-    clubName: "Benfica",
-    sourceDomain: "slbenfica.pt",
-    sourceUrl: "https://www.slbenfica.pt/en-us/futebol/plantel-principal",
-    snapshotDate: "2026-09-22",
-    players: [
-      "A. Trubin",
-      "Samuel Soares",
-      "Diogo Ferreira",
-      "Gonçalo Sobral",
-      "N. Otamendi",
-      "António Silva",
-      "Tomás Araújo",
-      "A. Bah",
-      "S. Dahl",
-      "Manu Silva",
-      "Gonçalo Oliveira",
-      "J. Wynder",
-      "Obrador",
-      "Leandro Santos",
-      "F. Aursnes",
-      "L. Barreiro",
-      "R. Ríos",
-      "G. Sudakov",
-      "E. Barrenechea",
-      "João Veloso",
-      "Diogo Prioste",
-      "Nuno Félix",
-      "V. Pavlidis",
-      "Bruma",
-      "D. Lukébakio",
-      "A. Schjelderup",
-      "G. Prestianni",
-      "F. Ivanović",
-      "Henrique Araújo",
-      "João Rego",
-    ],
-  },
-
-  // 20. Sporting CP (29 players)
-  {
-    clubName: "Sporting CP",
-    sourceDomain: "sporting.pt",
-    sourceUrl: "https://www.sporting.pt/en/football/main-team/squad",
-    snapshotDate: "2026-09-22",
-    players: [
-      "Rui Silva",
-      "Francisco Silva",
-      "João Virgínia",
-      "Diego Calai",
-      "Gonçalo Inácio",
-      "O. Diomande",
-      "Z. Debast",
-      "Eduardo Quaresma",
-      "J. St. Juste",
-      "Matheus Reis",
-      "Ricardo Mangas",
-      "G. Vagiannidis",
-      "Fresneda",
-      "M. Hjulmand",
-      "H. Morita",
-      "Daniel Bragança",
-      "G. Kochorashvili",
-      "João Simões",
-      "V. Gyökeres",
-      "Pedro Gonçalves",
-      "Trincão",
-      "Geny Catamo",
-      "Geovany Quenda",
-      "Nuno Santos",
-      "M. Araújo",
-      "L. Suárez",
-      "F. Ioannidis",
-      "Rodrigo Ribeiro",
-      "Alisson de Almeida Santos",
-    ],
-  },
-];
+  return {
+    clubName: dbName,
+    code: c.code,
+    sourceDomain: domain,
+    sourceUrl: c.source_url,
+    snapshotDate: OFM_ELITE_JSON_DATA.meta.snapshot_date,
+    players: c.players.map((p) => p.name),
+    fullPlayers: c.players,
+  };
+});

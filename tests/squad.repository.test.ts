@@ -16,7 +16,7 @@ describe("SquadRepository Live Test", () => {
     await db.from("league_clubs").update({ manager_user_id: userId, manager_type: "HUMAN" }).eq("id", leagueClubId);
 
     const squad = await repo.listOwnedClubSquad(userId, leagueClubId);
-    expect(squad.length).toBe(25);
+    expect(squad.length).toBe(32);
     expect(squad[0]!.overall).toBeGreaterThanOrEqual(90);
     expect(squad.map((p) => p.shortName)).toContain("K. Mbappé");
     expect(squad.map((p) => p.shortName)).toContain("J. Bellingham");

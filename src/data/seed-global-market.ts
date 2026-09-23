@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { Fc26Provider } from "./providers/fc26.provider.js";
 import * as dotenv from "dotenv";
 import { ELITE_CSV_CLUB_MAP } from "./import-elite-players.js";
+import { OFM_ELITE_JSON_DATA } from "./elite-2026-rosters.js";
 
 dotenv.config();
 
@@ -23,6 +24,9 @@ export async function seedGlobalMarket(targetInstanceId?: string): Promise<numbe
   const allPlayers = provider.load(text);
 
   const eliteClubNamesInCsv = new Set(Object.keys(ELITE_CSV_CLUB_MAP));
+  const eliteSquadPlayerNames = new Set(
+    OFM_ELITE_JSON_DATA.clubs.flatMap((c) => c.players.map((p) => p.name.toLowerCase().trim()))
+  );
 
   // 1. Get or create external clubs
   const { data: existingClubs } = await db.from("clubs").select("id, name");
@@ -60,13 +64,18 @@ export async function seedGlobalMarket(targetInstanceId?: string): Promise<numbe
     !eliteClubNamesInCsv.has(p.clubName) &&
     !EXCLUDED_NAMES.has(p.name) &&
     !EXCLUDED_NAMES.has(p.shortName) &&
+    !eliteSquadPlayerNames.has(p.name.toLowerCase().trim()) &&
+    !eliteSquadPlayerNames.has(p.shortName.toLowerCase().trim()) &&
     p.overall >= 82
   ).sort((a, b) => b.overall - a.overall);
 
   // Pool B (Uzbek Global Market): External or rotation players with OVR between 75 and 80 (CAPPED at 80!)
   const uzbekCandidates = allPlayers.filter((p) =>
+    !eliteClubNamesInCsv.has(p.clubName) &&
     !EXCLUDED_NAMES.has(p.name) &&
     !EXCLUDED_NAMES.has(p.shortName) &&
+    !eliteSquadPlayerNames.has(p.name.toLowerCase().trim()) &&
+    !eliteSquadPlayerNames.has(p.shortName.toLowerCase().trim()) &&
     p.overall >= 75 &&
     p.overall <= 80
   ).sort((a, b) => b.overall - a.overall);

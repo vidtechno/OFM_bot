@@ -2774,9 +2774,14 @@ var LeagueRepository = class {
     }
     const { data, error } = await this.database.from("league_instances").select("id, instance_number, status, registration_closes_at, competitions!inner(code, name, club_limit), league_clubs(manager_type)").eq("access_mode", "GLOBAL").in("status", ["OPEN", "ACTIVE"]).order("created_at", { ascending: false });
     if (error) throw new Error(`Lobbylarni olishda xato: ${error.message}`);
+    const sortedRows = [...data ?? []].sort((a, b) => {
+      if (a.status === "OPEN" && b.status !== "OPEN") return -1;
+      if (b.status === "OPEN" && a.status !== "OPEN") return 1;
+      return 0;
+    });
     const result = [];
     const seenComp = /* @__PURE__ */ new Set();
-    for (const row of data ?? []) {
+    for (const row of sortedRows) {
       const comp = one(row.competitions);
       if (seenComp.has(comp.code)) continue;
       const humanCount = (row.league_clubs ?? []).filter((c) => c.manager_type === "HUMAN").length;

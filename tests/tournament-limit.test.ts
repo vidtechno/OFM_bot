@@ -64,6 +64,9 @@ describe("Tournament Limit Rule (Max 2 Tournaments)", () => {
       const managedAfterExit = await leagues.listManagedClubs(userId);
       expect(managedAfterExit.length).toBe(1);
 
+      // Clear departures for test user so we test tournament limit headroom, not departure lock
+      await db.from("league_departures").delete().eq("user_id", userId);
+
       // 7. Now claiming 2nd club succeeds
       const claim3 = await leagues.claimClub(userId, club3.leagueClubId);
       expect(claim3.leagueClubId).toBe(club3.leagueClubId);

@@ -48,10 +48,16 @@ export class LeagueRepository {
 
     if (error) throw new Error(`Lobbylarni olishda xato: ${error.message}`);
 
+    const sortedRows = [...(data ?? [])].sort((a, b) => {
+      if (a.status === "OPEN" && b.status !== "OPEN") return -1;
+      if (b.status === "OPEN" && a.status !== "OPEN") return 1;
+      return 0;
+    });
+
     const result: OpenLobbySummary[] = [];
     const seenComp = new Set<string>();
 
-    for (const row of (data ?? [])) {
+    for (const row of sortedRows) {
       const comp = one<any>(row.competitions);
       if (seenComp.has(comp.code)) continue;
 
