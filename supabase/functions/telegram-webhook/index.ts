@@ -1021,13 +1021,15 @@ var LegendRepository = class {
     }
     const row = Array.isArray(data) ? data[0] : data;
     if (!row) throw new Error("FAILED_FULFILL_PURCHASE");
+    const { data: purRow } = await this.database.from("legend_purchases").select("league_club_id").eq("id", purchaseId).maybeSingle();
     return {
       clubPlayerId: row.club_player_id,
       legendName: row.legend_name,
       legendPos: row.legend_pos,
       legendOvr: row.legend_ovr,
       clubName: row.club_name,
-      leagueInstanceId: row.league_instance_id
+      leagueInstanceId: row.league_instance_id,
+      leagueClubId: purRow?.league_club_id ?? ""
     };
   }
   async recordRefund(purchaseId) {
@@ -2353,7 +2355,7 @@ Minimal: <b>${formatMoney(minimum)}</b>`,
       logger.error({ event: "legend_detail_failed", err: error }, "Failed to render legend detail");
       await editOrReply(
         context,
-        "\u274C <b>Futbolchi ma\u2019lumotlarini yuklashda xatolik yuz berdi.</b>",
+        "\u274C <b>Futbolchi ma'lumotlarini yuklashda xatolik yuz berdi.</b>",
         new InlineKeyboard().text("\u{1F451} Legend Markazi", `leg:${clubId}`)
       );
     }
@@ -2369,24 +2371,18 @@ Minimal: <b>${formatMoney(minimum)}</b>`,
   });
   bot.callbackQuery(/^legb:([0-9a-f-]{36}):([a-z0-9-]+)$/, async (context) => {
     if (!context.from) return;
-    const user = await getContextUser(context);
+    await context.answerCallbackQuery({ text: "Stars to'lov oynasi ochilmoqda\u2026" }).catch(() => {
+    });
     const clubId = context.match[1];
     const legendIdentifier = context.match[2];
     try {
+      const user = await getContextUser(context);
       const intent = await legendRepo.createPurchaseIntent(user.id, clubId, legendIdentifier);
-      await context.answerCallbackQuery({ text: "Stars to\u2018lov oynasi ochilmoqda\u2026" });
-      const payload = JSON.stringify({
-        type: "LEGEND",
-        purchaseId: intent.purchaseId,
-        userId: user.id,
-        clubId,
-        legendId: intent.purchaseId,
-        legendName: intent.legendName
-      });
+      const payload = intent.purchaseId;
       await context.api.sendInvoice(
-        context.chat.id,
+        context.from.id,
         `\u{1F451} ${intent.legendName}`,
-        `OFM Legend Transfer: ${intent.legendName} (${intent.legendPos}, \u2B50${intent.legendOvr}) -> ${intent.clubName}`,
+        `OFM Legend Transfer: ${intent.legendName} (${intent.legendPos}, \u2B50${intent.legendOvr}) \u2192 ${intent.clubName}`,
         payload,
         "XTR",
         [{ label: `\u{1F451} ${intent.legendName}`, amount: intent.starsAmount }]
@@ -2394,15 +2390,24 @@ Minimal: <b>${formatMoney(minimum)}</b>`,
     } catch (error) {
       logger.warn({ event: "legend_buy_intent_failed", err: error }, "Legend buy intent failed");
       const msg = error?.message ?? "";
-      let text = "\u274C Xatolik yuz berdi.";
+      let text = "\u274C Xatolik yuz berdi. Qayta urinib ko'ring.";
       if (msg.includes("LEAGUE_NOT_ACTIVE")) {
         text = "\u23F3 Legend transferlari liga 1-turi boshlangach ochiladi.";
       } else if (msg.includes("LEGEND_LIMIT_REACHED")) {
         text = "\u{1F512} Klubingizda maksimal 5 ta Legend mavjud!";
       } else if (msg.includes("LEGEND_ALREADY_OWNED")) {
         text = "\u{1F512} Bu Legend boshqa klub tomonidan band qilingan!";
+      } else if (msg.includes("NOT_CLUB_MANAGER")) {
+        text = "\u274C Bu klub sizniki emas.";
       }
-      await context.answerCallbackQuery({ text, show_alert: true });
+      await context.api.sendMessage(
+        context.from.id,
+        `\u26A0\uFE0F <b>To'lov amalga oshmadi</b>
+
+${text}`,
+        { parse_mode: "HTML" }
+      ).catch(() => {
+      });
     }
   });
   bot.callbackQuery(/^legm:([0-9a-f-]{36})$/, async (context) => {
@@ -2431,63 +2436,62 @@ Minimal: <b>${formatMoney(minimum)}</b>`,
   bot.on("pre_checkout_query", async (context) => {
     const query = context.preCheckoutQuery;
     try {
-      const payload = JSON.parse(query.invoice_payload);
-      if (payload.type === "LEGEND") {
-        const user = await getContextUser(context);
-        const isValid = await legendRepo.validatePreCheckout(
-          payload.purchaseId,
-          user.id,
-          query.total_amount
-        );
-        if (isValid) {
-          await context.answerPreCheckoutQuery(true);
-          logger.info({ event: "legend_precheckout_approved", purchaseId: payload.purchaseId });
-        } else {
-          await context.answerPreCheckoutQuery(false, {
-            error_message: "Bu Legend allaqachon boshqa klub tomonidan band qilingan yoki liga faol emas."
-          });
-          logger.warn({ event: "legend_precheckout_rejected", purchaseId: payload.purchaseId });
-        }
-        return;
+      const purchaseId = query.invoice_payload.trim();
+      const user = await getContextUser(context);
+      const isValid = await legendRepo.validatePreCheckout(
+        purchaseId,
+        user.id,
+        query.total_amount
+      );
+      if (isValid) {
+        await context.answerPreCheckoutQuery(true);
+        logger.info({ event: "legend_precheckout_approved", purchaseId });
+      } else {
+        await context.answerPreCheckoutQuery(false, {
+          error_message: "Bu Legend allaqachon boshqa klub tomonidan band qilingan yoki liga faol emas."
+        });
+        logger.warn({ event: "legend_precheckout_rejected", purchaseId });
       }
     } catch (err) {
       logger.error({ event: "pre_checkout_error", err }, "Pre-checkout query failed");
-      await context.answerPreCheckoutQuery(false, { error_message: "To\u2018lov tekshiruvida xatolik yuz berdi." });
+      await context.answerPreCheckoutQuery(false, { error_message: "To'lov tekshiruvida xatolik yuz berdi." });
     }
   });
   bot.on("message:successful_payment", async (context) => {
     const payment = context.message.successful_payment;
+    const purchaseId = payment.invoice_payload.trim();
     try {
-      const payload = JSON.parse(payment.invoice_payload);
-      if (payload.type === "LEGEND") {
-        const user = await getContextUser(context);
+      const user = await getContextUser(context);
+      try {
+        const result = await legendRepo.fulfillPurchase(
+          purchaseId,
+          payment.telegram_payment_charge_id,
+          payment.provider_payment_charge_id
+        );
+        const leagueClubId = result.leagueClubId ?? "";
+        const summary = leagueClubId ? await legendRepo.getClubSummary(user.id, leagueClubId) : null;
+        const text = formatLegendFulfillmentSuccess(result, summary);
+        const kb = new InlineKeyboard();
+        if (leagueClubId) {
+          kb.text("\u{1F465} Tarkibga o'tish", `sq:${leagueClubId}`).text("\u{1F451} Legend Transfers", `leg:${leagueClubId}`);
+        }
+        await context.reply(text, { parse_mode: "HTML", reply_markup: kb });
+        logger.info({ event: "legend_purchase_fulfilled", purchaseId });
+      } catch (fulfillmentError) {
+        logger.error({ event: "legend_fulfillment_conflict", err: fulfillmentError }, "Fulfillment conflict, attempting refund");
+        await legendRepo.recordRefund(purchaseId);
         try {
-          const result = await legendRepo.fulfillPurchase(
-            payload.purchaseId,
-            payment.telegram_payment_charge_id,
-            payment.provider_payment_charge_id
+          await context.api.refundStarPayment(context.from.id, payment.telegram_payment_charge_id);
+          await context.reply(
+            "\u274C <b>Legend band qilindi</b>\n\n<i>Ushbu futbolchi bir lahza oldin boshqa klub tomonidan xarid qilib ulgurildi.\nTo'langan Telegram Stars hisobingizga avtomatik tarzda to'liq qaytarildi!</i>",
+            { parse_mode: "HTML" }
           );
-          const summary = await legendRepo.getClubSummary(user.id, payload.clubId);
-          const text = formatLegendFulfillmentSuccess(result, summary);
-          const kb = new InlineKeyboard().text("\u{1F465} Tarkibga o\u2018tish", `sq:${payload.clubId}`).text("\u{1F451} Legend Transfers", `leg:${payload.clubId}`);
-          await context.reply(text, { parse_mode: "HTML", reply_markup: kb });
-          logger.info({ event: "legend_purchase_fulfilled", purchaseId: payload.purchaseId });
-        } catch (fulfillmentError) {
-          logger.error({ event: "legend_fulfillment_conflict", err: fulfillmentError }, "Fulfillment conflict, attempting refund");
-          await legendRepo.recordRefund(payload.purchaseId);
-          try {
-            await context.api.refundStarPayment(context.from.id, payment.telegram_payment_charge_id);
-            await context.reply(
-              "\u274C <b>Legend band qilindi</b>\n\n<i>Ushbu futbolchi bir lahza oldin boshqa klub tomonidan xarid qilib ulgurildi.\nTo\u2018langan Telegram Stars hisobingizga avtomatik tarzda to\u2018liq qaytarildi!</i>",
-              { parse_mode: "HTML" }
-            );
-          } catch (refundError) {
-            logger.error({ event: "star_refund_failed", err: refundError }, "Star refund failed");
-            await context.reply(
-              "\u26A0\uFE0F <b>Diqqat</b>\n\n<i>Legend boshqa klub tomonidan band qilindi. Avtomatik qaytarishda uzilish bo\u2018ldi, iltimos admin bilan bog\u2018laning.</i>",
-              { parse_mode: "HTML" }
-            );
-          }
+        } catch (refundError) {
+          logger.error({ event: "star_refund_failed", err: refundError }, "Star refund failed");
+          await context.reply(
+            "\u26A0\uFE0F <b>Diqqat</b>\n\n<i>Legend boshqa klub tomonidan band qilindi. Avtomatik qaytarishda uzilish bo'ldi, iltimos admin bilan bog'laning.</i>",
+            { parse_mode: "HTML" }
+          );
         }
       }
     } catch (err) {

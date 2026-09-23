@@ -74,4 +74,5 @@ export interface LegendFulfillmentResult {
   legendOvr: number;
   clubName: string;
   leagueInstanceId: string;
+  leagueClubId: string;
 }

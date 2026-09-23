@@ -317,6 +317,13 @@ export class LegendRepository {
     const row = Array.isArray(data) ? data[0] : data;
     if (!row) throw new Error("FAILED_FULFILL_PURCHASE");
 
+    // Fetch league_club_id from the purchase record (not returned by the RPC)
+    const { data: purRow } = await this.database
+      .from("legend_purchases")
+      .select("league_club_id")
+      .eq("id", purchaseId)
+      .maybeSingle();
+
     return {
       clubPlayerId: row.club_player_id,
       legendName: row.legend_name,
@@ -324,6 +331,7 @@ export class LegendRepository {
       legendOvr: row.legend_ovr,
       clubName: row.club_name,
       leagueInstanceId: row.league_instance_id,
+      leagueClubId: purRow?.league_club_id ?? "",
     };
   }
 
