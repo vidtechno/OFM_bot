@@ -818,12 +818,13 @@ var LegendRepository = class {
     const compName = leagueInst?.competitions?.name ?? "OFM League";
     const instNum = String(leagueInst?.instance_number ?? 1).padStart(4, "0");
     const leagueName = `${compName} #${instNum}`;
-    const { data: owned, error: ownedErr } = await this.database.from("league_legend_players").select("legend_id, club_player_id, legend_players!inner(name, display_name, primary_position, overall, tier)").eq("league_club_id", clubId).eq("status", "ACTIVE");
+    const { data: owned, error: ownedErr } = await this.database.from("league_legend_players").select("legend_id, club_player_id, legend_players!inner(name, slug, display_name, primary_position, overall, tier)").eq("league_club_id", clubId).eq("status", "ACTIVE");
     if (ownedErr) {
       throw new Error(`FAILED_FETCH_OWNED_LEGENDS: ${ownedErr.message}`);
     }
     const legends = (owned ?? []).map((row) => ({
       legendId: row.legend_id,
+      slug: row.legend_players.slug,
       clubPlayerId: row.club_player_id,
       name: row.legend_players.name,
       displayName: row.legend_players.display_name,
@@ -893,7 +894,7 @@ var LegendRepository = class {
         }
       } else if (summary.currentLegendCount >= summary.maxLegends) {
         status = "CLUB_LIMIT_REACHED";
-      } else if (summary.leagueStatus !== "ACTIVE") {
+      } else if (summary.leagueStatus !== "ACTIVE" && summary.leagueStatus !== "OPEN") {
         status = "LEAGUE_NOT_ACTIVE";
       }
       return {
@@ -915,12 +916,15 @@ var LegendRepository = class {
       totalPages
     };
   }
-  async getLegendDetail(userId, clubId, legendId) {
+  async getLegendDetail(userId, clubId, legendIdOrSlug) {
     const summary = await this.getClubSummary(userId, clubId);
-    const { data: raw, error } = await this.database.from("legend_players").select("*").eq("id", legendId).maybeSingle();
+    const isUuid = /^[0-9a-f-]{36}$/i.test(legendIdOrSlug);
+    const query = this.database.from("legend_players").select("*");
+    const { data: raw, error } = await (isUuid ? query.eq("id", legendIdOrSlug) : query.eq("slug", legendIdOrSlug)).maybeSingle();
     if (error || !raw) {
       throw new Error(`LEGEND_NOT_FOUND: ${error?.message ?? "Legend not found"}`);
     }
+    const legendId = raw.id;
     const { data: assignment } = await this.database.from("league_legend_players").select("league_club_id, league_clubs!inner(clubs!inner(name))").eq("league_instance_id", summary.leagueInstanceId).eq("legend_id", legendId).eq("status", "ACTIVE").maybeSingle();
     const legend = {
       id: raw.id,
@@ -957,7 +961,7 @@ var LegendRepository = class {
       }
     } else if (summary.currentLegendCount >= summary.maxLegends) {
       status = "CLUB_LIMIT_REACHED";
-    } else if (summary.leagueStatus !== "ACTIVE") {
+    } else if (summary.leagueStatus !== "ACTIVE" && summary.leagueStatus !== "OPEN") {
       status = "LEAGUE_NOT_ACTIVE";
     }
     return {
@@ -970,11 +974,17 @@ var LegendRepository = class {
       summary
     };
   }
-  async createPurchaseIntent(userId, clubId, legendId) {
+  async createPurchaseIntent(userId, clubId, legendIdOrSlug) {
+    let finalLegendId = legendIdOrSlug;
+    if (!/^[0-9a-f-]{36}$/i.test(legendIdOrSlug)) {
+      const { data: leg } = await this.database.from("legend_players").select("id").eq("slug", legendIdOrSlug).maybeSingle();
+      if (!leg) throw new Error("LEGEND_NOT_FOUND");
+      finalLegendId = leg.id;
+    }
     const { data, error } = await this.database.rpc("create_legend_purchase_intent", {
       p_user_id: userId,
       p_league_club_id: clubId,
-      p_legend_id: legendId
+      p_legend_id: finalLegendId
     });
     if (error) {
       throw new Error(error.message);
@@ -1041,27 +1051,26 @@ var CATEGORY_NAMES = {
   ATT: { title: "HUJUMCHILAR", icon: "\u26A1" }
 };
 function formatLegendMenu(summary) {
-  const isPreSeason = summary.leagueStatus === "OPEN";
   const lines = [
     "\u{1F451} <b>LEGEND TRANSFERS</b>",
     "",
-    "<i>Futbol tarixining eng buyuk nomlarini</i>",
-    "<i>jamoangizga olib keling.</i>",
+    "<i>Futbol tarixining eng buyuk afsonalarini jamoangizga olib keling!</i>",
     "",
-    "\u2728 Premium futbolchilar",
-    "\u2B50 Telegram Stars orqali",
-    `\u{1F3DF} Faqat <b>${escapeHtml(summary.clubName)}</b> uchun`,
-    "\u{1F512} Har liga ichida har bir Legend yagona",
+    "\u2728 <b>Jami 41 ta afsonaviy futbolchi</b>",
+    "\u2B50 <b>Xarid: Telegram Stars (\u2B50 1 Star)</b>",
+    `\u{1F3DF} Klub: <b>${escapeHtml(summary.clubName)}</b>`,
+    `\u{1F3C6} Liga: <i>${escapeHtml(summary.leagueName)}</i>`,
+    `\u{1F451} Sizdagi Legendlar: <b>${summary.currentLegendCount}/${summary.maxLegends}</b>`,
+    "\u{1F512} Har bir Legend butun ligada faqat bitta klubda bo\u2018ladi",
     "",
-    `\u{1F451} <b>Legend limit:</b> <b>${summary.currentLegendCount}/${summary.maxLegends}</b>`
+    "<b>POZITSIYALAR BO\u2018YICHA AFSONALAR:</b>",
+    "\u{1F9E4} <b>Darvozabonlar (5):</b> Buffon, Casillas, Kahn, \u010Cech, Van der Sar",
+    "\u{1F6E1} <b>Himoyachilar (12):</b> Maldini, Ramos, Carlos, Puyol, Nesta...",
+    "\u{1F3AF} <b>Yarim himoyachilar (12):</b> Zidane, Ronaldinho, Iniesta, Xavi...",
+    "\u26A1 <b>Hujumchilar (12):</b> Messi, Ronaldo, Henry, R9, Pel\xE9...",
+    "",
+    "\u{1F447} <i>Futbolchilar ro\u2018yxatini ko\u2018rish uchun quyidagi toifalardan birini tanlang:</i>"
   ];
-  if (isPreSeason) {
-    lines.push(
-      "",
-      "\u23F3 <b>Liga start arafasida</b>",
-      "<i>Legendlar kartasini ko\u2018rishingiz mumkin, xarid esa liga 1-turi boshlangach ochiladi.</i>"
-    );
-  }
   return lines.join("\n");
 }
 function formatLegendCategory(category, page, totalPages, items, summary) {
@@ -2263,61 +2272,91 @@ Minimal: <b>${formatMoney(minimum)}</b>`,
   });
   bot.callbackQuery(/^leg:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
-    await context.answerCallbackQuery();
-    const user = await getContextUser(context);
+    await context.answerCallbackQuery().catch(() => {
+    });
     const clubId = context.match[1];
-    const summary = await legendRepo.getClubSummary(user.id, clubId);
-    const kb = new InlineKeyboard().text("\u{1F9E4} Darvozabonlar", `legc:${clubId}:GK:0`).text("\u{1F6E1} Himoyachilar", `legc:${clubId}:DEF:0`).row().text("\u{1F3AF} Yarim himoyachilar", `legc:${clubId}:MID:0`).text("\u26A1 Hujumchilar", `legc:${clubId}:ATT:0`).row().text("\u2B50 Mening Legendlarim", `legm:${clubId}`).row().text("\u21A9\uFE0F Orqaga", `tr:${clubId}`);
-    await editOrReply(context, formatLegendMenu(summary), kb);
+    try {
+      const user = await getContextUser(context);
+      const summary = await legendRepo.getClubSummary(user.id, clubId);
+      const kb = new InlineKeyboard().text("\u{1F9E4} Darvozabonlar (5)", `legc:${clubId}:GK:0`).text("\u{1F6E1} Himoyachilar (12)", `legc:${clubId}:DEF:0`).row().text("\u{1F3AF} Yarim himoyachilar (12)", `legc:${clubId}:MID:0`).text("\u26A1 Hujumchilar (12)", `legc:${clubId}:ATT:0`).row().text("\u2B50 Mening Legendlarim", `legm:${clubId}`).row().text("\u21A9\uFE0F Orqaga", `tr:${clubId}`);
+      await editOrReply(context, formatLegendMenu(summary), kb);
+    } catch (error) {
+      logger.error({ event: "legend_menu_failed", err: error }, "Failed to render legend menu");
+      await editOrReply(
+        context,
+        "\u274C <b>Legend Transfers bo\u2018limini yuklashda xatolik yuz berdi.</b>\n<i>Iltimos, qayta urinib ko\u2018ring.</i>",
+        new InlineKeyboard().text("\u21A9\uFE0F Orqaga", `tr:${clubId}`)
+      );
+    }
   });
   bot.callbackQuery(/^legc:([0-9a-f-]{36}):(GK|DEF|MID|ATT):(\d+)$/, async (context) => {
     if (!context.from) return;
-    await context.answerCallbackQuery();
-    const user = await getContextUser(context);
+    await context.answerCallbackQuery().catch(() => {
+    });
     const clubId = context.match[1];
     const cat = context.match[2];
     const page = Number(context.match[3]);
-    const { items, totalPages } = await legendRepo.getCategoryLegends(user.id, clubId, cat, page, 6);
-    const summary = await legendRepo.getClubSummary(user.id, clubId);
-    const kb = new InlineKeyboard();
-    for (const item of items) {
-      const l = item.legend;
-      let tag = "";
-      if (item.status === "OWNED_BY_CURRENT_CLUB") tag = " [\u2705]";
-      else if (item.status === "OWNED_BY_OTHER_CLUB") tag = " [\u{1F512} Band]";
-      else if (item.status === "CLUB_LIMIT_REACHED") tag = " [\u{1F512} 5/5]";
-      else if (item.status === "LEAGUE_NOT_ACTIVE") tag = " [\u23F3]";
-      else tag = ` [\u2B50 ${l.starsPrice}]`;
-      const label = `${l.name} \xB7 \u2B50${l.overall}${tag}`;
-      kb.text(label, `legp:${clubId}:${l.id}`).row();
+    try {
+      const user = await getContextUser(context);
+      const { items, totalPages } = await legendRepo.getCategoryLegends(user.id, clubId, cat, page, 6);
+      const summary = await legendRepo.getClubSummary(user.id, clubId);
+      const kb = new InlineKeyboard();
+      for (const item of items) {
+        const l = item.legend;
+        let tag = "";
+        if (item.status === "OWNED_BY_CURRENT_CLUB") tag = " [\u2705]";
+        else if (item.status === "OWNED_BY_OTHER_CLUB") tag = " [\u{1F512} Band]";
+        else if (item.status === "CLUB_LIMIT_REACHED") tag = " [\u{1F512} 5/5]";
+        else if (item.status === "LEAGUE_NOT_ACTIVE") tag = " [\u23F3]";
+        else tag = ` [\u2B50 ${l.starsPrice}]`;
+        const label = `${l.name} \xB7 \u2B50${l.overall}${tag}`;
+        kb.text(label, `legp:${clubId}:${l.slug}`).row();
+      }
+      if (page > 0) kb.text("\u2B05\uFE0F", `legc:${clubId}:${cat}:${page - 1}`);
+      if (page < totalPages - 1) kb.text("\u27A1\uFE0F", `legc:${clubId}:${cat}:${page + 1}`);
+      if (page > 0 || page < totalPages - 1) kb.row();
+      kb.text("\u{1F451} Legend Markazi", `leg:${clubId}`);
+      await editOrReply(context, formatLegendCategory(cat, page, totalPages, items, summary), kb);
+    } catch (error) {
+      logger.error({ event: "legend_category_failed", err: error }, "Failed to render legend category");
+      await editOrReply(
+        context,
+        "\u274C <b>Futbolchilar ro\u2018yxatini yuklashda xatolik yuz berdi.</b>",
+        new InlineKeyboard().text("\u{1F451} Legend Markazi", `leg:${clubId}`)
+      );
     }
-    if (page > 0) kb.text("\u2B05\uFE0F", `legc:${clubId}:${cat}:${page - 1}`);
-    if (page < totalPages - 1) kb.text("\u27A1\uFE0F", `legc:${clubId}:${cat}:${page + 1}`);
-    if (page > 0 || page < totalPages - 1) kb.row();
-    kb.text("\u{1F451} Legend Markazi", `leg:${clubId}`);
-    await editOrReply(context, formatLegendCategory(cat, page, totalPages, items, summary), kb);
   });
-  bot.callbackQuery(/^legp:([0-9a-f-]{36}):([0-9a-f-]{36})$/, async (context) => {
+  bot.callbackQuery(/^legp:([0-9a-f-]{36}):([a-z0-9-]+)$/, async (context) => {
     if (!context.from) return;
-    const user = await getContextUser(context);
+    await context.answerCallbackQuery().catch(() => {
+    });
     const clubId = context.match[1];
-    const legendId = context.match[2];
-    const { item, summary } = await legendRepo.getLegendDetail(user.id, clubId, legendId);
-    const kb = new InlineKeyboard();
-    if (item.status === "AVAILABLE") {
-      kb.text(`\u2B50 ${item.legend.starsPrice} Star \u2014 Sotib olish`, `legb:${clubId}:${legendId}`).row();
-    } else if (item.status === "OWNED_BY_CURRENT_CLUB") {
-      kb.text("\u2705 Jamoangizda", "legx:owned").row();
-    } else if (item.status === "OWNED_BY_OTHER_CLUB") {
-      kb.text(`\u{1F512} Band (${item.ownerClubName ?? "Raqib"})`, "legx:locked").row();
-    } else if (item.status === "CLUB_LIMIT_REACHED") {
-      kb.text("\u{1F512} Legend limiti 5/5", "legx:limit").row();
-    } else if (item.status === "LEAGUE_NOT_ACTIVE") {
-      kb.text("\u23F3 Liga starti kutilmoqda", "legx:preseason").row();
+    const legendIdentifier = context.match[2];
+    try {
+      const user = await getContextUser(context);
+      const { item, summary } = await legendRepo.getLegendDetail(user.id, clubId, legendIdentifier);
+      const kb = new InlineKeyboard();
+      if (item.status === "AVAILABLE") {
+        kb.text(`\u2B50 ${item.legend.starsPrice} Star \u2014 Sotib olish`, `legb:${clubId}:${item.legend.slug}`).row();
+      } else if (item.status === "OWNED_BY_CURRENT_CLUB") {
+        kb.text("\u2705 Jamoangizda", "legx:owned").row();
+      } else if (item.status === "OWNED_BY_OTHER_CLUB") {
+        kb.text(`\u{1F512} Band (${item.ownerClubName ?? "Raqib"})`, "legx:locked").row();
+      } else if (item.status === "CLUB_LIMIT_REACHED") {
+        kb.text("\u{1F512} Legend limiti 5/5", "legx:limit").row();
+      } else if (item.status === "LEAGUE_NOT_ACTIVE") {
+        kb.text("\u23F3 Liga starti kutilmoqda", "legx:preseason").row();
+      }
+      kb.text("\u21A9\uFE0F Orqaga", `legc:${clubId}:${item.legend.category}:0`);
+      await editOrReply(context, formatLegendCard(item, summary), kb);
+    } catch (error) {
+      logger.error({ event: "legend_detail_failed", err: error }, "Failed to render legend detail");
+      await editOrReply(
+        context,
+        "\u274C <b>Futbolchi ma\u2019lumotlarini yuklashda xatolik yuz berdi.</b>",
+        new InlineKeyboard().text("\u{1F451} Legend Markazi", `leg:${clubId}`)
+      );
     }
-    kb.text("\u21A9\uFE0F Orqaga", `legc:${clubId}:${item.legend.category}:0`);
-    await context.answerCallbackQuery();
-    await editOrReply(context, formatLegendCard(item, summary), kb);
   });
   bot.callbackQuery(/^legx:(owned|locked|limit|preseason)$/, async (context) => {
     const reason = context.match[1];
@@ -2328,20 +2367,20 @@ Minimal: <b>${formatMoney(minimum)}</b>`,
     else if (reason === "preseason") msg = "\u23F3 Legend transferlari liga 1-turi boshlangach ochiladi.";
     await context.answerCallbackQuery({ text: msg, show_alert: true });
   });
-  bot.callbackQuery(/^legb:([0-9a-f-]{36}):([0-9a-f-]{36})$/, async (context) => {
+  bot.callbackQuery(/^legb:([0-9a-f-]{36}):([a-z0-9-]+)$/, async (context) => {
     if (!context.from) return;
     const user = await getContextUser(context);
     const clubId = context.match[1];
-    const legendId = context.match[2];
+    const legendIdentifier = context.match[2];
     try {
-      const intent = await legendRepo.createPurchaseIntent(user.id, clubId, legendId);
+      const intent = await legendRepo.createPurchaseIntent(user.id, clubId, legendIdentifier);
       await context.answerCallbackQuery({ text: "Stars to\u2018lov oynasi ochilmoqda\u2026" });
       const payload = JSON.stringify({
         type: "LEGEND",
         purchaseId: intent.purchaseId,
         userId: user.id,
         clubId,
-        legendId,
+        legendId: intent.purchaseId,
         legendName: intent.legendName
       });
       await context.api.sendInvoice(
@@ -2368,16 +2407,26 @@ Minimal: <b>${formatMoney(minimum)}</b>`,
   });
   bot.callbackQuery(/^legm:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
-    await context.answerCallbackQuery();
-    const user = await getContextUser(context);
+    await context.answerCallbackQuery().catch(() => {
+    });
     const clubId = context.match[1];
-    const summary = await legendRepo.getClubSummary(user.id, clubId);
-    const kb = new InlineKeyboard();
-    for (const l of summary.legends) {
-      kb.text(`\u{1F451} ${l.name} (${l.primaryPosition} \xB7 \u2B50${l.overall})`, `legp:${clubId}:${l.legendId}`).row();
+    try {
+      const user = await getContextUser(context);
+      const summary = await legendRepo.getClubSummary(user.id, clubId);
+      const kb = new InlineKeyboard();
+      for (const l of summary.legends) {
+        kb.text(`\u{1F451} ${l.name} (${l.primaryPosition} \xB7 \u2B50${l.overall})`, `legp:${clubId}:${l.slug}`).row();
+      }
+      kb.text("\u21A9\uFE0F Orqaga", `leg:${clubId}`);
+      await editOrReply(context, formatMyLegends(summary), kb);
+    } catch (error) {
+      logger.error({ event: "my_legends_failed", err: error }, "Failed to render my legends");
+      await editOrReply(
+        context,
+        "\u274C <b>Mening Legendlarim bo\u2018limini yuklashda xatolik yuz berdi.</b>",
+        new InlineKeyboard().text("\u{1F451} Legend Markazi", `leg:${clubId}`)
+      );
     }
-    kb.text("\u21A9\uFE0F Orqaga", `leg:${clubId}`);
-    await editOrReply(context, formatMyLegends(summary), kb);
   });
   bot.on("pre_checkout_query", async (context) => {
     const query = context.preCheckoutQuery;

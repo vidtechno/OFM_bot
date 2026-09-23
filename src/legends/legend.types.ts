@@ -47,6 +47,7 @@ export interface ClubLegendSummary {
   maxLegends: number;
   legends: Array<{
     legendId: string;
+    slug: string;
     clubPlayerId: string;
     name: string;
     displayName: string;

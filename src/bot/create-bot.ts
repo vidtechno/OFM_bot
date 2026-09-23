@@ -1389,84 +1389,114 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
   // ── 👑 LEGEND TRANSFERS HANDLERS ─────────────────────────────
   bot.callbackQuery(/^leg:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
-    await context.answerCallbackQuery();
-    const user = await getContextUser(context);
+    await context.answerCallbackQuery().catch(() => {});
     const clubId = context.match[1]!;
-    const summary = await legendRepo.getClubSummary(user.id, clubId);
 
-    const kb = new InlineKeyboard()
-      .text("🧤 Darvozabonlar", `legc:${clubId}:GK:0`)
-      .text("🛡 Himoyachilar", `legc:${clubId}:DEF:0`)
-      .row()
-      .text("🎯 Yarim himoyachilar", `legc:${clubId}:MID:0`)
-      .text("⚡ Hujumchilar", `legc:${clubId}:ATT:0`)
-      .row()
-      .text("⭐ Mening Legendlarim", `legm:${clubId}`)
-      .row()
-      .text("↩️ Orqaga", `tr:${clubId}`);
+    try {
+      const user = await getContextUser(context);
+      const summary = await legendRepo.getClubSummary(user.id, clubId);
 
-    await editOrReply(context, formatLegendMenu(summary), kb);
+      const kb = new InlineKeyboard()
+        .text("🧤 Darvozabonlar (5)", `legc:${clubId}:GK:0`)
+        .text("🛡 Himoyachilar (12)", `legc:${clubId}:DEF:0`)
+        .row()
+        .text("🎯 Yarim himoyachilar (12)", `legc:${clubId}:MID:0`)
+        .text("⚡ Hujumchilar (12)", `legc:${clubId}:ATT:0`)
+        .row()
+        .text("⭐ Mening Legendlarim", `legm:${clubId}`)
+        .row()
+        .text("↩️ Orqaga", `tr:${clubId}`);
+
+      await editOrReply(context, formatLegendMenu(summary), kb);
+    } catch (error: any) {
+      logger.error({ event: "legend_menu_failed", err: error }, "Failed to render legend menu");
+      await editOrReply(
+        context,
+        "❌ <b>Legend Transfers bo‘limini yuklashda xatolik yuz berdi.</b>\n<i>Iltimos, qayta urinib ko‘ring.</i>",
+        new InlineKeyboard().text("↩️ Orqaga", `tr:${clubId}`)
+      );
+    }
   });
 
   bot.callbackQuery(/^legc:([0-9a-f-]{36}):(GK|DEF|MID|ATT):(\d+)$/, async (context) => {
     if (!context.from) return;
-    await context.answerCallbackQuery();
-    const user = await getContextUser(context);
+    await context.answerCallbackQuery().catch(() => {});
     const clubId = context.match[1]!;
     const cat = context.match[2] as LegendCategory;
     const page = Number(context.match[3]);
 
-    const { items, totalPages } = await legendRepo.getCategoryLegends(user.id, clubId, cat, page, 6);
-    const summary = await legendRepo.getClubSummary(user.id, clubId);
+    try {
+      const user = await getContextUser(context);
+      const { items, totalPages } = await legendRepo.getCategoryLegends(user.id, clubId, cat, page, 6);
+      const summary = await legendRepo.getClubSummary(user.id, clubId);
 
-    const kb = new InlineKeyboard();
-    for (const item of items) {
-      const l = item.legend;
-      let tag = "";
-      if (item.status === "OWNED_BY_CURRENT_CLUB") tag = " [✅]";
-      else if (item.status === "OWNED_BY_OTHER_CLUB") tag = " [🔒 Band]";
-      else if (item.status === "CLUB_LIMIT_REACHED") tag = " [🔒 5/5]";
-      else if (item.status === "LEAGUE_NOT_ACTIVE") tag = " [⏳]";
-      else tag = ` [⭐ ${l.starsPrice}]`;
+      const kb = new InlineKeyboard();
+      for (const item of items) {
+        const l = item.legend;
+        let tag = "";
+        if (item.status === "OWNED_BY_CURRENT_CLUB") tag = " [✅]";
+        else if (item.status === "OWNED_BY_OTHER_CLUB") tag = " [🔒 Band]";
+        else if (item.status === "CLUB_LIMIT_REACHED") tag = " [🔒 5/5]";
+        else if (item.status === "LEAGUE_NOT_ACTIVE") tag = " [⏳]";
+        else tag = ` [⭐ ${l.starsPrice}]`;
 
-      const label = `${l.name} · ⭐${l.overall}${tag}`;
-      kb.text(label, `legp:${clubId}:${l.id}`).row();
+        const label = `${l.name} · ⭐${l.overall}${tag}`;
+        // Using slug to keep callback_data under Telegram's 64 byte limit
+        kb.text(label, `legp:${clubId}:${l.slug}`).row();
+      }
+
+      if (page > 0) kb.text("⬅️", `legc:${clubId}:${cat}:${page - 1}`);
+      if (page < totalPages - 1) kb.text("➡️", `legc:${clubId}:${cat}:${page + 1}`);
+      if (page > 0 || page < totalPages - 1) kb.row();
+
+      kb.text("👑 Legend Markazi", `leg:${clubId}`);
+
+      await editOrReply(context, formatLegendCategory(cat, page, totalPages, items, summary), kb);
+    } catch (error: any) {
+      logger.error({ event: "legend_category_failed", err: error }, "Failed to render legend category");
+      await editOrReply(
+        context,
+        "❌ <b>Futbolchilar ro‘yxatini yuklashda xatolik yuz berdi.</b>",
+        new InlineKeyboard().text("👑 Legend Markazi", `leg:${clubId}`)
+      );
     }
-
-    if (page > 0) kb.text("⬅️", `legc:${clubId}:${cat}:${page - 1}`);
-    if (page < totalPages - 1) kb.text("➡️", `legc:${clubId}:${cat}:${page + 1}`);
-    if (page > 0 || page < totalPages - 1) kb.row();
-
-    kb.text("👑 Legend Markazi", `leg:${clubId}`);
-
-    await editOrReply(context, formatLegendCategory(cat, page, totalPages, items, summary), kb);
   });
 
-  bot.callbackQuery(/^legp:([0-9a-f-]{36}):([0-9a-f-]{36})$/, async (context) => {
+  bot.callbackQuery(/^legp:([0-9a-f-]{36}):([a-z0-9-]+)$/, async (context) => {
     if (!context.from) return;
-    const user = await getContextUser(context);
+    await context.answerCallbackQuery().catch(() => {});
     const clubId = context.match[1]!;
-    const legendId = context.match[2]!;
+    const legendIdentifier = context.match[2]!;
 
-    const { item, summary } = await legendRepo.getLegendDetail(user.id, clubId, legendId);
-    const kb = new InlineKeyboard();
+    try {
+      const user = await getContextUser(context);
+      const { item, summary } = await legendRepo.getLegendDetail(user.id, clubId, legendIdentifier);
+      const kb = new InlineKeyboard();
 
-    if (item.status === "AVAILABLE") {
-      kb.text(`⭐ ${item.legend.starsPrice} Star — Sotib olish`, `legb:${clubId}:${legendId}`).row();
-    } else if (item.status === "OWNED_BY_CURRENT_CLUB") {
-      kb.text("✅ Jamoangizda", "legx:owned").row();
-    } else if (item.status === "OWNED_BY_OTHER_CLUB") {
-      kb.text(`🔒 Band (${item.ownerClubName ?? "Raqib"})`, "legx:locked").row();
-    } else if (item.status === "CLUB_LIMIT_REACHED") {
-      kb.text("🔒 Legend limiti 5/5", "legx:limit").row();
-    } else if (item.status === "LEAGUE_NOT_ACTIVE") {
-      kb.text("⏳ Liga starti kutilmoqda", "legx:preseason").row();
+      if (item.status === "AVAILABLE") {
+        // Using slug to keep callback_data under 64 bytes
+        kb.text(`⭐ ${item.legend.starsPrice} Star — Sotib olish`, `legb:${clubId}:${item.legend.slug}`).row();
+      } else if (item.status === "OWNED_BY_CURRENT_CLUB") {
+        kb.text("✅ Jamoangizda", "legx:owned").row();
+      } else if (item.status === "OWNED_BY_OTHER_CLUB") {
+        kb.text(`🔒 Band (${item.ownerClubName ?? "Raqib"})`, "legx:locked").row();
+      } else if (item.status === "CLUB_LIMIT_REACHED") {
+        kb.text("🔒 Legend limiti 5/5", "legx:limit").row();
+      } else if (item.status === "LEAGUE_NOT_ACTIVE") {
+        kb.text("⏳ Liga starti kutilmoqda", "legx:preseason").row();
+      }
+
+      kb.text("↩️ Orqaga", `legc:${clubId}:${item.legend.category}:0`);
+
+      await editOrReply(context, formatLegendCard(item, summary), kb);
+    } catch (error: any) {
+      logger.error({ event: "legend_detail_failed", err: error }, "Failed to render legend detail");
+      await editOrReply(
+        context,
+        "❌ <b>Futbolchi ma’lumotlarini yuklashda xatolik yuz berdi.</b>",
+        new InlineKeyboard().text("👑 Legend Markazi", `leg:${clubId}`)
+      );
     }
-
-    kb.text("↩️ Orqaga", `legc:${clubId}:${item.legend.category}:0`);
-
-    await context.answerCallbackQuery();
-    await editOrReply(context, formatLegendCard(item, summary), kb);
   });
 
   bot.callbackQuery(/^legx:(owned|locked|limit|preseason)$/, async (context) => {
@@ -1479,14 +1509,14 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     await context.answerCallbackQuery({ text: msg, show_alert: true });
   });
 
-  bot.callbackQuery(/^legb:([0-9a-f-]{36}):([0-9a-f-]{36})$/, async (context) => {
+  bot.callbackQuery(/^legb:([0-9a-f-]{36}):([a-z0-9-]+)$/, async (context) => {
     if (!context.from) return;
     const user = await getContextUser(context);
     const clubId = context.match[1]!;
-    const legendId = context.match[2]!;
+    const legendIdentifier = context.match[2]!;
 
     try {
-      const intent = await legendRepo.createPurchaseIntent(user.id, clubId, legendId);
+      const intent = await legendRepo.createPurchaseIntent(user.id, clubId, legendIdentifier);
       await context.answerCallbackQuery({ text: "Stars to‘lov oynasi ochilmoqda…" });
 
       const payload = JSON.stringify({
@@ -1494,7 +1524,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
         purchaseId: intent.purchaseId,
         userId: user.id,
         clubId,
-        legendId,
+        legendId: intent.purchaseId,
         legendName: intent.legendName,
       });
 
@@ -1523,18 +1553,28 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
 
   bot.callbackQuery(/^legm:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
-    await context.answerCallbackQuery();
-    const user = await getContextUser(context);
+    await context.answerCallbackQuery().catch(() => {});
     const clubId = context.match[1]!;
-    const summary = await legendRepo.getClubSummary(user.id, clubId);
 
-    const kb = new InlineKeyboard();
-    for (const l of summary.legends) {
-      kb.text(`👑 ${l.name} (${l.primaryPosition} · ⭐${l.overall})`, `legp:${clubId}:${l.legendId}`).row();
+    try {
+      const user = await getContextUser(context);
+      const summary = await legendRepo.getClubSummary(user.id, clubId);
+
+      const kb = new InlineKeyboard();
+      for (const l of summary.legends) {
+        kb.text(`👑 ${l.name} (${l.primaryPosition} · ⭐${l.overall})`, `legp:${clubId}:${l.slug}`).row();
+      }
+      kb.text("↩️ Orqaga", `leg:${clubId}`);
+
+      await editOrReply(context, formatMyLegends(summary), kb);
+    } catch (error: any) {
+      logger.error({ event: "my_legends_failed", err: error }, "Failed to render my legends");
+      await editOrReply(
+        context,
+        "❌ <b>Mening Legendlarim bo‘limini yuklashda xatolik yuz berdi.</b>",
+        new InlineKeyboard().text("👑 Legend Markazi", `leg:${clubId}`)
+      );
     }
-    kb.text("↩️ Orqaga", `leg:${clubId}`);
-
-    await editOrReply(context, formatMyLegends(summary), kb);
   });
 
   // ── 👑 TELEGRAM STARS PAYMENT HANDLERS ─────────────────────────

@@ -29,7 +29,7 @@ export class LegendRepository {
 
     const { data: owned, error: ownedErr } = await this.database
       .from("league_legend_players")
-      .select("legend_id, club_player_id, legend_players!inner(name, display_name, primary_position, overall, tier)")
+      .select("legend_id, club_player_id, legend_players!inner(name, slug, display_name, primary_position, overall, tier)")
       .eq("league_club_id", clubId)
       .eq("status", "ACTIVE");
 
@@ -39,6 +39,7 @@ export class LegendRepository {
 
     const legends = (owned ?? []).map((row: any) => ({
       legendId: row.legend_id,
+      slug: row.legend_players.slug,
       clubPlayerId: row.club_player_id,
       name: row.legend_players.name,
       displayName: row.legend_players.display_name,
@@ -135,7 +136,7 @@ export class LegendRepository {
         }
       } else if (summary.currentLegendCount >= summary.maxLegends) {
         status = "CLUB_LIMIT_REACHED";
-      } else if (summary.leagueStatus !== "ACTIVE") {
+      } else if (summary.leagueStatus !== "ACTIVE" && summary.leagueStatus !== "OPEN") {
         status = "LEAGUE_NOT_ACTIVE";
       }
 
@@ -164,19 +165,24 @@ export class LegendRepository {
   async getLegendDetail(
     userId: string,
     clubId: string,
-    legendId: string
+    legendIdOrSlug: string
   ): Promise<{ item: LegendListingItem; summary: ClubLegendSummary }> {
     const summary = await this.getClubSummary(userId, clubId);
 
-    const { data: raw, error } = await this.database
+    const isUuid = /^[0-9a-f-]{36}$/i.test(legendIdOrSlug);
+    const query = this.database
       .from("legend_players")
-      .select("*")
-      .eq("id", legendId)
-      .maybeSingle();
+      .select("*");
+    const { data: raw, error } = await (isUuid
+      ? query.eq("id", legendIdOrSlug)
+      : query.eq("slug", legendIdOrSlug)
+    ).maybeSingle();
 
     if (error || !raw) {
       throw new Error(`LEGEND_NOT_FOUND: ${error?.message ?? "Legend not found"}`);
     }
+
+    const legendId = raw.id;
 
     const { data: assignment } = await this.database
       .from("league_legend_players")
@@ -223,7 +229,7 @@ export class LegendRepository {
       }
     } else if (summary.currentLegendCount >= summary.maxLegends) {
       status = "CLUB_LIMIT_REACHED";
-    } else if (summary.leagueStatus !== "ACTIVE") {
+    } else if (summary.leagueStatus !== "ACTIVE" && summary.leagueStatus !== "OPEN") {
       status = "LEAGUE_NOT_ACTIVE";
     }
 
@@ -241,12 +247,23 @@ export class LegendRepository {
   async createPurchaseIntent(
     userId: string,
     clubId: string,
-    legendId: string
+    legendIdOrSlug: string
   ): Promise<LegendPurchaseIntent> {
+    let finalLegendId = legendIdOrSlug;
+    if (!/^[0-9a-f-]{36}$/i.test(legendIdOrSlug)) {
+      const { data: leg } = await this.database
+        .from("legend_players")
+        .select("id")
+        .eq("slug", legendIdOrSlug)
+        .maybeSingle();
+      if (!leg) throw new Error("LEGEND_NOT_FOUND");
+      finalLegendId = leg.id;
+    }
+
     const { data, error } = await this.database.rpc("create_legend_purchase_intent", {
       p_user_id: userId,
       p_league_club_id: clubId,
-      p_legend_id: legendId,
+      p_legend_id: finalLegendId,
     });
 
     if (error) {

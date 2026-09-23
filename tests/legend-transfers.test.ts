@@ -111,6 +111,7 @@ describe("👑 Legend Transfers & Global Market Auto-Seeding Comprehensive Test 
       legends: [
         {
           legendId: "leg-1",
+          slug: "lionel-messi",
           clubPlayerId: "cp-1",
           name: "Lionel Messi",
           displayName: "L. Messi",

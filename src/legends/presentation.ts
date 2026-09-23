@@ -14,29 +14,26 @@ const CATEGORY_NAMES: Record<LegendCategory, { title: string; icon: string }> = 
 };
 
 export function formatLegendMenu(summary: ClubLegendSummary): string {
-  const isPreSeason = summary.leagueStatus === "OPEN";
-
   const lines = [
     "👑 <b>LEGEND TRANSFERS</b>",
     "",
-    "<i>Futbol tarixining eng buyuk nomlarini</i>",
-    "<i>jamoangizga olib keling.</i>",
+    "<i>Futbol tarixining eng buyuk afsonalarini jamoangizga olib keling!</i>",
     "",
-    "✨ Premium futbolchilar",
-    "⭐ Telegram Stars orqali",
-    `🏟 Faqat <b>${escapeHtml(summary.clubName)}</b> uchun`,
-    "🔒 Har liga ichida har bir Legend yagona",
+    "✨ <b>Jami 41 ta afsonaviy futbolchi</b>",
+    "⭐ <b>Xarid: Telegram Stars (⭐ 1 Star)</b>",
+    `🏟 Klub: <b>${escapeHtml(summary.clubName)}</b>`,
+    `🏆 Liga: <i>${escapeHtml(summary.leagueName)}</i>`,
+    `👑 Sizdagi Legendlar: <b>${summary.currentLegendCount}/${summary.maxLegends}</b>`,
+    "🔒 Har bir Legend butun ligada faqat bitta klubda bo‘ladi",
     "",
-    `👑 <b>Legend limit:</b> <b>${summary.currentLegendCount}/${summary.maxLegends}</b>`,
+    "<b>POZITSIYALAR BO‘YICHA AFSONALAR:</b>",
+    "🧤 <b>Darvozabonlar (5):</b> Buffon, Casillas, Kahn, Čech, Van der Sar",
+    "🛡 <b>Himoyachilar (12):</b> Maldini, Ramos, Carlos, Puyol, Nesta...",
+    "🎯 <b>Yarim himoyachilar (12):</b> Zidane, Ronaldinho, Iniesta, Xavi...",
+    "⚡ <b>Hujumchilar (12):</b> Messi, Ronaldo, Henry, R9, Pelé...",
+    "",
+    "👇 <i>Futbolchilar ro‘yxatini ko‘rish uchun quyidagi toifalardan birini tanlang:</i>",
   ];
-
-  if (isPreSeason) {
-    lines.push(
-      "",
-      "⏳ <b>Liga start arafasida</b>",
-      "<i>Legendlar kartasini ko‘rishingiz mumkin, xarid esa liga 1-turi boshlangach ochiladi.</i>"
-    );
-  }
 
   return lines.join("\n");
 }
