@@ -72,6 +72,11 @@ describe("Transfer System & Presentation", () => {
       `ac:${offerId}`,
       `th:${clubId}`,
       `gm:${clubId}:0:ALL`,
+      `tr_global:${clubId}:0:ALL`,
+      `tr_global:${clubId}:0:GK`,
+      `tr_global:${clubId}:0:DEF`,
+      `tr_global:${clubId}:0:MID`,
+      `tr_global:${clubId}:0:ATT`,
       `gb:${listingId}`,
       `gc:${listingId}`,
     ];

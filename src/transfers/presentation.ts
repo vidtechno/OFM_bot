@@ -81,15 +81,19 @@ export function formatIncomingOffer(buyerClub: string, playerName: string, offer
 
 export function formatMarket(players: MarketPlayer[], leagueName?: string, group = "ALL"): string {
   const groupTitle = positionGroupPluralLabel(group);
-  const lines: string[] = ["🛒 <b>GLOBAL TRANSFER BOZORI</b>"];
+  const lines: string[] = [
+    "🌍 <b>GLOBAL TRANSFER</b>",
+    "",
+    "<i>Ligadan tashqaridagi futbolchilar bozori.</i>",
+  ];
   if (leagueName) lines.push(`🏆 <i>${escapeHtml(leagueName)}</i>`);
   lines.push("", `📂 Bo‘lim: <b>${escapeHtml(groupTitle)}</b>`, "");
 
   if (!players.length) {
     lines.push(
-      "<i>Hozircha transferga qo‘yilgan futbolchilar topilmadi.</i>",
+      "⚠️ <b>Global bozor hozircha bo‘sh.</b>",
       "",
-      "Boshqa pozitsiyani tanlang yoki keyinroq qayta tekshiring."
+      "<i>Bozor yangilanmoqda, iltimos boshqa ampluani tanlang yoki birozdan so‘ng qayta tekshiring.</i>"
     );
     return lines.join("\n").trim();
   }

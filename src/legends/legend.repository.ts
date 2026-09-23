@@ -14,7 +14,7 @@ export class LegendRepository {
   async getClubSummary(userId: string, clubId: string): Promise<ClubLegendSummary> {
     const { data: club, error: clubErr } = await this.database
       .from("league_clubs")
-      .select("id, league_instance_id, user_id, manager_type, clubs!inner(name), league_instances!inner(id, status, instance_number, competitions!inner(name))")
+      .select("id, league_instance_id, manager_user_id, manager_type, clubs!inner(name), league_instances!inner(id, status, instance_number, competitions!inner(name))")
       .eq("id", clubId)
       .maybeSingle();
 

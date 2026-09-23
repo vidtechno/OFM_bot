@@ -35,13 +35,28 @@ describe("👑 Legend Transfers & Global Market Auto-Seeding Comprehensive Test 
     expect(mids.length).toBe(12);
     expect(atts.length).toBe(12);
 
-    // Verify key players exist
+    // Verify key required players exist
     const names = new Set((legends ?? []).map((l) => l.name));
     expect(names.has("Lionel Messi")).toBe(true);
     expect(names.has("Cristiano Ronaldo")).toBe(true);
+    expect(names.has("Marcelo")).toBe(true);
+    expect(names.has("Gareth Bale")).toBe(true);
+    expect(names.has("Toni Kroos")).toBe(true);
     expect(names.has("Gianluigi Buffon")).toBe(true);
     expect(names.has("Paolo Maldini")).toBe(true);
     expect(names.has("Zinedine Zidane")).toBe(true);
+
+    // Verify excluded players do NOT exist in active roster
+    expect(names.has("Diego Maradona")).toBe(false);
+    expect(names.has("Johan Cruyff")).toBe(false);
+    expect(names.has("Ruud Gullit")).toBe(false);
+    expect(names.has("Lothar Matthäus")).toBe(false);
+    expect(names.has("Patrick Vieira")).toBe(false);
+
+    // Verify Ibrahimovic is 91
+    const ibra = (legends ?? []).find((l) => l.name === "Zlatan Ibrahimović");
+    expect(ibra).toBeDefined();
+    expect(ibra?.overall).toBe(91);
   });
 
   it("2. Current TEST PRICING is exactly ⭐ 1 Star for all 41 legends", async () => {
@@ -208,6 +223,56 @@ describe("👑 Legend Transfers & Global Market Auto-Seeding Comprehensive Test 
       expect(countErr).toBeNull();
       // Every league MUST have at least 15 active global market listings!
       expect(count ?? 0).toBeGreaterThanOrEqual(15);
+    }
+  });
+
+  it("8. Global Transfer Callback Contract: tr_global and gm match regex, parse correctly and stay <= 64 bytes", () => {
+    const regex = /^(?:tr_global|gm):([0-9a-f-]{36})(?::(\d+))?(?::(ALL|GK|DEF|MID|ATT))?$/;
+    const clubId = "12345678-1234-1234-1234-123456789abc";
+
+    // Standard tr_global with full params
+    const m1 = `tr_global:${clubId}:0:ALL`.match(regex);
+    expect(m1).not.toBeNull();
+    expect(m1?.[1]).toBe(clubId);
+    expect(m1?.[2]).toBe("0");
+    expect(m1?.[3]).toBe("ALL");
+
+    // tr_global with position filter
+    const m2 = `tr_global:${clubId}:1:DEF`.match(regex);
+    expect(m2).not.toBeNull();
+    expect(m2?.[1]).toBe(clubId);
+    expect(m2?.[2]).toBe("1");
+    expect(m2?.[3]).toBe("DEF");
+
+    // tr_global with only clubId
+    const m3 = `tr_global:${clubId}`.match(regex);
+    expect(m3).not.toBeNull();
+    expect(m3?.[1]).toBe(clubId);
+    expect(m3?.[2]).toBeUndefined();
+    expect(m3?.[3]).toBeUndefined();
+
+    // Legacy gm format with full params
+    const m4 = `gm:${clubId}:0:ALL`.match(regex);
+    expect(m4).not.toBeNull();
+    expect(m4?.[1]).toBe(clubId);
+    expect(m4?.[2]).toBe("0");
+    expect(m4?.[3]).toBe("ALL");
+
+    // Legacy gm format with only clubId
+    const m5 = `gm:${clubId}`.match(regex);
+    expect(m5).not.toBeNull();
+    expect(m5?.[1]).toBe(clubId);
+
+    // Verify byte lengths
+    for (const str of [
+      `tr_global:${clubId}:0:ALL`,
+      `tr_global:${clubId}:99:MID`,
+      `tr_global:${clubId}`,
+      `gm:${clubId}:0:ALL`,
+      `gm:${clubId}`,
+    ]) {
+      const bytes = new TextEncoder().encode(str).length;
+      expect(bytes).toBeLessThanOrEqual(64);
     }
   });
 });

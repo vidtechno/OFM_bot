@@ -113,7 +113,7 @@ function clubListKeyboard(clubs: LeagueClubListing[], leagueId: string, page: nu
 }
 
 function buildTransferMarketKeyboard(
-  cbPrefix: "lm" | "gm",
+  cbPrefix: "lm" | "tr_global" | "gm",
   clubId: string,
   group: string,
   page: number,
@@ -160,6 +160,8 @@ function buildTransferMarketKeyboard(
       keyboard.text("Keyingi ➡️", `${cbPrefix}:${clubId}:${page + 1}:${group}`);
     }
     keyboard.row();
+  } else if (items.length === 0) {
+    keyboard.text("🔄 Yangilash", `${cbPrefix}:${clubId}:0:${group}`).row();
   }
 
   // Row 5: Back
@@ -555,7 +557,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
 
     const keyboard = new InlineKeyboard()
       .text("🛒 Transfer bozori", `lm:${clubId}:0:ALL`)
-      .text("🌍 Global Transfer", `gm:${clubId}:0:ALL`)
+      .text("🌍 Global Transfer", `tr_global:${clubId}:0:ALL`)
       .row()
       .text("👑 Legend Transfers", `leg:${clubId}`)
       .row()
@@ -596,7 +598,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
 
     if (owner.league_status === "OPEN") {
       const kb = new InlineKeyboard()
-        .text("🌍 Global Transferga o‘tish", `gm:${clubId}:0:ALL`)
+        .text("🌍 Global Transferga o‘tish", `tr_global:${clubId}:0:ALL`)
         .row()
         .text("↩️ Orqaga", `tr:${clubId}`);
       await editOrReply(
@@ -616,18 +618,48 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
   const showMarket = async (
     context: Context,
     clubId: string,
-    page: number,
+    page = 0,
     group = "ALL"
   ): Promise<void> => {
     if (!context.from) return;
-    const user = await getContextUser(context);
-    await transfers.saveInputSession(user.id, "ACTIVE_CLUB", { clubId });
-    const clubs = await getContextManagedClubs(context, user.id);
-    const club = clubs.find((c) => c.leagueClubId === clubId);
-    const items = await transfers.market(user.id, clubId, page, 8, group);
-    const keyboard = buildTransferMarketKeyboard("gm", clubId, group, page, items, 8);
+    try {
+      const user = await getContextUser(context);
+      await transfers.saveInputSession(user.id, "ACTIVE_CLUB", { clubId });
+      const clubs = await getContextManagedClubs(context, user.id);
+      let club = clubs.find((c) => c.leagueClubId === clubId);
+      if (!club && clubs.length > 0 && clubs[0]) {
+        club = clubs[0];
+        clubId = club.leagueClubId;
+      }
 
-    await editOrReply(context, formatMarket(items, club?.leagueName, group), keyboard);
+      let items = await transfers.market(user.id, clubId, page, 8, group);
+
+      if (items.length === 0 && page === 0 && group === "ALL") {
+        try {
+          const owner = await (transfers as any).ownerLeague(user.id, clubId, false);
+          await (transfers as any).database.rpc("ensure_league_global_market", {
+            p_league_instance_id: owner.league_instance_id,
+          });
+          items = await transfers.market(user.id, clubId, page, 8, group);
+        } catch (seedErr) {
+          logger.warn({ event: "market_autoseed_failed", err: seedErr }, "Auto-seed retry failed");
+        }
+      }
+
+      const keyboard = buildTransferMarketKeyboard("tr_global", clubId, group, page, items, 8);
+      await editOrReply(context, formatMarket(items, club?.leagueName, group), keyboard);
+    } catch (error: any) {
+      logger.error({ event: "show_global_market_failed", err: error, clubId }, "Global market failed to render");
+      const fallbackKb = new InlineKeyboard()
+        .text("🔄 Qayta urinish", `tr_global:${clubId}:0:${group}`)
+        .row()
+        .text("↩️ Transfer markazi", `tr:${clubId}`);
+      await editOrReply(
+        context,
+        "⚠️ <b>Global bozorga ulanishda xatolik yuz berdi.</b>\n\n<i>Bozor yangilanmoqda yoki tarmoqda uzilish bor. Qayta urinib ko‘ring.</i>",
+        fallbackKb
+      );
+    }
   };
 
   bot.callbackQuery(/^tr:([0-9a-f-]{36})$/, async (context) => {
@@ -731,7 +763,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
       return editOrReply(
         context,
         "⏳ <b>Futbolchi sotish liga startidan keyin ochiladi</b>\n\n<i>Liga 1-turi boshlangach o‘yinchilaringizni transfer bozoriga qo‘yishingiz mumkin bo‘ladi.\n\nHozircha <b>🌍 Global Transfer</b> orqali tarkibingizni kuchaytirib olishingiz mumkin!</i>",
-        new InlineKeyboard().text("🌍 Global Transfer", `gm:${clubId}:0:ALL`).row().text("↩️ Orqaga", `tr:${clubId}`)
+        new InlineKeyboard().text("🌍 Global Transfer", `tr_global:${clubId}:0:ALL`).row().text("↩️ Orqaga", `tr:${clubId}`)
       );
     }
 
@@ -919,7 +951,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
       return editOrReply(
         context,
         "⏳ <b>Raqib klublardan izlash liga startidan keyin ochiladi</b>\n\n<i>Mavsum start olgach (1-turdan) raqib klublar o‘yinchilariga taklif yuborishingiz mumkin bo‘ladi.\n\nHozir esa <b>🌍 Global Transfer</b> ochiq!</i>",
-        new InlineKeyboard().text("🌍 Global Transfer", `gm:${clubId}:0:ALL`).row().text("↩️ Orqaga", `tr:${clubId}`)
+        new InlineKeyboard().text("🌍 Global Transfer", `tr_global:${clubId}:0:ALL`).row().text("↩️ Orqaga", `tr:${clubId}`)
       );
     }
 
@@ -1275,14 +1307,35 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     );
   });
 
-  bot.callbackQuery(/^gm:([0-9a-f-]{36}):(\d+)(?::(ALL|GK|DEF|MID|ATT))?$/, async (context) => {
-    await context.answerCallbackQuery();
-    await showMarket(context, context.match[1]!, Number(context.match[2]), context.match[3] ?? "ALL");
+  bot.callbackQuery(/^(?:tr_global|gm):([0-9a-f-]{36})(?::(\d+))?(?::(ALL|GK|DEF|MID|ATT))?$/, async (context) => {
+    await context.answerCallbackQuery().catch(() => {});
+    const clubId = context.match[1]!;
+    const page = context.match[2] ? Number(context.match[2]) : 0;
+    const group = context.match[3] ?? "ALL";
+    await showMarket(context, clubId, page, group);
+  });
+
+  bot.callbackQuery(/^(?:tr_global|gm)$/, async (context) => {
+    await context.answerCallbackQuery().catch(() => {});
+    if (!context.from) return;
+    try {
+      const user = await getContextUser(context);
+      const session = await transfers.getInputSession(user.id);
+      const clubId = (session?.mode === "ACTIVE_CLUB" ? (session.data.clubId as string) : undefined)
+        ?? (await getContextManagedClubs(context, user.id))[0]?.leagueClubId;
+      if (clubId) {
+        await showMarket(context, clubId, 0, "ALL");
+      } else {
+        await context.reply("Transfer markaziga qaytib, jamoangizni tanlang.");
+      }
+    } catch (err) {
+      logger.error({ event: "global_transfer_entry_failed", err }, "Failed entry to global transfer");
+    }
   });
 
   bot.callbackQuery(/^gb:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
-    await context.answerCallbackQuery();
+    await context.answerCallbackQuery().catch(() => {});
     const user = await getContextUser(context);
     const session = await transfers.getInputSession(user.id);
     const clubId = (session?.mode === "ACTIVE_CLUB" ? (session.data.clubId as string) : undefined)
@@ -1291,18 +1344,18 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     if (!clubId) return context.reply("Transfer markaziga qaytib, klubni qayta tanlang.");
     const item = await transfers.listing(user.id, clubId, context.match[1]!);
     if (!item) {
-      return editOrReply(context, "<i>Bu futbolchi Global Transfer bozorida faol emas.</i>", new InlineKeyboard().text("↩️ Orqaga", `gm:${clubId}:0:ALL`));
+      return editOrReply(context, "<i>Bu futbolchi Global Transfer bozorida faol emas.</i>", new InlineKeyboard().text("↩️ Orqaga", `tr_global:${clubId}:0:ALL`));
     }
     await editOrReply(
       context,
       formatListing(item),
-      new InlineKeyboard().text("✅ Xaridni tasdiqlash", `gc:${item.listingId}`).row().text("↩️ Orqaga", `gm:${clubId}:0:ALL`)
+      new InlineKeyboard().text("✅ Xaridni tasdiqlash", `gc:${item.listingId}`).row().text("↩️ Orqaga", `tr_global:${clubId}:0:ALL`)
     );
   });
 
   bot.callbackQuery(/^gc:([0-9a-f-]{36})$/, async (context) => {
     if (!context.from) return;
-    await context.answerCallbackQuery({ text: "Transfer tekshirilmoqda…" });
+    await context.answerCallbackQuery({ text: "Transfer tekshirilmoqda…" }).catch(() => {});
     const user = await getContextUser(context);
     const session = await transfers.getInputSession(user.id);
     const clubId = (session?.mode === "ACTIVE_CLUB" ? (session.data.clubId as string) : undefined)
@@ -1314,7 +1367,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
       await editOrReply(
         context,
         "✅ <b>Transfer yakunlandi!</b>\n\n<i>Futbolchi klubingizga qo‘shildi va asosiy tarkibingizga kiritildi.</i>",
-        new InlineKeyboard().text("↩️ Orqaga", `gm:${clubId}:0:ALL`).text("🏟 Klub", `db:${clubId}`)
+        new InlineKeyboard().text("↩️ Orqaga", `tr_global:${clubId}:0:ALL`).text("🏟 Klub", `db:${clubId}`)
       );
     } catch (error: any) {
       logger.warn({ event: "global_transfer_failed", err: error }, "Global transfer failed");
@@ -1329,7 +1382,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
       } else if (err.includes("LEAGUE_PRE_SEASON_LOCKED")) {
         text = "⏳ <b>Liga hali boshlanmagan</b>\n<i>Transferlar liga startidan keyin ochiladi.</i>";
       }
-      await editOrReply(context, text, new InlineKeyboard().text("↩️ Orqaga", `gm:${clubId}:0:ALL`));
+      await editOrReply(context, text, new InlineKeyboard().text("↩️ Orqaga", `tr_global:${clubId}:0:ALL`));
     }
   });
 
