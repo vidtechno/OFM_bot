@@ -212,7 +212,7 @@ export class LeagueRepository {
         leagueName: `${competition.name} #${String(league.instance_number).padStart(4, "0")}`,
         position: 1,
         points: row.points,
-        budget: Number(row.transfer_budget ?? club.starting_budget ?? 100000000),
+        budget: Number(row.transfer_budget ?? club.starting_budget ?? 70000000),
         status: league.status,
         teamOvr,
       };

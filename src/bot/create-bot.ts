@@ -562,7 +562,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     );
 
     if (owner.league_status === "OPEN") {
-      hubText = `⏳ <b>Liga hali boshlanmagan</b>\n<i>Transferlar liga startidan keyin ochiladi.</i>\n\n${hubText}`;
+      hubText = `⏳ <b>Liga start arafasida</b>\n<i>Liga ichidagi transferlar (klublararo savdo va takliflar) 1-tur startidan keyin ochiladi.\nLekin <b>🌍 Global Transfer</b> hozirdan ochiq! Yangi yulduzlarni xarid qilishingiz mumkin.</i>\n\n${hubText}`;
     }
 
     await editOrReply(context, hubText, keyboard);
@@ -579,6 +579,21 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     await transfers.saveInputSession(user.id, "ACTIVE_CLUB", { clubId });
     const clubs = await getContextManagedClubs(context, user.id);
     const club = clubs.find((c) => c.leagueClubId === clubId);
+    const owner = await (transfers as any).ownerLeague(user.id, clubId, false);
+
+    if (owner.league_status === "OPEN") {
+      const kb = new InlineKeyboard()
+        .text("🌍 Global Transferga o‘tish", `gm:${clubId}:0:ALL`)
+        .row()
+        .text("↩️ Orqaga", `tr:${clubId}`);
+      await editOrReply(
+        context,
+        "⏳ <b>Liga transfer bozori yopiq</b>\n\n<i>Liga ichidagi klublararo transfer bozori liga start olgach (1-turdan) ochiladi.\n\nHozir esa <b>🌍 Global Transfer</b> orqali yangi futbolchilarni xarid qilishingiz mumkin!</i>",
+        kb
+      );
+      return;
+    }
+
     const items = await transfers.leagueMarket(user.id, clubId, page, 8, group);
     const keyboard = buildTransferMarketKeyboard("lm", clubId, group, page, items, 8);
 
@@ -697,6 +712,16 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     await context.answerCallbackQuery();
     const user = await getContextUser(context);
     const clubId = context.match[1]!;
+    const owner = await (transfers as any).ownerLeague(user.id, clubId, false);
+
+    if (owner.league_status === "OPEN") {
+      return editOrReply(
+        context,
+        "⏳ <b>Futbolchi sotish liga startidan keyin ochiladi</b>\n\n<i>Liga 1-turi boshlangach o‘yinchilaringizni transfer bozoriga qo‘yishingiz mumkin bo‘ladi.\n\nHozircha <b>🌍 Global Transfer</b> orqali tarkibingizni kuchaytirib olishingiz mumkin!</i>",
+        new InlineKeyboard().text("🌍 Global Transfer", `gm:${clubId}:0:ALL`).row().text("↩️ Orqaga", `tr:${clubId}`)
+      );
+    }
+
     await transfers.saveInputSession(user.id, "ACTIVE_CLUB", { clubId });
     const players = await transfers.saleCandidates(user.id, clubId);
     const kb = new InlineKeyboard();
@@ -875,6 +900,16 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     await context.answerCallbackQuery();
     const user = await getContextUser(context);
     const clubId = context.match[1]!;
+    const owner = await (transfers as any).ownerLeague(user.id, clubId, false);
+
+    if (owner.league_status === "OPEN") {
+      return editOrReply(
+        context,
+        "⏳ <b>Raqib klublardan izlash liga startidan keyin ochiladi</b>\n\n<i>Mavsum start olgach (1-turdan) raqib klublar o‘yinchilariga taklif yuborishingiz mumkin bo‘ladi.\n\nHozir esa <b>🌍 Global Transfer</b> ochiq!</i>",
+        new InlineKeyboard().text("🌍 Global Transfer", `gm:${clubId}:0:ALL`).row().text("↩️ Orqaga", `tr:${clubId}`)
+      );
+    }
+
     const page = Number(context.match[2]);
     const clubs = await transfers.leagueClubs(user.id, clubId);
     const kb = new InlineKeyboard();

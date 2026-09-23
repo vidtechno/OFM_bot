@@ -33,7 +33,7 @@
       "code": "RMA",
       "name": "Real Madrid",
       "country": "Spain",
-      "starting_transfer_budget_eur": 100000000,
+      "starting_transfer_budget_eur": 70000000,
       "source_url": "https://www.futship.com/team/243-real-madrid",
       "players": [
         {
@@ -611,7 +611,7 @@
       "code": "FCB",
       "name": "FC Barcelona",
       "country": "Spain",
-      "starting_transfer_budget_eur": 100000000,
+      "starting_transfer_budget_eur": 70000000,
       "source_url": "https://www.futship.com/team/241-fc-barcelona",
       "players": [
         {
@@ -1112,7 +1112,7 @@
       "code": "ATM",
       "name": "Atlético Madrid",
       "country": "Spain",
-      "starting_transfer_budget_eur": 100000000,
+      "starting_transfer_budget_eur": 70000000,
       "source_url": "https://www.futship.com/team/240-atletico-de-madrid",
       "players": [
         {
@@ -1582,7 +1582,7 @@
       "code": "MCI",
       "name": "Manchester City",
       "country": "England",
-      "starting_transfer_budget_eur": 100000000,
+      "starting_transfer_budget_eur": 70000000,
       "source_url": "https://www.futship.com/team/10-manchester-city",
       "players": [
         {
@@ -2053,7 +2053,7 @@
       "code": "LIV",
       "name": "Liverpool",
       "country": "England",
-      "starting_transfer_budget_eur": 100000000,
+      "starting_transfer_budget_eur": 70000000,
       "source_url": "https://www.futship.com/team/9-liverpool",
       "players": [
         {
@@ -2576,7 +2576,7 @@
       "code": "ARS",
       "name": "Arsenal",
       "country": "England",
-      "starting_transfer_budget_eur": 100000000,
+      "starting_transfer_budget_eur": 70000000,
       "source_url": "https://www.futship.com/team/1-arsenal",
       "players": [
         {
@@ -2991,7 +2991,7 @@
       "code": "MUN",
       "name": "Manchester United",
       "country": "England",
-      "starting_transfer_budget_eur": 100000000,
+      "starting_transfer_budget_eur": 70000000,
       "source_url": "https://www.futship.com/team/11-manchester-united",
       "players": [
         {
@@ -3527,7 +3527,7 @@
       "code": "CHE",
       "name": "Chelsea",
       "country": "England",
-      "starting_transfer_budget_eur": 100000000,
+      "starting_transfer_budget_eur": 70000000,
       "source_url": "https://www.futship.com/team/5-chelsea",
       "players": [
         {
@@ -4043,7 +4043,7 @@
       "code": "TOT",
       "name": "Tottenham Hotspur",
       "country": "England",
-      "starting_transfer_budget_eur": 100000000,
+      "starting_transfer_budget_eur": 70000000,
       "source_url": "https://www.futship.com/team/18-tottenham-hotspur",
       "players": [
         {
@@ -4552,7 +4552,7 @@
       "code": "NEW",
       "name": "Newcastle United",
       "country": "England",
-      "starting_transfer_budget_eur": 100000000,
+      "starting_transfer_budget_eur": 70000000,
       "source_url": "https://www.futship.com/team/13-newcastle-united",
       "players": [
         {
@@ -5012,7 +5012,7 @@
       "code": "BAY",
       "name": "Bayern München",
       "country": "Germany",
-      "starting_transfer_budget_eur": 100000000,
+      "starting_transfer_budget_eur": 70000000,
       "source_url": "https://www.futship.com/team/21-bayern-munchen",
       "players": [
         {
@@ -5468,7 +5468,7 @@
       "code": "BVB",
       "name": "Borussia Dortmund",
       "country": "Germany",
-      "starting_transfer_budget_eur": 100000000,
+      "starting_transfer_budget_eur": 70000000,
       "source_url": "https://www.futship.com/team/22-borussia-dortmund",
       "players": [
         {
@@ -6013,7 +6013,7 @@
       "code": "B04",
       "name": "Bayer 04 Leverkusen",
       "country": "Germany",
-      "starting_transfer_budget_eur": 100000000,
+      "starting_transfer_budget_eur": 70000000,
       "source_url": "https://www.futship.com/team/32-bayer-04-leverkusen",
       "players": [
         {
@@ -6505,7 +6505,7 @@
       "code": "PSG",
       "name": "Paris Saint-Germain",
       "country": "France",
-      "starting_transfer_budget_eur": 100000000,
+      "starting_transfer_budget_eur": 70000000,
       "source_url": "https://www.futship.com/team/73-paris-saint-germain",
       "players": [
         {
@@ -6964,7 +6964,7 @@
       "code": "INT",
       "name": "Inter",
       "country": "Italy",
-      "starting_transfer_budget_eur": 100000000,
+      "starting_transfer_budget_eur": 70000000,
       "source_url": "https://www.futship.com/team/44-inter",
       "players": [
         {
@@ -7385,7 +7385,7 @@
       "code": "MIL",
       "name": "AC Milan",
       "country": "Italy",
-      "starting_transfer_budget_eur": 100000000,
+      "starting_transfer_budget_eur": 70000000,
       "source_url": "https://www.futship.com/team/47-milan",
       "players": [
         {
@@ -7882,7 +7882,7 @@
       "code": "JUV",
       "name": "Juventus",
       "country": "Italy",
-      "starting_transfer_budget_eur": 100000000,
+      "starting_transfer_budget_eur": 70000000,
       "source_url": "https://www.futship.com/team/45-juventus",
       "players": [
         {
@@ -8402,7 +8402,7 @@
       "code": "NAP",
       "name": "SSC Napoli",
       "country": "Italy",
-      "starting_transfer_budget_eur": 100000000,
+      "starting_transfer_budget_eur": 70000000,
       "source_url": "https://www.futship.com/team/48-napoli",
       "players": [
         {
@@ -8860,7 +8860,7 @@
       "code": "SLB",
       "name": "SL Benfica",
       "country": "Portugal",
-      "starting_transfer_budget_eur": 100000000,
+      "starting_transfer_budget_eur": 70000000,
       "source_url": "https://www.futship.com/team/234-benfica",
       "players": [
         {
@@ -9417,7 +9417,7 @@
       "code": "SCP",
       "name": "Sporting CP",
       "country": "Portugal",
-      "starting_transfer_budget_eur": 100000000,
+      "starting_transfer_budget_eur": 70000000,
       "source_url": "https://www.futship.com/team/237-sporting-cp",
       "players": [
         {
