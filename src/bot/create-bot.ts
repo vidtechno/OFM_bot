@@ -47,6 +47,15 @@ import type { SetPieceRole } from "../tactics/tactics.repository.js";
 import { NewsService } from "../leagues/news.service.js";
 import type { AdminRepository } from "../admin/admin.repository.js";
 import { formatAdminSponsors, formatAdminStats, formatAdminUsers } from "../admin/presentation.js";
+import { LegendRepository } from "../legends/legend.repository.js";
+import type { LegendCategory } from "../legends/legend.types.js";
+import {
+  formatLegendCard,
+  formatLegendCategory,
+  formatLegendFulfillmentSuccess,
+  formatLegendMenu,
+  formatMyLegends,
+} from "../legends/presentation.js";
 import { createMainKeyboard, MAIN_MENU } from "./keyboards.js";
 
 interface BotDependencies {
@@ -58,6 +67,7 @@ interface BotDependencies {
   fixtures: FixtureRepository;
   matches: MatchRepository;
   transfers: TransferRepository;
+  legends?: LegendRepository;
   progression: ProgressionRepository;
   admin: AdminRepository;
   adminTelegramIds: number[];
@@ -167,8 +177,9 @@ function dashboardKeyboard(leagueClubId: string): InlineKeyboard {
     .text("🚪 Ligadan chiqish", `lx:${leagueClubId}`).row();
 }
 
-export function createBot({ token, users, leagues, squads, tactics, fixtures, matches, transfers, progression, admin, adminTelegramIds, logger, news }: BotDependencies): Bot {
+export function createBot({ token, users, leagues, squads, tactics, fixtures, matches, transfers, legends, progression, admin, adminTelegramIds, logger, news }: BotDependencies): Bot {
   const bot = new Bot(token);
+  const legendRepo = legends ?? new LegendRepository((transfers as any).database);
   const newsService = news ?? new NewsService((leagues as any).database);
   const isAdmin=(telegramId:number)=>adminTelegramIds.includes(telegramId);
 
@@ -544,12 +555,14 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
 
     const keyboard = new InlineKeyboard()
       .text("🛒 Transfer bozori", `lm:${clubId}:0:ALL`)
-      .text("🔎 Ligadan izlash", `tf:${clubId}:0`)
-      .row()
       .text("🌍 Global Transfer", `gm:${clubId}:0:ALL`)
-      .text("📤 Futbolchi sotish", `ts:${clubId}`)
+      .row()
+      .text("👑 Legend Transfers", `leg:${clubId}`)
       .row()
       .text("📥 Takliflar", `io:${clubId}`)
+      .text("📤 Futbolchi sotish", `ts:${clubId}`)
+      .row()
+      .text("🔎 Ligadan izlash", `tf:${clubId}:0`)
       .text("📜 Transfer tarixi", `th:${clubId}`)
       .row()
       .text("↩️ Orqaga", `db:${clubId}`);
@@ -1317,6 +1330,231 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
         text = "⏳ <b>Liga hali boshlanmagan</b>\n<i>Transferlar liga startidan keyin ochiladi.</i>";
       }
       await editOrReply(context, text, new InlineKeyboard().text("↩️ Orqaga", `gm:${clubId}:0:ALL`));
+    }
+  });
+
+  // ── 👑 LEGEND TRANSFERS HANDLERS ─────────────────────────────
+  bot.callbackQuery(/^leg:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const clubId = context.match[1]!;
+    const summary = await legendRepo.getClubSummary(user.id, clubId);
+
+    const kb = new InlineKeyboard()
+      .text("🧤 Darvozabonlar", `legc:${clubId}:GK:0`)
+      .text("🛡 Himoyachilar", `legc:${clubId}:DEF:0`)
+      .row()
+      .text("🎯 Yarim himoyachilar", `legc:${clubId}:MID:0`)
+      .text("⚡ Hujumchilar", `legc:${clubId}:ATT:0`)
+      .row()
+      .text("⭐ Mening Legendlarim", `legm:${clubId}`)
+      .row()
+      .text("↩️ Orqaga", `tr:${clubId}`);
+
+    await editOrReply(context, formatLegendMenu(summary), kb);
+  });
+
+  bot.callbackQuery(/^legc:([0-9a-f-]{36}):(GK|DEF|MID|ATT):(\d+)$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const clubId = context.match[1]!;
+    const cat = context.match[2] as LegendCategory;
+    const page = Number(context.match[3]);
+
+    const { items, totalPages } = await legendRepo.getCategoryLegends(user.id, clubId, cat, page, 6);
+    const summary = await legendRepo.getClubSummary(user.id, clubId);
+
+    const kb = new InlineKeyboard();
+    for (const item of items) {
+      const l = item.legend;
+      let tag = "";
+      if (item.status === "OWNED_BY_CURRENT_CLUB") tag = " [✅]";
+      else if (item.status === "OWNED_BY_OTHER_CLUB") tag = " [🔒 Band]";
+      else if (item.status === "CLUB_LIMIT_REACHED") tag = " [🔒 5/5]";
+      else if (item.status === "LEAGUE_NOT_ACTIVE") tag = " [⏳]";
+      else tag = ` [⭐ ${l.starsPrice}]`;
+
+      const label = `${l.name} · ⭐${l.overall}${tag}`;
+      kb.text(label, `legp:${clubId}:${l.id}`).row();
+    }
+
+    if (page > 0) kb.text("⬅️", `legc:${clubId}:${cat}:${page - 1}`);
+    if (page < totalPages - 1) kb.text("➡️", `legc:${clubId}:${cat}:${page + 1}`);
+    if (page > 0 || page < totalPages - 1) kb.row();
+
+    kb.text("👑 Legend Markazi", `leg:${clubId}`);
+
+    await editOrReply(context, formatLegendCategory(cat, page, totalPages, items, summary), kb);
+  });
+
+  bot.callbackQuery(/^legp:([0-9a-f-]{36}):([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    const user = await getContextUser(context);
+    const clubId = context.match[1]!;
+    const legendId = context.match[2]!;
+
+    const { item, summary } = await legendRepo.getLegendDetail(user.id, clubId, legendId);
+    const kb = new InlineKeyboard();
+
+    if (item.status === "AVAILABLE") {
+      kb.text(`⭐ ${item.legend.starsPrice} Star — Sotib olish`, `legb:${clubId}:${legendId}`).row();
+    } else if (item.status === "OWNED_BY_CURRENT_CLUB") {
+      kb.text("✅ Jamoangizda", "legx:owned").row();
+    } else if (item.status === "OWNED_BY_OTHER_CLUB") {
+      kb.text(`🔒 Band (${item.ownerClubName ?? "Raqib"})`, "legx:locked").row();
+    } else if (item.status === "CLUB_LIMIT_REACHED") {
+      kb.text("🔒 Legend limiti 5/5", "legx:limit").row();
+    } else if (item.status === "LEAGUE_NOT_ACTIVE") {
+      kb.text("⏳ Liga starti kutilmoqda", "legx:preseason").row();
+    }
+
+    kb.text("↩️ Orqaga", `legc:${clubId}:${item.legend.category}:0`);
+
+    await context.answerCallbackQuery();
+    await editOrReply(context, formatLegendCard(item, summary), kb);
+  });
+
+  bot.callbackQuery(/^legx:(owned|locked|limit|preseason)$/, async (context) => {
+    const reason = context.match[1];
+    let msg = "Amal bajarilmadi.";
+    if (reason === "owned") msg = "✅ Bu Legend allaqachon jamoangizda!";
+    else if (reason === "locked") msg = "🔒 Bu Legend boshqa klub tomonidan band qilingan!";
+    else if (reason === "limit") msg = "🔒 Klubingiz maksimal 5 ta Legend limitiga yetgan!";
+    else if (reason === "preseason") msg = "⏳ Legend transferlari liga 1-turi boshlangach ochiladi.";
+    await context.answerCallbackQuery({ text: msg, show_alert: true });
+  });
+
+  bot.callbackQuery(/^legb:([0-9a-f-]{36}):([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    const user = await getContextUser(context);
+    const clubId = context.match[1]!;
+    const legendId = context.match[2]!;
+
+    try {
+      const intent = await legendRepo.createPurchaseIntent(user.id, clubId, legendId);
+      await context.answerCallbackQuery({ text: "Stars to‘lov oynasi ochilmoqda…" });
+
+      const payload = JSON.stringify({
+        type: "LEGEND",
+        purchaseId: intent.purchaseId,
+        userId: user.id,
+        clubId,
+        legendId,
+        legendName: intent.legendName,
+      });
+
+      await context.api.sendInvoice(
+        context.chat!.id,
+        `👑 ${intent.legendName}`,
+        `OFM Legend Transfer: ${intent.legendName} (${intent.legendPos}, ⭐${intent.legendOvr}) -> ${intent.clubName}`,
+        payload,
+        "XTR",
+        [{ label: `👑 ${intent.legendName}`, amount: intent.starsAmount }]
+      );
+    } catch (error: any) {
+      logger.warn({ event: "legend_buy_intent_failed", err: error }, "Legend buy intent failed");
+      const msg = error?.message ?? "";
+      let text = "❌ Xatolik yuz berdi.";
+      if (msg.includes("LEAGUE_NOT_ACTIVE")) {
+        text = "⏳ Legend transferlari liga 1-turi boshlangach ochiladi.";
+      } else if (msg.includes("LEGEND_LIMIT_REACHED")) {
+        text = "🔒 Klubingizda maksimal 5 ta Legend mavjud!";
+      } else if (msg.includes("LEGEND_ALREADY_OWNED")) {
+        text = "🔒 Bu Legend boshqa klub tomonidan band qilingan!";
+      }
+      await context.answerCallbackQuery({ text, show_alert: true });
+    }
+  });
+
+  bot.callbackQuery(/^legm:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const clubId = context.match[1]!;
+    const summary = await legendRepo.getClubSummary(user.id, clubId);
+
+    const kb = new InlineKeyboard();
+    for (const l of summary.legends) {
+      kb.text(`👑 ${l.name} (${l.primaryPosition} · ⭐${l.overall})`, `legp:${clubId}:${l.legendId}`).row();
+    }
+    kb.text("↩️ Orqaga", `leg:${clubId}`);
+
+    await editOrReply(context, formatMyLegends(summary), kb);
+  });
+
+  // ── 👑 TELEGRAM STARS PAYMENT HANDLERS ─────────────────────────
+  bot.on("pre_checkout_query", async (context) => {
+    const query = context.preCheckoutQuery;
+    try {
+      const payload = JSON.parse(query.invoice_payload);
+      if (payload.type === "LEGEND") {
+        const user = await getContextUser(context);
+        const isValid = await legendRepo.validatePreCheckout(
+          payload.purchaseId,
+          user.id,
+          query.total_amount
+        );
+
+        if (isValid) {
+          await context.answerPreCheckoutQuery(true);
+          logger.info({ event: "legend_precheckout_approved", purchaseId: payload.purchaseId });
+        } else {
+          await context.answerPreCheckoutQuery(false, {
+            error_message: "Bu Legend allaqachon boshqa klub tomonidan band qilingan yoki liga faol emas.",
+          });
+          logger.warn({ event: "legend_precheckout_rejected", purchaseId: payload.purchaseId });
+        }
+        return;
+      }
+    } catch (err) {
+      logger.error({ event: "pre_checkout_error", err }, "Pre-checkout query failed");
+      await context.answerPreCheckoutQuery(false, { error_message: "To‘lov tekshiruvida xatolik yuz berdi." });
+    }
+  });
+
+  bot.on("message:successful_payment", async (context) => {
+    const payment = context.message.successful_payment;
+    try {
+      const payload = JSON.parse(payment.invoice_payload);
+      if (payload.type === "LEGEND") {
+        const user = await getContextUser(context);
+        try {
+          const result = await legendRepo.fulfillPurchase(
+            payload.purchaseId,
+            payment.telegram_payment_charge_id,
+            payment.provider_payment_charge_id
+          );
+
+          const summary = await legendRepo.getClubSummary(user.id, payload.clubId);
+          const text = formatLegendFulfillmentSuccess(result, summary);
+          const kb = new InlineKeyboard()
+            .text("👥 Tarkibga o‘tish", `sq:${payload.clubId}`)
+            .text("👑 Legend Transfers", `leg:${payload.clubId}`);
+
+          await context.reply(text, { parse_mode: "HTML", reply_markup: kb });
+          logger.info({ event: "legend_purchase_fulfilled", purchaseId: payload.purchaseId });
+        } catch (fulfillmentError: any) {
+          logger.error({ event: "legend_fulfillment_conflict", err: fulfillmentError }, "Fulfillment conflict, attempting refund");
+          await legendRepo.recordRefund(payload.purchaseId);
+          try {
+            await context.api.refundStarPayment(context.from.id, payment.telegram_payment_charge_id);
+            await context.reply(
+              "❌ <b>Legend band qilindi</b>\n\n<i>Ushbu futbolchi bir lahza oldin boshqa klub tomonidan xarid qilib ulgurildi.\nTo‘langan Telegram Stars hisobingizga avtomatik tarzda to‘liq qaytarildi!</i>",
+              { parse_mode: "HTML" }
+            );
+          } catch (refundError) {
+            logger.error({ event: "star_refund_failed", err: refundError }, "Star refund failed");
+            await context.reply(
+              "⚠️ <b>Diqqat</b>\n\n<i>Legend boshqa klub tomonidan band qilindi. Avtomatik qaytarishda uzilish bo‘ldi, iltimos admin bilan bog‘laning.</i>",
+              { parse_mode: "HTML" }
+            );
+          }
+        }
+      }
+    } catch (err) {
+      logger.error({ event: "successful_payment_handler_error", err }, "Successful payment handling error");
     }
   });
 

@@ -36,7 +36,7 @@ export async function setWebhook(options: {
   const endpoint = `https://api.telegram.org/bot${options.botToken}/setWebhook`;
   const body: Record<string, unknown> = {
     url: options.webhookUrl,
-    allowed_updates: ["message", "callback_query"],
+    allowed_updates: ["message", "callback_query", "pre_checkout_query"],
     drop_pending_updates: options.dropPendingUpdates ?? false,
   };
   if (options.secretToken && options.secretToken.trim().length > 0) {

@@ -11,6 +11,7 @@ export interface SquadPlayer {
   fitness: number;
   form: number;
   morale: number;
+  isLegend?: boolean;
 }
 
 function one<T>(value: T | T[]): T {
@@ -23,7 +24,7 @@ export class SquadRepository {
   async listOwnedClubSquad(userId: string, leagueClubId: string): Promise<SquadPlayer[]> {
     const { data, error } = await this.database
       .from("club_players")
-      .select("id, players!inner(id, short_name, age, primary_position, secondary_position, fitness, form, morale, player_attributes!inner(overall)), league_clubs!inner(manager_user_id)")
+      .select("id, is_legend, players!inner(id, short_name, age, primary_position, secondary_position, fitness, form, morale, player_attributes!inner(overall)), league_clubs!inner(manager_user_id)")
       .eq("league_club_id", leagueClubId)
       .eq("league_clubs.manager_user_id", userId);
     if (error) throw new Error(`Tarkibni olishda xato: ${error.message}`);
@@ -42,6 +43,7 @@ export class SquadRepository {
         fitness: player.fitness,
         form: player.form,
         morale: player.morale,
+        isLegend: Boolean(row.is_legend),
       };
     }).sort((a: SquadPlayer, b: SquadPlayer) => b.overall - a.overall || a.shortName.localeCompare(b.shortName));
   }

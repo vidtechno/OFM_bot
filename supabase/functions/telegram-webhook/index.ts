@@ -239,7 +239,11 @@ function formatSquad(clubName, players) {
     }
     group.forEach((p, idx) => {
       const pos = formatPlayerPosition(p.primaryPosition, p.secondaryPosition);
-      lines.push(`${idx + 1}. ${escapeHtml(p.shortName)} \u2014 ${escapeHtml(pos)} \u2014 \u2B50<b>${p.overall}</b>`);
+      if (p.isLegend) {
+        lines.push(`${idx + 1}. \u{1F451} <b>${escapeHtml(p.shortName)}</b> \u2014 ${escapeHtml(pos)} \u2014 \u2B50<b>${p.overall}</b> \xB7 <i>LEGEND</i>`);
+      } else {
+        lines.push(`${idx + 1}. ${escapeHtml(p.shortName)} \u2014 ${escapeHtml(pos)} \u2014 \u2B50<b>${p.overall}</b>`);
+      }
     });
   }
   let text = lines.join("\n");
@@ -795,6 +799,383 @@ var formatAdminSponsors = (rows) => [
   )
 ].join("\n");
 
+// src/legends/legend.repository.ts
+var LegendRepository = class {
+  constructor(database) {
+    this.database = database;
+  }
+  database;
+  async getClubSummary(userId, clubId) {
+    const { data: club, error: clubErr } = await this.database.from("league_clubs").select("id, league_instance_id, user_id, manager_type, clubs!inner(name), league_instances!inner(id, status, instance_number, competitions!inner(name))").eq("id", clubId).maybeSingle();
+    if (clubErr || !club) {
+      throw new Error(`CLUB_NOT_FOUND: ${clubErr?.message ?? "Club not found"}`);
+    }
+    const leagueInst = club.league_instances;
+    const compName = leagueInst?.competitions?.name ?? "OFM League";
+    const instNum = String(leagueInst?.instance_number ?? 1).padStart(4, "0");
+    const leagueName = `${compName} #${instNum}`;
+    const { data: owned, error: ownedErr } = await this.database.from("league_legend_players").select("legend_id, club_player_id, legend_players!inner(name, display_name, primary_position, overall, tier)").eq("league_club_id", clubId).eq("status", "ACTIVE");
+    if (ownedErr) {
+      throw new Error(`FAILED_FETCH_OWNED_LEGENDS: ${ownedErr.message}`);
+    }
+    const legends = (owned ?? []).map((row) => ({
+      legendId: row.legend_id,
+      clubPlayerId: row.club_player_id,
+      name: row.legend_players.name,
+      displayName: row.legend_players.display_name,
+      primaryPosition: row.legend_players.primary_position,
+      overall: row.legend_players.overall,
+      tier: row.legend_players.tier
+    }));
+    return {
+      clubName: club.clubs?.name ?? "Klub",
+      leagueName,
+      leagueInstanceId: club.league_instance_id,
+      leagueClubId: club.id,
+      leagueStatus: leagueInst?.status ?? "OPEN",
+      currentLegendCount: legends.length,
+      maxLegends: 5,
+      legends
+    };
+  }
+  async getCategoryLegends(userId, clubId, category, page = 0, pageSize = 6) {
+    const summary = await this.getClubSummary(userId, clubId);
+    const { data: legends, error: legErr } = await this.database.from("legend_players").select("*").eq("category", category).eq("active", true).order("overall", { ascending: false });
+    if (legErr || !legends) {
+      throw new Error(`FAILED_FETCH_LEGENDS: ${legErr?.message ?? "Error"}`);
+    }
+    const { data: leagueAssignments, error: assignErr } = await this.database.from("league_legend_players").select("legend_id, league_club_id, league_clubs!inner(clubs!inner(name))").eq("league_instance_id", summary.leagueInstanceId).eq("status", "ACTIVE");
+    if (assignErr) {
+      throw new Error(`FAILED_FETCH_LEAGUE_ASSIGNMENTS: ${assignErr.message}`);
+    }
+    const assignmentMap = /* @__PURE__ */ new Map();
+    for (const a of leagueAssignments ?? []) {
+      const cName = a.league_clubs?.clubs?.name ?? "Boshqa klub";
+      assignmentMap.set(a.legend_id, { clubId: a.league_club_id, clubName: cName });
+    }
+    const items = legends.map((raw) => {
+      const legend = {
+        id: raw.id,
+        slug: raw.slug,
+        name: raw.name,
+        displayName: raw.display_name,
+        category: raw.category,
+        primaryPosition: raw.primary_position,
+        secondaryPositions: raw.secondary_positions ?? [],
+        overall: raw.overall,
+        pace: raw.pace,
+        shooting: raw.shooting,
+        passing: raw.passing,
+        dribbling: raw.dribbling,
+        defending: raw.defending,
+        physical: raw.physical,
+        tier: raw.tier,
+        starsPrice: raw.stars_price,
+        active: raw.active,
+        cardMetadata: raw.card_metadata ?? {}
+      };
+      const assignment = assignmentMap.get(raw.id);
+      let status = "AVAILABLE";
+      let isOwnedByMe = false;
+      let ownerClubName;
+      if (assignment) {
+        if (assignment.clubId === clubId) {
+          status = "OWNED_BY_CURRENT_CLUB";
+          isOwnedByMe = true;
+          ownerClubName = summary.clubName;
+        } else {
+          status = "OWNED_BY_OTHER_CLUB";
+          ownerClubName = assignment.clubName;
+        }
+      } else if (summary.currentLegendCount >= summary.maxLegends) {
+        status = "CLUB_LIMIT_REACHED";
+      } else if (summary.leagueStatus !== "ACTIVE") {
+        status = "LEAGUE_NOT_ACTIVE";
+      }
+      return {
+        legend,
+        status,
+        ownerClubName,
+        isOwnedByMe
+      };
+    });
+    const total = items.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const safePage = Math.min(Math.max(0, page), totalPages - 1);
+    const paginated = items.slice(safePage * pageSize, (safePage + 1) * pageSize);
+    return {
+      items: paginated,
+      total,
+      page: safePage,
+      pageSize,
+      totalPages
+    };
+  }
+  async getLegendDetail(userId, clubId, legendId) {
+    const summary = await this.getClubSummary(userId, clubId);
+    const { data: raw, error } = await this.database.from("legend_players").select("*").eq("id", legendId).maybeSingle();
+    if (error || !raw) {
+      throw new Error(`LEGEND_NOT_FOUND: ${error?.message ?? "Legend not found"}`);
+    }
+    const { data: assignment } = await this.database.from("league_legend_players").select("league_club_id, league_clubs!inner(clubs!inner(name))").eq("league_instance_id", summary.leagueInstanceId).eq("legend_id", legendId).eq("status", "ACTIVE").maybeSingle();
+    const legend = {
+      id: raw.id,
+      slug: raw.slug,
+      name: raw.name,
+      displayName: raw.display_name,
+      category: raw.category,
+      primaryPosition: raw.primary_position,
+      secondaryPositions: raw.secondary_positions ?? [],
+      overall: raw.overall,
+      pace: raw.pace,
+      shooting: raw.shooting,
+      passing: raw.passing,
+      dribbling: raw.dribbling,
+      defending: raw.defending,
+      physical: raw.physical,
+      tier: raw.tier,
+      starsPrice: raw.stars_price,
+      active: raw.active,
+      cardMetadata: raw.card_metadata ?? {}
+    };
+    let status = "AVAILABLE";
+    let isOwnedByMe = false;
+    let ownerClubName;
+    if (assignment) {
+      const cName = assignment.league_clubs?.clubs?.name ?? "Boshqa klub";
+      if (assignment.league_club_id === clubId) {
+        status = "OWNED_BY_CURRENT_CLUB";
+        isOwnedByMe = true;
+        ownerClubName = summary.clubName;
+      } else {
+        status = "OWNED_BY_OTHER_CLUB";
+        ownerClubName = cName;
+      }
+    } else if (summary.currentLegendCount >= summary.maxLegends) {
+      status = "CLUB_LIMIT_REACHED";
+    } else if (summary.leagueStatus !== "ACTIVE") {
+      status = "LEAGUE_NOT_ACTIVE";
+    }
+    return {
+      item: {
+        legend,
+        status,
+        ownerClubName,
+        isOwnedByMe
+      },
+      summary
+    };
+  }
+  async createPurchaseIntent(userId, clubId, legendId) {
+    const { data, error } = await this.database.rpc("create_legend_purchase_intent", {
+      p_user_id: userId,
+      p_league_club_id: clubId,
+      p_legend_id: legendId
+    });
+    if (error) {
+      throw new Error(error.message);
+    }
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) throw new Error("FAILED_CREATE_PURCHASE_INTENT");
+    return {
+      purchaseId: row.purchase_id,
+      starsAmount: row.stars_amount,
+      legendName: row.legend_name,
+      legendPos: row.legend_pos,
+      legendOvr: row.legend_ovr,
+      clubName: row.club_name,
+      leagueInstanceId: row.league_instance_id
+    };
+  }
+  async validatePreCheckout(purchaseId, userId, starsAmount) {
+    const { data, error } = await this.database.rpc("validate_legend_precheckout", {
+      p_purchase_id: purchaseId,
+      p_user_id: userId,
+      p_stars_amount: starsAmount
+    });
+    if (error) return false;
+    return Boolean(data);
+  }
+  async fulfillPurchase(purchaseId, telegramPaymentChargeId, providerPaymentChargeId) {
+    const { data, error } = await this.database.rpc("fulfill_legend_purchase", {
+      p_purchase_id: purchaseId,
+      p_telegram_payment_charge_id: telegramPaymentChargeId,
+      p_provider_payment_charge_id: providerPaymentChargeId ?? null
+    });
+    if (error) {
+      throw new Error(error.message);
+    }
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) throw new Error("FAILED_FULFILL_PURCHASE");
+    return {
+      clubPlayerId: row.club_player_id,
+      legendName: row.legend_name,
+      legendPos: row.legend_pos,
+      legendOvr: row.legend_ovr,
+      clubName: row.club_name,
+      leagueInstanceId: row.league_instance_id
+    };
+  }
+  async recordRefund(purchaseId) {
+    const { data, error } = await this.database.rpc("record_legend_refund", {
+      p_purchase_id: purchaseId
+    });
+    if (error) return false;
+    return Boolean(data);
+  }
+  async getPurchase(purchaseId) {
+    const { data } = await this.database.from("legend_purchases").select("*, legend_players(*)").eq("id", purchaseId).maybeSingle();
+    return data;
+  }
+};
+
+// src/legends/presentation.ts
+var CATEGORY_NAMES = {
+  GK: { title: "DARVOZABONLAR", icon: "\u{1F9E4}" },
+  DEF: { title: "HIMOYACHILAR", icon: "\u{1F6E1}" },
+  MID: { title: "YARIM HIMOYACHILAR", icon: "\u{1F3AF}" },
+  ATT: { title: "HUJUMCHILAR", icon: "\u26A1" }
+};
+function formatLegendMenu(summary) {
+  const isPreSeason = summary.leagueStatus === "OPEN";
+  const lines = [
+    "\u{1F451} <b>LEGEND TRANSFERS</b>",
+    "",
+    "<i>Futbol tarixining eng buyuk nomlarini</i>",
+    "<i>jamoangizga olib keling.</i>",
+    "",
+    "\u2728 Premium futbolchilar",
+    "\u2B50 Telegram Stars orqali",
+    `\u{1F3DF} Faqat <b>${escapeHtml(summary.clubName)}</b> uchun`,
+    "\u{1F512} Har liga ichida har bir Legend yagona",
+    "",
+    `\u{1F451} <b>Legend limit:</b> <b>${summary.currentLegendCount}/${summary.maxLegends}</b>`
+  ];
+  if (isPreSeason) {
+    lines.push(
+      "",
+      "\u23F3 <b>Liga start arafasida</b>",
+      "<i>Legendlar kartasini ko\u2018rishingiz mumkin, xarid esa liga 1-turi boshlangach ochiladi.</i>"
+    );
+  }
+  return lines.join("\n");
+}
+function formatLegendCategory(category, page, totalPages, items, summary) {
+  const cat = CATEGORY_NAMES[category] ?? { title: category, icon: "\u26BD" };
+  const lines = [
+    `${cat.icon} <b>${cat.title}</b> \xB7 <i>Sahifa ${page + 1}/${totalPages}</i>`,
+    `\u{1F451} <b>Limit:</b> <b>${summary.currentLegendCount}/${summary.maxLegends}</b>`,
+    ""
+  ];
+  items.forEach((item, idx) => {
+    const num = page * 6 + idx + 1;
+    const l = item.legend;
+    let badge = "";
+    if (l.tier === "GOAT") badge = "\u{1F410} ";
+    else if (l.tier === "Icon") badge = "\u2728 ";
+    let statusLine = `\u2B50 <b>${l.starsPrice} Star</b>`;
+    if (item.status === "OWNED_BY_CURRENT_CLUB") {
+      statusLine += " \xB7 \u2705 <i>Jamoangizda</i>";
+    } else if (item.status === "OWNED_BY_OTHER_CLUB") {
+      statusLine += ` \xB7 \u{1F512} <i>Band (${escapeHtml(item.ownerClubName ?? "Raqib")})</i>`;
+    } else if (item.status === "CLUB_LIMIT_REACHED") {
+      statusLine += " \xB7 \u{1F512} <i>Limit 5/5</i>";
+    } else if (item.status === "LEAGUE_NOT_ACTIVE") {
+      statusLine += " \xB7 \u23F3 <i>Liga kutilmoqda</i>";
+    }
+    lines.push(
+      `${num}. ${badge}<b>${escapeHtml(l.name)}</b> \xB7 ${escapeHtml(l.primaryPosition)} \xB7 \u2B50<b>${l.overall}</b>`,
+      `   ${statusLine}`,
+      ""
+    );
+  });
+  return lines.join("\n").trimEnd();
+}
+function formatLegendCard(item, summary) {
+  const l = item.legend;
+  const positions = [l.primaryPosition, ...l.secondaryPositions].join(" / ");
+  const lines = [
+    `\u{1F451} <b>${escapeHtml(l.name.toUpperCase())}</b>`,
+    "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501",
+    "",
+    `\u26A1 <b>${escapeHtml(positions)}</b>`,
+    `\u2B50 <b>OVR ${l.overall}</b>`,
+    "",
+    `PAC <b>${l.pace}</b>  |  SHO <b>${l.shooting}</b>`,
+    `PAS <b>${l.passing}</b>  |  DRI <b>${l.dribbling}</b>`,
+    `DEF <b>${l.defending}</b>  |  PHY <b>${l.physical}</b>`,
+    "",
+    `\u{1F3C6} <i>Legend Tier: <b>${escapeHtml(l.tier)}</b></i>`,
+    "",
+    `\u2B50 <b>Narxi: ${l.starsPrice} Star</b>`,
+    "",
+    "\u{1F3DF} Sotib olinsa faqat:",
+    `<b>${escapeHtml(summary.clubName)} \xB7 ${escapeHtml(summary.leagueName)}</b>`,
+    "uchun amal qiladi.",
+    "",
+    `\u{1F451} Club Legend limiti: <b>${summary.currentLegendCount}/${summary.maxLegends}</b>`
+  ];
+  if (item.status === "OWNED_BY_CURRENT_CLUB") {
+    lines.push("", "\u2705 <b>Ushbu Legend allaqachon klubingiz tarkibida!</b>");
+  } else if (item.status === "OWNED_BY_OTHER_CLUB") {
+    lines.push(
+      "",
+      `\u{1F512} <b>Bu Legend band qilingan!</b>`,
+      `<i>Bu ligada uni <b>${escapeHtml(item.ownerClubName ?? "boshqa klub")}</b> sotib olgan.</i>`
+    );
+  } else if (item.status === "CLUB_LIMIT_REACHED") {
+    lines.push(
+      "",
+      "\u{1F512} <b>Legend limiti to\u2018lgan (5/5)</b>",
+      "<i>Bir klub tarkibida maksimal 5 ta Legend bo\u2018lishi mumkin.</i>"
+    );
+  } else if (item.status === "LEAGUE_NOT_ACTIVE") {
+    lines.push(
+      "",
+      "\u23F3 <b>Liga start arafasida</b>",
+      "<i>Legend xaridi liga 1-turi start olgach ochiladi.</i>"
+    );
+  }
+  return lines.join("\n");
+}
+function formatMyLegends(summary) {
+  const lines = [
+    "\u{1F451} <b>KLUB LEGENDLARI</b>",
+    "",
+    `\u{1F3DF} <b>${escapeHtml(summary.clubName)}</b>`,
+    `\u{1F3C6} <i>${escapeHtml(summary.leagueName)}</i>`,
+    ""
+  ];
+  if (summary.legends.length === 0) {
+    lines.push(
+      "<i>Hozircha klubingizda Legend futbolchilar yo\u2018q.</i>",
+      "",
+      "<i>Yuqoridagi toifalardan birini tanlab, jamoangizga afsonaviy futbolchini qo\u2018shing!</i>"
+    );
+  } else {
+    summary.legends.forEach((l, idx) => {
+      lines.push(
+        `${idx + 1}. \u{1F451} <b>${escapeHtml(l.name)}</b> \xB7 ${escapeHtml(l.primaryPosition)} \xB7 \u2B50<b>${l.overall}</b> <i>(${escapeHtml(l.tier)})</i>`
+      );
+    });
+  }
+  lines.push("", `\u{1F451} Limit: <b>${summary.currentLegendCount}/${summary.maxLegends}</b>`);
+  return lines.join("\n");
+}
+function formatLegendFulfillmentSuccess(result, summary) {
+  return [
+    "\u2728 <b>LEGEND JAMOANGIZDA!</b>",
+    "",
+    `\u{1F451} <b>${escapeHtml(result.legendName)}</b>`,
+    `\u26A1 <b>${escapeHtml(result.legendPos)}</b> \xB7 \u2B50 <b>OVR ${result.legendOvr}</b>`,
+    "",
+    `\u{1F3DF} <b>${escapeHtml(result.clubName)}</b> tarkibiga qo\u2018shildi.`,
+    `\u{1F451} Legendlar: <b>${summary.currentLegendCount + 1}/${summary.maxLegends}</b>`,
+    "",
+    "<i>Endi uni Starting XI tarkibiga joylashtirishingiz mumkin.</i>"
+  ].join("\n");
+}
+
 // src/bot/keyboards.ts
 import { Keyboard } from "grammy";
 var MAIN_MENU = {
@@ -881,8 +1262,9 @@ function buildTransferMarketKeyboard(cbPrefix, clubId, group, page, items, pageS
 function dashboardKeyboard(leagueClubId) {
   return new InlineKeyboard().text("\u{1F465} Jamoa", `sq:${leagueClubId}`).text("\u{1F525} Asosiy XI", `xi:${leagueClubId}`).row().text("\u{1F9E0} Taktika", `tc:${leagueClubId}`).text("\u{1F501} Transfer", `tr:${leagueClubId}`).row().text("\u{1F4C5} O\u2018yinlar", `mt:${leagueClubId}`).text("\u{1F4CA} Liga", `tb:${leagueClubId}`).row().text("\u{1F4CA} Statistika", `cst:${leagueClubId}`).text("\u2694\uFE0F Match preview", `mpv:${leagueClubId}`).row().text("\u{1F4F0} Liga yangiliklari", `lnw:${leagueClubId}:0`).row().text("\u{1F6AA} Ligadan chiqish", `lx:${leagueClubId}`).row();
 }
-function createBot({ token, users, leagues, squads, tactics, fixtures, matches, transfers, progression, admin, adminTelegramIds, logger, news }) {
+function createBot({ token, users, leagues, squads, tactics, fixtures, matches, transfers, legends, progression, admin, adminTelegramIds, logger, news }) {
   const bot = new Bot(token);
+  const legendRepo = legends ?? new LegendRepository(transfers.database);
   const newsService = news ?? new NewsService(leagues.database);
   const isAdmin = (telegramId) => adminTelegramIds.includes(telegramId);
   bot.api.config.use(async (prev, method, payload, signal) => {
@@ -1202,7 +1584,7 @@ ${new Date(r.created_at).toLocaleString("uz-UZ")}`) : ["Hozircha audit yozuvlari
     const finances = await matches.finances(user.id, clubId);
     const owner = await transfers.ownerLeague(user.id, clubId, false);
     await transfers.saveInputSession(user.id, "ACTIVE_CLUB", { clubId });
-    const keyboard = new InlineKeyboard().text("\u{1F6D2} Transfer bozori", `lm:${clubId}:0:ALL`).text("\u{1F50E} Ligadan izlash", `tf:${clubId}:0`).row().text("\u{1F30D} Global Transfer", `gm:${clubId}:0:ALL`).text("\u{1F4E4} Futbolchi sotish", `ts:${clubId}`).row().text("\u{1F4E5} Takliflar", `io:${clubId}`).text("\u{1F4DC} Transfer tarixi", `th:${clubId}`).row().text("\u21A9\uFE0F Orqaga", `db:${clubId}`);
+    const keyboard = new InlineKeyboard().text("\u{1F6D2} Transfer bozori", `lm:${clubId}:0:ALL`).text("\u{1F30D} Global Transfer", `gm:${clubId}:0:ALL`).row().text("\u{1F451} Legend Transfers", `leg:${clubId}`).row().text("\u{1F4E5} Takliflar", `io:${clubId}`).text("\u{1F4E4} Futbolchi sotish", `ts:${clubId}`).row().text("\u{1F50E} Ligadan izlash", `tf:${clubId}:0`).text("\u{1F4DC} Transfer tarixi", `th:${clubId}`).row().text("\u21A9\uFE0F Orqaga", `db:${clubId}`);
     let hubText = formatTransferHub(
       clubName,
       finances.transferBudget,
@@ -1823,6 +2205,190 @@ Minimal: <b>${formatMoney(minimum)}</b>`,
         text = "\u23F3 <b>Liga hali boshlanmagan</b>\n<i>Transferlar liga startidan keyin ochiladi.</i>";
       }
       await editOrReply(context, text, new InlineKeyboard().text("\u21A9\uFE0F Orqaga", `gm:${clubId}:0:ALL`));
+    }
+  });
+  bot.callbackQuery(/^leg:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const clubId = context.match[1];
+    const summary = await legendRepo.getClubSummary(user.id, clubId);
+    const kb = new InlineKeyboard().text("\u{1F9E4} Darvozabonlar", `legc:${clubId}:GK:0`).text("\u{1F6E1} Himoyachilar", `legc:${clubId}:DEF:0`).row().text("\u{1F3AF} Yarim himoyachilar", `legc:${clubId}:MID:0`).text("\u26A1 Hujumchilar", `legc:${clubId}:ATT:0`).row().text("\u2B50 Mening Legendlarim", `legm:${clubId}`).row().text("\u21A9\uFE0F Orqaga", `tr:${clubId}`);
+    await editOrReply(context, formatLegendMenu(summary), kb);
+  });
+  bot.callbackQuery(/^legc:([0-9a-f-]{36}):(GK|DEF|MID|ATT):(\d+)$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const clubId = context.match[1];
+    const cat = context.match[2];
+    const page = Number(context.match[3]);
+    const { items, totalPages } = await legendRepo.getCategoryLegends(user.id, clubId, cat, page, 6);
+    const summary = await legendRepo.getClubSummary(user.id, clubId);
+    const kb = new InlineKeyboard();
+    for (const item of items) {
+      const l = item.legend;
+      let tag = "";
+      if (item.status === "OWNED_BY_CURRENT_CLUB") tag = " [\u2705]";
+      else if (item.status === "OWNED_BY_OTHER_CLUB") tag = " [\u{1F512} Band]";
+      else if (item.status === "CLUB_LIMIT_REACHED") tag = " [\u{1F512} 5/5]";
+      else if (item.status === "LEAGUE_NOT_ACTIVE") tag = " [\u23F3]";
+      else tag = ` [\u2B50 ${l.starsPrice}]`;
+      const label = `${l.name} \xB7 \u2B50${l.overall}${tag}`;
+      kb.text(label, `legp:${clubId}:${l.id}`).row();
+    }
+    if (page > 0) kb.text("\u2B05\uFE0F", `legc:${clubId}:${cat}:${page - 1}`);
+    if (page < totalPages - 1) kb.text("\u27A1\uFE0F", `legc:${clubId}:${cat}:${page + 1}`);
+    if (page > 0 || page < totalPages - 1) kb.row();
+    kb.text("\u{1F451} Legend Markazi", `leg:${clubId}`);
+    await editOrReply(context, formatLegendCategory(cat, page, totalPages, items, summary), kb);
+  });
+  bot.callbackQuery(/^legp:([0-9a-f-]{36}):([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    const user = await getContextUser(context);
+    const clubId = context.match[1];
+    const legendId = context.match[2];
+    const { item, summary } = await legendRepo.getLegendDetail(user.id, clubId, legendId);
+    const kb = new InlineKeyboard();
+    if (item.status === "AVAILABLE") {
+      kb.text(`\u2B50 ${item.legend.starsPrice} Star \u2014 Sotib olish`, `legb:${clubId}:${legendId}`).row();
+    } else if (item.status === "OWNED_BY_CURRENT_CLUB") {
+      kb.text("\u2705 Jamoangizda", "legx:owned").row();
+    } else if (item.status === "OWNED_BY_OTHER_CLUB") {
+      kb.text(`\u{1F512} Band (${item.ownerClubName ?? "Raqib"})`, "legx:locked").row();
+    } else if (item.status === "CLUB_LIMIT_REACHED") {
+      kb.text("\u{1F512} Legend limiti 5/5", "legx:limit").row();
+    } else if (item.status === "LEAGUE_NOT_ACTIVE") {
+      kb.text("\u23F3 Liga starti kutilmoqda", "legx:preseason").row();
+    }
+    kb.text("\u21A9\uFE0F Orqaga", `legc:${clubId}:${item.legend.category}:0`);
+    await context.answerCallbackQuery();
+    await editOrReply(context, formatLegendCard(item, summary), kb);
+  });
+  bot.callbackQuery(/^legx:(owned|locked|limit|preseason)$/, async (context) => {
+    const reason = context.match[1];
+    let msg = "Amal bajarilmadi.";
+    if (reason === "owned") msg = "\u2705 Bu Legend allaqachon jamoangizda!";
+    else if (reason === "locked") msg = "\u{1F512} Bu Legend boshqa klub tomonidan band qilingan!";
+    else if (reason === "limit") msg = "\u{1F512} Klubingiz maksimal 5 ta Legend limitiga yetgan!";
+    else if (reason === "preseason") msg = "\u23F3 Legend transferlari liga 1-turi boshlangach ochiladi.";
+    await context.answerCallbackQuery({ text: msg, show_alert: true });
+  });
+  bot.callbackQuery(/^legb:([0-9a-f-]{36}):([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    const user = await getContextUser(context);
+    const clubId = context.match[1];
+    const legendId = context.match[2];
+    try {
+      const intent = await legendRepo.createPurchaseIntent(user.id, clubId, legendId);
+      await context.answerCallbackQuery({ text: "Stars to\u2018lov oynasi ochilmoqda\u2026" });
+      const payload = JSON.stringify({
+        type: "LEGEND",
+        purchaseId: intent.purchaseId,
+        userId: user.id,
+        clubId,
+        legendId,
+        legendName: intent.legendName
+      });
+      await context.api.sendInvoice(
+        context.chat.id,
+        `\u{1F451} ${intent.legendName}`,
+        `OFM Legend Transfer: ${intent.legendName} (${intent.legendPos}, \u2B50${intent.legendOvr}) -> ${intent.clubName}`,
+        payload,
+        "XTR",
+        [{ label: `\u{1F451} ${intent.legendName}`, amount: intent.starsAmount }]
+      );
+    } catch (error) {
+      logger.warn({ event: "legend_buy_intent_failed", err: error }, "Legend buy intent failed");
+      const msg = error?.message ?? "";
+      let text = "\u274C Xatolik yuz berdi.";
+      if (msg.includes("LEAGUE_NOT_ACTIVE")) {
+        text = "\u23F3 Legend transferlari liga 1-turi boshlangach ochiladi.";
+      } else if (msg.includes("LEGEND_LIMIT_REACHED")) {
+        text = "\u{1F512} Klubingizda maksimal 5 ta Legend mavjud!";
+      } else if (msg.includes("LEGEND_ALREADY_OWNED")) {
+        text = "\u{1F512} Bu Legend boshqa klub tomonidan band qilingan!";
+      }
+      await context.answerCallbackQuery({ text, show_alert: true });
+    }
+  });
+  bot.callbackQuery(/^legm:([0-9a-f-]{36})$/, async (context) => {
+    if (!context.from) return;
+    await context.answerCallbackQuery();
+    const user = await getContextUser(context);
+    const clubId = context.match[1];
+    const summary = await legendRepo.getClubSummary(user.id, clubId);
+    const kb = new InlineKeyboard();
+    for (const l of summary.legends) {
+      kb.text(`\u{1F451} ${l.name} (${l.primaryPosition} \xB7 \u2B50${l.overall})`, `legp:${clubId}:${l.legendId}`).row();
+    }
+    kb.text("\u21A9\uFE0F Orqaga", `leg:${clubId}`);
+    await editOrReply(context, formatMyLegends(summary), kb);
+  });
+  bot.on("pre_checkout_query", async (context) => {
+    const query = context.preCheckoutQuery;
+    try {
+      const payload = JSON.parse(query.invoice_payload);
+      if (payload.type === "LEGEND") {
+        const user = await getContextUser(context);
+        const isValid = await legendRepo.validatePreCheckout(
+          payload.purchaseId,
+          user.id,
+          query.total_amount
+        );
+        if (isValid) {
+          await context.answerPreCheckoutQuery(true);
+          logger.info({ event: "legend_precheckout_approved", purchaseId: payload.purchaseId });
+        } else {
+          await context.answerPreCheckoutQuery(false, {
+            error_message: "Bu Legend allaqachon boshqa klub tomonidan band qilingan yoki liga faol emas."
+          });
+          logger.warn({ event: "legend_precheckout_rejected", purchaseId: payload.purchaseId });
+        }
+        return;
+      }
+    } catch (err) {
+      logger.error({ event: "pre_checkout_error", err }, "Pre-checkout query failed");
+      await context.answerPreCheckoutQuery(false, { error_message: "To\u2018lov tekshiruvida xatolik yuz berdi." });
+    }
+  });
+  bot.on("message:successful_payment", async (context) => {
+    const payment = context.message.successful_payment;
+    try {
+      const payload = JSON.parse(payment.invoice_payload);
+      if (payload.type === "LEGEND") {
+        const user = await getContextUser(context);
+        try {
+          const result = await legendRepo.fulfillPurchase(
+            payload.purchaseId,
+            payment.telegram_payment_charge_id,
+            payment.provider_payment_charge_id
+          );
+          const summary = await legendRepo.getClubSummary(user.id, payload.clubId);
+          const text = formatLegendFulfillmentSuccess(result, summary);
+          const kb = new InlineKeyboard().text("\u{1F465} Tarkibga o\u2018tish", `sq:${payload.clubId}`).text("\u{1F451} Legend Transfers", `leg:${payload.clubId}`);
+          await context.reply(text, { parse_mode: "HTML", reply_markup: kb });
+          logger.info({ event: "legend_purchase_fulfilled", purchaseId: payload.purchaseId });
+        } catch (fulfillmentError) {
+          logger.error({ event: "legend_fulfillment_conflict", err: fulfillmentError }, "Fulfillment conflict, attempting refund");
+          await legendRepo.recordRefund(payload.purchaseId);
+          try {
+            await context.api.refundStarPayment(context.from.id, payment.telegram_payment_charge_id);
+            await context.reply(
+              "\u274C <b>Legend band qilindi</b>\n\n<i>Ushbu futbolchi bir lahza oldin boshqa klub tomonidan xarid qilib ulgurildi.\nTo\u2018langan Telegram Stars hisobingizga avtomatik tarzda to\u2018liq qaytarildi!</i>",
+              { parse_mode: "HTML" }
+            );
+          } catch (refundError) {
+            logger.error({ event: "star_refund_failed", err: refundError }, "Star refund failed");
+            await context.reply(
+              "\u26A0\uFE0F <b>Diqqat</b>\n\n<i>Legend boshqa klub tomonidan band qilindi. Avtomatik qaytarishda uzilish bo\u2018ldi, iltimos admin bilan bog\u2018laning.</i>",
+              { parse_mode: "HTML" }
+            );
+          }
+        }
+      }
+    } catch (err) {
+      logger.error({ event: "successful_payment_handler_error", err }, "Successful payment handling error");
     }
   });
   bot.on("message", async (context, next) => {
@@ -3022,7 +3588,7 @@ var SquadRepository = class {
   }
   database;
   async listOwnedClubSquad(userId, leagueClubId) {
-    const { data, error } = await this.database.from("club_players").select("id, players!inner(id, short_name, age, primary_position, secondary_position, fitness, form, morale, player_attributes!inner(overall)), league_clubs!inner(manager_user_id)").eq("league_club_id", leagueClubId).eq("league_clubs.manager_user_id", userId);
+    const { data, error } = await this.database.from("club_players").select("id, is_legend, players!inner(id, short_name, age, primary_position, secondary_position, fitness, form, morale, player_attributes!inner(overall)), league_clubs!inner(manager_user_id)").eq("league_club_id", leagueClubId).eq("league_clubs.manager_user_id", userId);
     if (error) throw new Error(`Tarkibni olishda xato: ${error.message}`);
     return (data ?? []).map((row) => {
       const player = one2(row.players);
@@ -3037,7 +3603,8 @@ var SquadRepository = class {
         overall: attributes.overall,
         fitness: player.fitness,
         form: player.form,
-        morale: player.morale
+        morale: player.morale,
+        isLegend: Boolean(row.is_legend)
       };
     }).sort((a, b) => b.overall - a.overall || a.shortName.localeCompare(b.shortName));
   }
@@ -3778,6 +4345,9 @@ var TransferRepository = class {
    */
   async market(userId, clubId, page = 0, pageSize = 8, positionGroup = "ALL") {
     const owner = await this.ownerLeague(userId, clubId);
+    await this.database.rpc("ensure_league_global_market", {
+      p_league_instance_id: owner.league_instance_id
+    });
     const { data: existingCp } = await this.database.from("club_players").select("player_id, league_clubs!inner(league_instance_id)").eq("league_clubs.league_instance_id", owner.league_instance_id);
     const existingPlayerSet = new Set(
       (existingCp ?? []).map((cp) => cp.player_id).filter(Boolean)
@@ -3907,7 +4477,7 @@ var TransferRepository = class {
     await this.ownerLeague(userId, clubId);
     const [{ data, error }, { data: activeListings, error: listingsError }, { data: startingData }] = await Promise.all([
       this.database.from("club_players").select(
-        "id, resale_locked_until, players!inner(short_name, primary_position, market_value, age, nationality, player_attributes!inner(overall)), league_clubs!inner(league_instance_id, clubs!inner(name))"
+        "id, is_legend, resale_locked_until, players!inner(short_name, primary_position, market_value, age, nationality, player_attributes!inner(overall)), league_clubs!inner(league_instance_id, clubs!inner(name))"
       ).eq("league_club_id", clubId),
       this.database.from("global_market_listings").select("id, club_player_id").eq("seller_club_id", clubId).eq("status", "ACTIVE"),
       this.database.from("lineup_players").select("club_player_id, lineups!inner(league_club_id)").eq("lineups.league_club_id", clubId)
@@ -3917,7 +4487,7 @@ var TransferRepository = class {
     const listedMap = new Map((activeListings ?? []).map((l) => [l.club_player_id, l.id]));
     const startingSet = new Set((startingData ?? []).map((s) => s.club_player_id));
     const now = /* @__PURE__ */ new Date();
-    return (data ?? []).filter((row) => !row.resale_locked_until || new Date(row.resale_locked_until) <= now).map((row) => {
+    return (data ?? []).filter((row) => !row.is_legend && (!row.resale_locked_until || new Date(row.resale_locked_until) <= now)).map((row) => {
       const player = one5(row.players);
       const leagueClub = one5(row.league_clubs);
       const club = one5(leagueClub.clubs);
@@ -3963,8 +4533,8 @@ var TransferRepository = class {
     }
     const from = page * pageSize;
     const { data, error } = await this.database.from("club_players").select(
-      "id, resale_locked_until, players!inner(short_name, primary_position, market_value, age, nationality, player_attributes!inner(overall))"
-    ).eq("league_club_id", targetClubId).range(from, from + pageSize - 1);
+      "id, is_legend, resale_locked_until, players!inner(short_name, primary_position, market_value, age, nationality, player_attributes!inner(overall))"
+    ).eq("league_club_id", targetClubId).eq("is_legend", false).range(from, from + pageSize - 1);
     if (error) throw error;
     const clubName = one5(target.clubs).name;
     const now = /* @__PURE__ */ new Date();
@@ -3981,7 +4551,8 @@ var TransferRepository = class {
         marketValue: Number(player.market_value),
         age: player.age,
         nationality: player.nationality,
-        isResaleLocked
+        isResaleLocked,
+        isLegend: false
       };
     }).sort((a, b) => b.overall - a.overall);
   }
@@ -3990,7 +4561,7 @@ var TransferRepository = class {
    */
   async targetPlayer(clubPlayerId, buyerClubId) {
     const { data, error } = await this.database.from("club_players").select(
-      "id, league_club_id, resale_locked_until, players!inner(short_name, primary_position, market_value, age, nationality, player_attributes!inner(overall)), league_clubs!inner(league_instance_id, clubs!inner(name))"
+      "id, is_legend, league_club_id, resale_locked_until, players!inner(short_name, primary_position, market_value, age, nationality, player_attributes!inner(overall)), league_clubs!inner(league_instance_id, clubs!inner(name))"
     ).eq("id", clubPlayerId).maybeSingle();
     if (error || !data) return null;
     const player = one5(data.players);
@@ -4021,6 +4592,7 @@ var TransferRepository = class {
       age: player.age,
       nationality: player.nationality,
       isResaleLocked,
+      isLegend: Boolean(data.is_legend),
       activeNegotiation
     };
   }
@@ -4033,8 +4605,9 @@ var TransferRepository = class {
     const { count, error: countError } = await this.database.from("club_players").select("id", { count: "exact", head: true }).eq("league_club_id", clubId);
     if (countError) throw countError;
     if ((count ?? 0) <= 18) throw new Error("SELLER_MIN_SQUAD");
-    const { data: cp, error: cpError } = await this.database.from("club_players").select("player_id, league_clubs!inner(clubs!inner(name))").eq("id", clubPlayerId).single();
+    const { data: cp, error: cpError } = await this.database.from("club_players").select("player_id, is_legend, league_clubs!inner(clubs!inner(name))").eq("id", clubPlayerId).single();
     if (cpError || !cp) throw new Error("PLAYER_NOT_FOUND");
+    if (cp.is_legend) throw new Error("LEGEND_CANNOT_BE_SOLD");
     const sellerClubName = one5(cp.league_clubs)?.clubs?.name ?? "Klub";
     const availableUntil = new Date(Date.now() + 48 * 3600 * 1e3).toISOString();
     const { error } = await this.database.from("global_market_listings").insert({
@@ -4064,6 +4637,10 @@ var TransferRepository = class {
    * Submits an offer for a player in the same league.
    */
   async offer(userId, buyerClubId, clubPlayerId, amount) {
+    const { data: targetCp } = await this.database.from("club_players").select("is_legend").eq("id", clubPlayerId).maybeSingle();
+    if (targetCp?.is_legend) {
+      throw new Error("LEGEND_CANNOT_BE_TRANSFERRED");
+    }
     const { data, error } = await this.database.rpc("create_transfer_offer", {
       p_user_id: userId,
       p_buyer_club_id: buyerClubId,
@@ -4794,9 +5371,15 @@ function getEnv(key) {
   return void 0;
 }
 var edgeLogger = {
-  info: (obj, msg) => console.log(JSON.stringify({ level: "info", time: (/* @__PURE__ */ new Date()).toISOString(), message: msg, ...obj })),
-  warn: (obj, msg) => console.warn(JSON.stringify({ level: "warn", time: (/* @__PURE__ */ new Date()).toISOString(), message: msg, ...obj })),
-  error: (obj, msg) => console.error(JSON.stringify({ level: "error", time: (/* @__PURE__ */ new Date()).toISOString(), message: msg, ...obj }))
+  info(obj, msg) {
+    console.log(JSON.stringify({ level: "info", message: msg, ...obj }));
+  },
+  warn(obj, msg) {
+    console.warn(JSON.stringify({ level: "warn", message: msg, ...obj }));
+  },
+  error(obj, msg) {
+    console.error(JSON.stringify({ level: "error", message: msg, ...obj }));
+  }
 };
 var cachedBot = null;
 var cachedDb = null;
@@ -4817,6 +5400,7 @@ function initializeContext() {
     const leagues = new LeagueRepository(cachedDb);
     const matches = new MatchRepository(cachedDb);
     const transfers = new TransferRepository(cachedDb);
+    const legends = new LegendRepository(cachedDb);
     const rawAdminIds = getEnv("ADMIN_TELEGRAM_IDS") ?? "6117815120";
     const adminTelegramIds = rawAdminIds.split(",").map((id) => Number(id.trim())).filter(Number.isSafeInteger);
     cachedBot = createBot({
@@ -4828,6 +5412,7 @@ function initializeContext() {
       fixtures: new FixtureRepository(cachedDb),
       matches,
       transfers,
+      legends,
       progression: new ProgressionRepository(cachedDb),
       admin: new AdminRepository(cachedDb),
       adminTelegramIds,

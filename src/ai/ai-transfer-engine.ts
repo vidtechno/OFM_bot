@@ -68,12 +68,16 @@ export class AiTransferEngine {
   ): Promise<OfferEvaluationResult> {
     const { data: cp } = await this.database
       .from("club_players")
-      .select("id, league_club_id, players!inner(short_name, age, market_value, primary_position, player_attributes!inner(overall)), league_clubs!inner(cash_balance, transfer_budget)")
+      .select("id, is_legend, league_club_id, players!inner(short_name, age, market_value, primary_position, player_attributes!inner(overall)), league_clubs!inner(cash_balance, transfer_budget)")
       .eq("id", clubPlayerId)
       .single();
 
     if (!cp) {
       return { decision: "REJECT", reasoning: "Player not found" };
+    }
+
+    if ((cp as any).is_legend) {
+      return { decision: "REJECT", reasoning: "Legend players are protected from transfers" };
     }
 
     const player = first<any>(cp.players) as any;
@@ -252,6 +256,7 @@ export class AiTransferEngine {
           .from("club_players")
           .select("id, resale_locked_until, players!inner(short_name, market_value, primary_position, player_attributes!inner(overall))")
           .eq("league_club_id", seller.id)
+          .eq("is_legend", false)
           .eq("players.primary_position", neededPos)
           .limit(3);
 
@@ -320,6 +325,7 @@ export class AiTransferEngine {
           .from("club_players")
           .select("id, players!inner(short_name, market_value, player_attributes!inner(overall))")
           .eq("league_club_id", seller.id)
+          .eq("is_legend", false)
           .limit(5);
 
         const target = surplus?.[0];

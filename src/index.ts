@@ -14,6 +14,7 @@ import { ProgressionRepository } from "./progression/progression.repository.js";
 import { AdminRepository } from "./admin/admin.repository.js";
 import { AiTransferEngine } from "./ai/ai-transfer-engine.js";
 import { OpenAiStrategyService } from "./ai/openai-strategy.service.js";
+import { LegendRepository } from "./legends/legend.repository.js";
 import { InlineKeyboard } from "grammy";
 import { formatMatchReport } from "./matches/presentation.js";
 
@@ -29,6 +30,7 @@ async function main(): Promise<void> {
   const leagues = new LeagueRepository(database);
   const matchRepository = new MatchRepository(database);
   const transferRepository = new TransferRepository(database);
+  const legendRepository = new LegendRepository(database);
   const aiTransferEngine = new AiTransferEngine(
     database,
     new OpenAiStrategyService(database, logger, { apiKey: config.OPENAI_API_KEY }),
@@ -43,6 +45,7 @@ async function main(): Promise<void> {
     fixtures: new FixtureRepository(database),
     matches: matchRepository,
     transfers: transferRepository,
+    legends: legendRepository,
     progression: new ProgressionRepository(database),
     admin: new AdminRepository(database),
     adminTelegramIds: config.ADMIN_TELEGRAM_IDS,

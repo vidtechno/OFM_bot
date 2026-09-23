@@ -42,6 +42,7 @@ export interface TransferTarget {
   isListed?: boolean;
   listingId?: string;
   isResaleLocked?: boolean;
+  isLegend?: boolean;
   activeNegotiation?: {
     offerId: string;
     status: string;
@@ -143,6 +144,11 @@ export class TransferRepository {
     positionGroup = "ALL"
   ): Promise<MarketPlayer[]> {
     const owner = await this.ownerLeague(userId, clubId);
+
+    // Ensure league global market pool is populated
+    await this.database.rpc("ensure_league_global_market", {
+      p_league_instance_id: owner.league_instance_id,
+    });
 
     // Fetch player_ids already in this league instance so they are not offered again
     const { data: existingCp } = await this.database
@@ -330,7 +336,7 @@ export class TransferRepository {
       this.database
         .from("club_players")
         .select(
-          "id, resale_locked_until, players!inner(short_name, primary_position, market_value, age, nationality, player_attributes!inner(overall)), league_clubs!inner(league_instance_id, clubs!inner(name))"
+          "id, is_legend, resale_locked_until, players!inner(short_name, primary_position, market_value, age, nationality, player_attributes!inner(overall)), league_clubs!inner(league_instance_id, clubs!inner(name))"
         )
         .eq("league_club_id", clubId),
       this.database
@@ -352,7 +358,7 @@ export class TransferRepository {
     const now = new Date();
 
     return (data ?? [])
-      .filter((row: any) => !row.resale_locked_until || new Date(row.resale_locked_until) <= now)
+      .filter((row: any) => !row.is_legend && (!row.resale_locked_until || new Date(row.resale_locked_until) <= now))
       .map((row: any) => {
         const player = one<any>(row.players);
         const leagueClub = one<any>(row.league_clubs);
@@ -423,9 +429,10 @@ export class TransferRepository {
     const { data, error } = await this.database
       .from("club_players")
       .select(
-        "id, resale_locked_until, players!inner(short_name, primary_position, market_value, age, nationality, player_attributes!inner(overall))"
+        "id, is_legend, resale_locked_until, players!inner(short_name, primary_position, market_value, age, nationality, player_attributes!inner(overall))"
       )
       .eq("league_club_id", targetClubId)
+      .eq("is_legend", false)
       .range(from, from + pageSize - 1);
 
     if (error) throw error;
@@ -447,6 +454,7 @@ export class TransferRepository {
           age: player.age,
           nationality: player.nationality,
           isResaleLocked,
+          isLegend: false,
         };
       })
       .sort((a, b) => b.overall - a.overall);
@@ -459,7 +467,7 @@ export class TransferRepository {
     const { data, error } = await this.database
       .from("club_players")
       .select(
-        "id, league_club_id, resale_locked_until, players!inner(short_name, primary_position, market_value, age, nationality, player_attributes!inner(overall)), league_clubs!inner(league_instance_id, clubs!inner(name))"
+        "id, is_legend, league_club_id, resale_locked_until, players!inner(short_name, primary_position, market_value, age, nationality, player_attributes!inner(overall)), league_clubs!inner(league_instance_id, clubs!inner(name))"
       )
       .eq("id", clubPlayerId)
       .maybeSingle();
@@ -505,6 +513,7 @@ export class TransferRepository {
       age: player.age,
       nationality: player.nationality,
       isResaleLocked,
+      isLegend: Boolean(data.is_legend),
       activeNegotiation,
     };
   }
@@ -525,11 +534,12 @@ export class TransferRepository {
 
     const { data: cp, error: cpError } = await this.database
       .from("club_players")
-      .select("player_id, league_clubs!inner(clubs!inner(name))")
+      .select("player_id, is_legend, league_clubs!inner(clubs!inner(name))")
       .eq("id", clubPlayerId)
       .single();
 
     if (cpError || !cp) throw new Error("PLAYER_NOT_FOUND");
+    if (cp.is_legend) throw new Error("LEGEND_CANNOT_BE_SOLD");
     const sellerClubName = one<any>(cp.league_clubs)?.clubs?.name ?? "Klub";
 
     const availableUntil = new Date(Date.now() + 48 * 3600 * 1000).toISOString();
@@ -574,6 +584,16 @@ export class TransferRepository {
    * Submits an offer for a player in the same league.
    */
   async offer(userId: string, buyerClubId: string, clubPlayerId: string, amount: number): Promise<OfferOutcome> {
+    const { data: targetCp } = await this.database
+      .from("club_players")
+      .select("is_legend")
+      .eq("id", clubPlayerId)
+      .maybeSingle();
+
+    if (targetCp?.is_legend) {
+      throw new Error("LEGEND_CANNOT_BE_TRANSFERRED");
+    }
+
     const { data, error } = await this.database.rpc("create_transfer_offer", {
       p_user_id: userId,
       p_buyer_club_id: buyerClubId,

@@ -9,6 +9,7 @@ import { MatchRepository } from "../matches/match.repository.js";
 import { TransferRepository } from "../transfers/transfer.repository.js";
 import { ProgressionRepository } from "../progression/progression.repository.js";
 import { AdminRepository } from "../admin/admin.repository.js";
+import { LegendRepository } from "../legends/legend.repository.js";
 import { handleTelegramWebhook, type WebhookLogger } from "./telegram-handler.js";
 import type { Bot, Context } from "grammy";
 
@@ -31,12 +32,18 @@ function getEnv(key: string): string | undefined {
 }
 
 const edgeLogger: WebhookLogger = {
-  info: (obj, msg) => console.log(JSON.stringify({ level: "info", time: new Date().toISOString(), message: msg, ...obj })),
-  warn: (obj, msg) => console.warn(JSON.stringify({ level: "warn", time: new Date().toISOString(), message: msg, ...obj })),
-  error: (obj, msg) => console.error(JSON.stringify({ level: "error", time: new Date().toISOString(), message: msg, ...obj })),
+  info(obj: any, msg?: string) {
+    console.log(JSON.stringify({ level: "info", message: msg, ...obj }));
+  },
+  warn(obj: any, msg?: string) {
+    console.warn(JSON.stringify({ level: "warn", message: msg, ...obj }));
+  },
+  error(obj: any, msg?: string) {
+    console.error(JSON.stringify({ level: "error", message: msg, ...obj }));
+  },
 };
 
-let cachedBot: Bot<Context> | null = null;
+let cachedBot: Bot | null = null;
 let cachedDb: SupabaseClient | null = null;
 
 function initializeContext() {
@@ -59,6 +66,7 @@ function initializeContext() {
     const leagues = new LeagueRepository(cachedDb);
     const matches = new MatchRepository(cachedDb);
     const transfers = new TransferRepository(cachedDb);
+    const legends = new LegendRepository(cachedDb);
 
     const rawAdminIds = getEnv("ADMIN_TELEGRAM_IDS") ?? "6117815120";
     const adminTelegramIds = rawAdminIds
@@ -75,6 +83,7 @@ function initializeContext() {
       fixtures: new FixtureRepository(cachedDb),
       matches,
       transfers,
+      legends,
       progression: new ProgressionRepository(cachedDb),
       admin: new AdminRepository(cachedDb),
       adminTelegramIds,

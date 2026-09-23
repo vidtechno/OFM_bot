@@ -54,7 +54,11 @@ export function formatSquad(clubName: string, players: SquadPlayer[]): string {
     }
     group.forEach((p, idx) => {
       const pos = formatPlayerPosition(p.primaryPosition, p.secondaryPosition);
-      lines.push(`${idx + 1}. ${escapeHtml(p.shortName)} — ${escapeHtml(pos)} — ⭐<b>${p.overall}</b>`);
+      if (p.isLegend) {
+        lines.push(`${idx + 1}. 👑 <b>${escapeHtml(p.shortName)}</b> — ${escapeHtml(pos)} — ⭐<b>${p.overall}</b> · <i>LEGEND</i>`);
+      } else {
+        lines.push(`${idx + 1}. ${escapeHtml(p.shortName)} — ${escapeHtml(pos)} — ⭐<b>${p.overall}</b>`);
+      }
     });
   }
 
