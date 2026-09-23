@@ -86,6 +86,48 @@ export class AdminRepository {
     }));
   }
 
+  async setBroadcastSession(userId: string): Promise<void> {
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    const { error } = await this.database.from("user_input_sessions").upsert(
+      {
+        user_id: userId,
+        mode: "ADMIN_BROADCAST",
+        data: {},
+        expires_at: expiresAt,
+      },
+      { onConflict: "user_id" }
+    );
+    if (error) throw error;
+  }
+
+  async getBroadcastSession(userId: string): Promise<boolean> {
+    const now = new Date().toISOString();
+    const { data, error } = await this.database
+      .from("user_input_sessions")
+      .select("mode")
+      .eq("user_id", userId)
+      .eq("mode", "ADMIN_BROADCAST")
+      .gt("expires_at", now)
+      .maybeSingle();
+    if (error) return false;
+    return Boolean(data);
+  }
+
+  async clearBroadcastSession(userId: string): Promise<void> {
+    await this.database
+      .from("user_input_sessions")
+      .delete()
+      .eq("user_id", userId)
+      .eq("mode", "ADMIN_BROADCAST");
+  }
+
+  async markUserBlocked(telegramId: number): Promise<void> {
+    await this.database
+      .from("users")
+      .update({ is_blocked: true })
+      .eq("telegram_id", telegramId);
+  }
+
   async setBlocked(actor: string, target: string, blocked: boolean): Promise<void> {
     const { error } = await this.database.rpc("admin_set_user_blocked", {
       p_actor_user_id: actor,

@@ -914,8 +914,6 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
     context.managedClubs = clubs;
     return clubs;
   };
-  const privateLeagueJoinPending = /* @__PURE__ */ new Set();
-  const adminBroadcastPending = /* @__PURE__ */ new Set();
   const sendUpdate = async (telegramId, text, keyboard) => {
     if (!telegramId) return;
     try {
@@ -1132,22 +1130,25 @@ function createBot({ token, users, leagues, squads, tactics, fixtures, matches, 
   };
   bot.hears(MAIN_MENU.admin, async (context) => {
     if (!context.from || !isAdmin(context.from.id)) return;
+    const user = await getContextUser(context);
+    await admin.clearBroadcastSession(user.id);
     await adminHome(context);
   });
   bot.callbackQuery(/^ad:([usahb])$/, async (context) => {
     if (!context.from || !isAdmin(context.from.id)) return context.answerCallbackQuery({ text: "Ruxsat yo\u2018q" });
     await context.answerCallbackQuery();
     const section2 = context.match[1];
+    const user = await getContextUser(context);
     if (section2 === "h") {
-      adminBroadcastPending.delete(context.from.id);
+      await admin.clearBroadcastSession(user.id);
       return adminHome(context);
     }
     if (section2 === "b") {
-      adminBroadcastPending.add(context.from.id);
+      await admin.setBroadcastSession(user.id);
       return editOrReply(
         context,
-        "\u{1F4E2} <b>BARCHA FOYDALANUVCHILARGA XABAR YUBORISH</b>\n\nBarcha faol bot foydalanuvchilariga yubormoqchi bo\u2018lgan xabaringiz matnini kiriting:\n\n<i>(HTML teglari qo\u2018llab-quvvatlanadi. Bekor qilish uchun /cancel deb yozing yoki orqaga bosing)</i>",
-        new InlineKeyboard().text("\u2190 Admin", "ad:h")
+        "\u{1F4E2} <b>BARCHA FOYDALANUVCHILARGA XABAR YUBORISH</b>\n\nBarcha faol bot foydalanuvchilariga yubormoqchi bo\u2018lgan xabaringizni yuboring (matn, rasm yoki video):\n\n<i>\u2022 HTML formatlash (qalin, kursiv, ssilka) to\u2018liq qo\u2018llab-quvvatlanadi.\n\u2022 Bekor qilish uchun /cancel deb yozing yoki quyidagi tugmani bosing.</i>",
+        new InlineKeyboard().text("\u274C Bekor qilish", "ad:h")
       );
     }
     if (section2 === "u") {
@@ -1797,51 +1798,104 @@ Minimal: <b>${formatMoney(minimum)}</b>`,
       await editOrReply(context, text, new InlineKeyboard().text("\u21A9\uFE0F Orqaga", `gm:${clubId}:0:ALL`));
     }
   });
-  bot.on("message:text", async (context, next) => {
+  bot.on("message", async (context, next) => {
     if (!context.from) return next();
-    if (isAdmin(context.from.id) && adminBroadcastPending.delete(context.from.id)) {
-      const text = context.message.text.trim();
-      if (text === "/cancel") {
-        await context.reply("\u274C Xabar yuborish bekor qilindi.");
+    const user = await getContextUser(context);
+    if (isAdmin(context.from.id)) {
+      const isBroadcasting = await admin.getBroadcastSession(user.id);
+      if (isBroadcasting) {
+        const text = context.message.text?.trim();
+        if (text === "/cancel") {
+          await admin.clearBroadcastSession(user.id);
+          await context.reply("\u274C Xabar yuborish bekor qilindi.");
+          await adminHome(context);
+          return;
+        }
+        await admin.clearBroadcastSession(user.id);
+        const targets = await admin.broadcastTargets();
+        if (targets.length === 0) {
+          await context.reply("\u26A0\uFE0F Xabar yuborish uchun faol foydalanuvchilar topilmadi.");
+          await adminHome(context);
+          return;
+        }
+        await context.reply(`\u23F3 Xabar ${targets.length} ta foydalanuvchiga yuborilmoqda...`);
+        let successCount = 0;
+        let failCount = 0;
+        let index = 0;
+        for (const target of targets) {
+          index++;
+          try {
+            await bot.api.copyMessage(target.telegramId, context.chat.id, context.message.message_id);
+            successCount++;
+          } catch (err) {
+            let sent = false;
+            if (context.message.text) {
+              try {
+                await bot.api.sendMessage(target.telegramId, context.message.text, { parse_mode: "HTML" });
+                sent = true;
+              } catch {
+                try {
+                  await bot.api.sendMessage(target.telegramId, context.message.text);
+                  sent = true;
+                } catch {
+                }
+              }
+            }
+            if (sent) {
+              successCount++;
+            } else {
+              failCount++;
+              const desc = String(err?.description ?? err?.message ?? "").toLowerCase();
+              if (desc.includes("bot was blocked") || desc.includes("user is deactivated") || desc.includes("chat not found")) {
+                await admin.markUserBlocked(target.telegramId).catch(() => {
+                });
+              }
+            }
+          }
+          if (index % 25 === 0) {
+            await new Promise((r) => setTimeout(r, 1e3));
+          }
+        }
+        await context.reply(
+          `\u{1F4E2} <b>XABAR YUBORISH YAKUNLANDI</b>
+
+\u{1F465} Jami foydalanuvchilar: <b>${targets.length}</b>
+\u2705 Yetkazildi: <b>${successCount}</b>
+\u274C Yetkazilmadi / Bloklangan: <b>${failCount}</b>`,
+          { parse_mode: "HTML" }
+        );
         await adminHome(context);
         return;
       }
-      const targets = await admin.broadcastTargets();
-      await context.reply(`\u23F3 Xabar ${targets.length} ta foydalanuvchiga yuborilmoqda...`);
-      let successCount = 0;
-      let failCount = 0;
-      let index = 0;
-      for (const target of targets) {
-        index++;
-        try {
-          await bot.api.sendMessage(target.telegramId, text, { parse_mode: "HTML" });
-          successCount++;
-        } catch {
-          try {
-            await bot.api.sendMessage(target.telegramId, text);
-            successCount++;
-          } catch {
-            failCount++;
-          }
-        }
-        if (index % 25 === 0) {
-          await new Promise((r) => setTimeout(r, 1e3));
-        }
+    }
+    if (!context.message.text) {
+      return next();
+    }
+    const pending = await transfers.getInputSession(user.id);
+    if (!pending) {
+      return next();
+    }
+    if (pending.mode === "PRIVATE_JOIN") {
+      await transfers.clearInputSession(user.id);
+      const code = context.message.text.trim().toUpperCase();
+      if (!/^[A-Z0-9]{8}$/.test(code)) {
+        await context.reply("Kod 8 ta harf yoki raqamdan iborat bo\u2018lishi kerak. Qaytadan \u201CKod bilan qo\u2018shilish\u201D ni bosing.");
+        return;
       }
-      await context.reply(
-        `\u2705 <b>XABAR YUBORILDI</b>
+      const privateLeague = await leagues.privateLeagueByCode(code);
+      if (!privateLeague) {
+        await context.reply("Bunday private liga kodi topilmadi.");
+        return;
+      }
+      const clubs = await leagues.listPrivateAvailableClubs(privateLeague.leagueId);
+      await context.reply(`\u{1F512} PRIVATE LIGA \xB7 ${code}
 
-\u{1F4CA} Jami targetlar: <b>${targets.length}</b>
-\u2705 Yetkazildi: <b>${successCount}</b>
-\u274C Yetkazilmadi / Bloklangan: <b>${failCount}</b>`,
-        { parse_mode: "HTML" }
-      );
-      await adminHome(context);
+Klub tanlang:`, {
+        reply_markup: privateClubKeyboard(clubs, code, 0)
+      });
       return;
     }
-    const user = await getContextUser(context);
-    const pending = await transfers.getInputSession(user.id);
-    if (!pending || pending.mode !== "SELL" && pending.mode !== "OFFER" && pending.mode !== "COUNTER") {
+    if (pending.mode !== "SELL" && pending.mode !== "OFFER" && pending.mode !== "COUNTER") {
       return next();
     }
     const data = pending.data;
@@ -1892,24 +1946,6 @@ Minimal: <b>${formatMoney(minimum)}</b>`,
       await context.reply("Transfer amalga oshmadi: budjet, tarkib limiti yoki futbolchi holatini tekshiring.");
     }
   });
-  bot.on("message:text", async (context, next) => {
-    if (!context.from) return next();
-    if (!privateLeagueJoinPending.delete(context.from.id)) return next();
-    const code = context.message.text.trim().toUpperCase();
-    if (!/^[A-Z0-9]{8}$/.test(code)) {
-      await context.reply("Kod 8 ta harf yoki raqamdan iborat bo\u2018lishi kerak. Qaytadan \u201CKod bilan qo\u2018shilish\u201D ni bosing.");
-      return;
-    }
-    const privateLeague = await leagues.privateLeagueByCode(code);
-    if (!privateLeague) {
-      await context.reply("Bunday private liga kodi topilmadi.");
-      return;
-    }
-    const clubs = await leagues.listPrivateAvailableClubs(privateLeague.leagueId);
-    await context.reply(`\u{1F512} PRIVATE LIGA \xB7 ${code}
-
-Klub tanlang:`, { reply_markup: privateClubKeyboard(clubs, code, 0) });
-  });
   bot.callbackQuery("join", async (context) => {
     await context.answerCallbackQuery();
     await showCompetitions(context);
@@ -1940,7 +1976,8 @@ Kodni do\u2018stlaringizga yuboring. Ular \u201CKod bilan qo\u2018shilish\u201D 
   });
   bot.callbackQuery("pj", async (context) => {
     if (!context.from) return;
-    privateLeagueJoinPending.add(context.from.id);
+    const user = await getContextUser(context);
+    await transfers.saveInputSession(user.id, "PRIVATE_JOIN", {});
     await context.answerCallbackQuery();
     await editOrReply(context, "\u{1F511} PRIVATE LIGAGA QO\u2018SHILISH\n\nDo\u2018stingiz yuborgan 8 belgili taklif kodini bitta xabar qilib yozing:", new InlineKeyboard().text("\u2190 Ligalar", "join"));
   });
@@ -4396,6 +4433,31 @@ var AdminRepository = class {
       id: u.id,
       telegramId: Number(u.telegram_id)
     }));
+  }
+  async setBroadcastSession(userId) {
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1e3).toISOString();
+    const { error } = await this.database.from("user_input_sessions").upsert(
+      {
+        user_id: userId,
+        mode: "ADMIN_BROADCAST",
+        data: {},
+        expires_at: expiresAt
+      },
+      { onConflict: "user_id" }
+    );
+    if (error) throw error;
+  }
+  async getBroadcastSession(userId) {
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    const { data, error } = await this.database.from("user_input_sessions").select("mode").eq("user_id", userId).eq("mode", "ADMIN_BROADCAST").gt("expires_at", now).maybeSingle();
+    if (error) return false;
+    return Boolean(data);
+  }
+  async clearBroadcastSession(userId) {
+    await this.database.from("user_input_sessions").delete().eq("user_id", userId).eq("mode", "ADMIN_BROADCAST");
+  }
+  async markUserBlocked(telegramId) {
+    await this.database.from("users").update({ is_blocked: true }).eq("telegram_id", telegramId);
   }
   async setBlocked(actor, target, blocked) {
     const { error } = await this.database.rpc("admin_set_user_blocked", {

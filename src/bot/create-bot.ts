@@ -209,8 +209,6 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     return clubs;
   };
 
-  const privateLeagueJoinPending = new Set<number>();
-  const adminBroadcastPending = new Set<number>();
   const sendUpdate = async (telegramId: number | null, text: string, keyboard: InlineKeyboard): Promise<void> => {
     if (!telegramId) return;
     try {
@@ -477,22 +475,28 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
   };
   bot.hears(MAIN_MENU.admin, async (context) => {
     if (!context.from || !isAdmin(context.from.id)) return;
+    const user = await getContextUser(context);
+    await admin.clearBroadcastSession(user.id);
     await adminHome(context);
   });
   bot.callbackQuery(/^ad:([usahb])$/, async (context) => {
     if (!context.from || !isAdmin(context.from.id)) return context.answerCallbackQuery({ text: "Ruxsat yo‘q" });
     await context.answerCallbackQuery();
     const section = context.match[1];
+    const user = await getContextUser(context);
     if (section === "h") {
-      adminBroadcastPending.delete(context.from.id);
+      await admin.clearBroadcastSession(user.id);
       return adminHome(context);
     }
     if (section === "b") {
-      adminBroadcastPending.add(context.from.id);
+      await admin.setBroadcastSession(user.id);
       return editOrReply(
         context,
-        "📢 <b>BARCHA FOYDALANUVCHILARGA XABAR YUBORISH</b>\n\nBarcha faol bot foydalanuvchilariga yubormoqchi bo‘lgan xabaringiz matnini kiriting:\n\n<i>(HTML teglari qo‘llab-quvvatlanadi. Bekor qilish uchun /cancel deb yozing yoki orqaga bosing)</i>",
-        new InlineKeyboard().text("← Admin", "ad:h")
+        "📢 <b>BARCHA FOYDALANUVCHILARGA XABAR YUBORISH</b>\n\n" +
+          "Barcha faol bot foydalanuvchilariga yubormoqchi bo‘lgan xabaringizni yuboring (matn, rasm yoki video):\n\n" +
+          "<i>• HTML formatlash (qalin, kursiv, ssilka) to‘liq qo‘llab-quvvatlanadi.\n" +
+          "• Bekor qilish uchun /cancel deb yozing yoki quyidagi tugmani bosing.</i>",
+        new InlineKeyboard().text("❌ Bekor qilish", "ad:h")
       );
     }
     if (section === "u") {
@@ -1281,50 +1285,114 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
     }
   });
 
-  bot.on("message:text", async (context, next) => {
+  bot.on("message", async (context, next) => {
     if (!context.from) return next();
-    if (isAdmin(context.from.id) && adminBroadcastPending.delete(context.from.id)) {
-      const text = context.message.text.trim();
-      if (text === "/cancel") {
-        await context.reply("❌ Xabar yuborish bekor qilindi.");
+    const user = await getContextUser(context);
+
+    // 1. Admin broadcast message handler (stateless via user_input_sessions)
+    if (isAdmin(context.from.id)) {
+      const isBroadcasting = await admin.getBroadcastSession(user.id);
+      if (isBroadcasting) {
+        const text = context.message.text?.trim();
+        if (text === "/cancel") {
+          await admin.clearBroadcastSession(user.id);
+          await context.reply("❌ Xabar yuborish bekor qilindi.");
+          await adminHome(context);
+          return;
+        }
+
+        await admin.clearBroadcastSession(user.id);
+        const targets = await admin.broadcastTargets();
+        if (targets.length === 0) {
+          await context.reply("⚠️ Xabar yuborish uchun faol foydalanuvchilar topilmadi.");
+          await adminHome(context);
+          return;
+        }
+
+        await context.reply(`⏳ Xabar ${targets.length} ta foydalanuvchiga yuborilmoqda...`);
+        let successCount = 0;
+        let failCount = 0;
+        let index = 0;
+
+        for (const target of targets) {
+          index++;
+          try {
+            await bot.api.copyMessage(target.telegramId, context.chat.id, context.message.message_id);
+            successCount++;
+          } catch (err: any) {
+            let sent = false;
+            if (context.message.text) {
+              try {
+                await bot.api.sendMessage(target.telegramId, context.message.text, { parse_mode: "HTML" });
+                sent = true;
+              } catch {
+                try {
+                  await bot.api.sendMessage(target.telegramId, context.message.text);
+                  sent = true;
+                } catch {}
+              }
+            }
+            if (sent) {
+              successCount++;
+            } else {
+              failCount++;
+              const desc = String(err?.description ?? err?.message ?? "").toLowerCase();
+              if (
+                desc.includes("bot was blocked") ||
+                desc.includes("user is deactivated") ||
+                desc.includes("chat not found")
+              ) {
+                await admin.markUserBlocked(target.telegramId).catch(() => {});
+              }
+            }
+          }
+          if (index % 25 === 0) {
+            await new Promise((r) => setTimeout(r, 1000));
+          }
+        }
+
+        await context.reply(
+          `📢 <b>XABAR YUBORISH YAKUNLANDI</b>\n\n` +
+            `👥 Jami foydalanuvchilar: <b>${targets.length}</b>\n` +
+            `✅ Yetkazildi: <b>${successCount}</b>\n` +
+            `❌ Yetkazilmadi / Bloklangan: <b>${failCount}</b>`,
+          { parse_mode: "HTML" }
+        );
         await adminHome(context);
         return;
       }
-      const targets = await admin.broadcastTargets();
-      await context.reply(`⏳ Xabar ${targets.length} ta foydalanuvchiga yuborilmoqda...`);
-      let successCount = 0;
-      let failCount = 0;
-      let index = 0;
-      for (const target of targets) {
-        index++;
-        try {
-          await bot.api.sendMessage(target.telegramId, text, { parse_mode: "HTML" });
-          successCount++;
-        } catch {
-          try {
-            await bot.api.sendMessage(target.telegramId, text);
-            successCount++;
-          } catch {
-            failCount++;
-          }
-        }
-        if (index % 25 === 0) {
-          await new Promise((r) => setTimeout(r, 1000));
-        }
+    }
+
+    if (!context.message.text) {
+      return next();
+    }
+
+    const pending = await transfers.getInputSession(user.id);
+    if (!pending) {
+      return next();
+    }
+
+    // 2. Private league join code input
+    if (pending.mode === "PRIVATE_JOIN") {
+      await transfers.clearInputSession(user.id);
+      const code = context.message.text.trim().toUpperCase();
+      if (!/^[A-Z0-9]{8}$/.test(code)) {
+        await context.reply("Kod 8 ta harf yoki raqamdan iborat bo‘lishi kerak. Qaytadan “Kod bilan qo‘shilish” ni bosing.");
+        return;
       }
-      await context.reply(
-        `✅ <b>XABAR YUBORILDI</b>\n\n` +
-          `📊 Jami targetlar: <b>${targets.length}</b>\n` +
-          `✅ Yetkazildi: <b>${successCount}</b>\n` +
-          `❌ Yetkazilmadi / Bloklangan: <b>${failCount}</b>`,
-        { parse_mode: "HTML" }
-      );
-      await adminHome(context);
+      const privateLeague = await leagues.privateLeagueByCode(code);
+      if (!privateLeague) {
+        await context.reply("Bunday private liga kodi topilmadi.");
+        return;
+      }
+      const clubs = await leagues.listPrivateAvailableClubs(privateLeague.leagueId);
+      await context.reply(`🔒 PRIVATE LIGA · ${code}\n\nKlub tanlang:`, {
+        reply_markup: privateClubKeyboard(clubs, code, 0),
+      });
       return;
     }
-    const user = await getContextUser(context);
-    const pending = await transfers.getInputSession(user.id);
-    if (!pending || (pending.mode !== "SELL" && pending.mode !== "OFFER" && pending.mode !== "COUNTER")) {
+
+    if (pending.mode !== "SELL" && pending.mode !== "OFFER" && pending.mode !== "COUNTER") {
       return next();
     }
 
@@ -1386,7 +1454,6 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
       await context.reply("Transfer amalga oshmadi: budjet, tarkib limiti yoki futbolchi holatini tekshiring.");
     }
   });
-  bot.on("message:text",async(context,next)=>{if(!context.from)return next();if(!privateLeagueJoinPending.delete(context.from.id))return next();const code=context.message.text.trim().toUpperCase();if(!/^[A-Z0-9]{8}$/.test(code)){await context.reply("Kod 8 ta harf yoki raqamdan iborat bo‘lishi kerak. Qaytadan “Kod bilan qo‘shilish” ni bosing.");return;}const privateLeague=await leagues.privateLeagueByCode(code);if(!privateLeague){await context.reply("Bunday private liga kodi topilmadi.");return;}const clubs=await leagues.listPrivateAvailableClubs(privateLeague.leagueId);await context.reply(`🔒 PRIVATE LIGA · ${code}\n\nKlub tanlang:`,{reply_markup:privateClubKeyboard(clubs,code,0)});});
 
   bot.callbackQuery("join", async (context) => {
     await context.answerCallbackQuery();
@@ -1395,7 +1462,7 @@ export function createBot({ token, users, leagues, squads, tactics, fixtures, ma
 
   bot.callbackQuery("pv",async context=>{if(!context.from)return;await context.answerCallbackQuery();const competitions=await leagues.listCompetitions(),kb=new InlineKeyboard();for(const competition of competitions)kb.text(`🔒 ${competition.name}`,`pc:${competition.id}`).row();kb.text("← Ligalar","join");await editOrReply(context,"🔒 PRIVATE LIGA YARATISH\n\nChempionatni tanlang. Keyin sizga do‘stlaringizga yuboriladigan 8 belgili taklif kodi beriladi:",kb);});
   bot.callbackQuery(/^pc:([0-9a-f-]{36})$/,async context=>{if(!context.from)return;await context.answerCallbackQuery({text:"Private liga yaratilmoqda…"});const user=await getContextUser(context);try{const league=await leagues.createPrivateLeague(user.id,context.match[1]!);await editOrReply(context,`✅ PRIVATE LIGA TAYYOR\n\n🔑 Taklif kodi: ${league.inviteCode}\n\nKodni do‘stlaringizga yuboring. Ular “Kod bilan qo‘shilish” bo‘limida yozadi. Endi o‘zingiz klub tanlang:`,privateClubKeyboard(await leagues.listPrivateAvailableClubs(league.leagueId),league.inviteCode,0));}catch(error){logger.warn({event:"private_league_create_failed",err:error},"Private league create failed");await context.reply("Private liga yaratilmadi. Keyinroq qayta urinib ko‘ring.");}});
-  bot.callbackQuery("pj",async context=>{if(!context.from)return;privateLeagueJoinPending.add(context.from.id);await context.answerCallbackQuery();await editOrReply(context,"🔑 PRIVATE LIGAGA QO‘SHILISH\n\nDo‘stingiz yuborgan 8 belgili taklif kodini bitta xabar qilib yozing:",new InlineKeyboard().text("← Ligalar","join"));});
+  bot.callbackQuery("pj",async context=>{if(!context.from)return;const user=await getContextUser(context);await transfers.saveInputSession(user.id,"PRIVATE_JOIN",{});await context.answerCallbackQuery();await editOrReply(context,"🔑 PRIVATE LIGAGA QO‘SHILISH\n\nDo‘stingiz yuborgan 8 belgili taklif kodini bitta xabar qilib yozing:",new InlineKeyboard().text("← Ligalar","join"));});
   const privateClubKeyboard=(clubs:AvailableClub[],code:string,page:number):InlineKeyboard=>{const kb=new InlineKeyboard();for(const club of clubs.slice(page*PAGE_SIZE,(page+1)*PAGE_SIZE))kb.text(`⚽ ${club.clubName}`,`pcf:${club.leagueClubId}:${code}`).row();if(page>0)kb.text("← Oldingi",`ppi:${code}:${page-1}`);if((page+1)*PAGE_SIZE<clubs.length)kb.text("Keyingi →",`ppi:${code}:${page+1}`);if(page>0||(page+1)*PAGE_SIZE<clubs.length)kb.row();return kb.text("← Ligalar","join");};
   bot.callbackQuery(/^ppi:([A-Z0-9]{8}):(\d+)$/,async context=>{await context.answerCallbackQuery();const privateLeague=await leagues.privateLeagueByCode(context.match[1]!);if(!privateLeague)return;await editOrReply(context,"⚽ PRIVATE LIGADA KLUB TANLANG:",privateClubKeyboard(await leagues.listPrivateAvailableClubs(privateLeague.leagueId),privateLeague.inviteCode,Number(context.match[2])));});
   bot.callbackQuery(/^pcf:([0-9a-f-]{36}):([A-Z0-9]{8})$/,async context=>{await context.answerCallbackQuery();const clubId=context.match[1]!,code=context.match[2]!;await editOrReply(context,"⚽ Shu klubni private ligada boshqarishni tasdiqlaysizmi?",new InlineKeyboard().text("✅ Tasdiqlash",`pcl:${clubId}:${code}`).row().text("← Orqaga",`ppi:${code}:0`));});

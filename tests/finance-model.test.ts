@@ -11,17 +11,23 @@ describe("Finance Model & 100M Budget Test Suite", () => {
   it("Elite clubs have transfer_budget = 100,000,000 and Uzbek clubs have transfer_budget = 7,000,000", async () => {
     const { data: clubs, error } = await db
       .from("league_clubs")
-      .select("id, transfer_budget, reserved_transfer_budget, league_instances!inner(competitions!inner(code))");
+      .select("id, transfer_budget, reserved_transfer_budget, league_instances!inner(status, competitions!inner(code))");
 
     expect(error).toBeNull();
     expect(clubs).toBeDefined();
 
     for (const club of clubs || []) {
       const compCode = (club.league_instances as any)?.competitions?.code ?? "ELITE";
+      const status = (club.league_instances as any)?.status;
       const isUzbek = compCode === "UZB";
-      const expectedBudget = isUzbek ? 7_000_000 : 100_000_000;
+      const initialBudget = isUzbek ? 7_000_000 : 100_000_000;
       expect(Number(club.transfer_budget)).toBeGreaterThanOrEqual(0);
-      expect(Number(club.transfer_budget)).toBeLessThanOrEqual(expectedBudget + 1); // allow minor rounding
+      if (status === "OPEN") {
+        expect(Number(club.transfer_budget)).toBe(initialBudget);
+      } else {
+        // In active leagues, budget can increase via player sales
+        expect(Number(club.transfer_budget)).toBeLessThanOrEqual(initialBudget * 3);
+      }
     }
   });
 
